@@ -209,8 +209,10 @@ PORT="$AGENTMB_PORT"
 lsof -tiTCP:${PORT} -sTCP:LISTEN | xargs kill 2>/dev/null || true
 ```
 
-3. Reviewer-1 与 Reviewer-2 的全量门禁必须串行
-4. 评审报告必须记录是否串行执行与端口定向清理命令
+3. Reviewer-1 与 Reviewer-2 的全量门禁执行策略：
+   - 涉及 daemon、dev server、端口占用的验证脚本：必须串行
+   - 纯单元测试（pytest，全 mock，无端口）：允许并行
+4. 评审报告必须记录执行方式（串行/并行）与原因
 
 ## 13) 回复前缀自检（强制）
 
