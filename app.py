@@ -1,0 +1,209 @@
+"""
+AudioAssist — PyWebView entry point.
+Exposes Python API to the JavaScript frontend via js_api.
+
+All public methods return JSON-serializable values.
+Long-running operations (transcribe, download_model) run in background threads
+and push progress via window.evaluate_js().
+"""
+from __future__ import annotations
+import json
+import logging
+import os
+import threading
+from typing import Optional
+
+from platformdirs import user_data_dir
+
+logger = logging.getLogger(__name__)
+
+# Resolved at runtime after webview window is created
+_window = None
+
+APP_DATA_DIR = user_data_dir("TranscribeApp", appauthor=False)
+OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
+CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
+TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
+
+# Per-job lock to prevent concurrent read-modify-write on transcript files
+_transcript_locks: dict[str, threading.Lock] = {}
+_transcript_locks_mutex = threading.Lock()
+
+
+def _push(js: str):
+    """Evaluate JS in the webview window (thread-safe)."""
+    if _window is not None:
+        _window.evaluate_js(js)
+
+
+class API:
+    # ── File selection ─────────────────────────────────────────────────────────
+
+    def select_file(self) -> Optional[str]:
+        """Open a native file picker. Returns selected path or None."""
+        result = _window.create_file_dialog(
+            dialog_type=0,  # OPEN_DIALOG
+            allow_multiple=False,
+            file_types=("Audio/Video (*.mp3;*.mp4;*.m4a;*.wav;*.flac;*.ogg;*.aac;*.mov;*.mkv)",),
+        )
+        return result[0] if result else None
+
+    # ── Transcription ──────────────────────────────────────────────────────────
+
+    def transcribe(self, path: str, options: dict) -> dict:
+        """
+        Start transcription in background thread.
+        Pushes onTranscribeProgress(job_id, progress, message) events to JS.
+
+        Returns: {"job_id": str}
+        """
+        import uuid
+        job_id = str(uuid.uuid4())
+
+        def _run():
+            try:
+                from src.pipeline import run as pipeline_run
+
+                def _progress(pct: float, msg: str):
+                    js = f"onTranscribeProgress({json.dumps(job_id)}, {pct:.4f}, {json.dumps(msg)})"
+                    _push(js)
+
+                hf_token = options.get("hf_token") or os.environ.get("HF_TOKEN")
+                engine = options.get("engine", "qwen")
+                num_speakers = options.get("num_speakers")
+
+                json_path, md_path = pipeline_run(
+                    audio_path=path,
+                    output_dir=OUTPUT_DIR,
+                    hf_token=hf_token,
+                    engine=engine,
+                    num_speakers=num_speakers,
+                    job_id=job_id,
+                    progress_callback=_progress,
+                )
+                js = f"onTranscribeComplete({json.dumps(job_id)}, {json.dumps(json_path)})"
+                _push(js)
+            except Exception as e:
+                logger.exception("Transcription failed")
+                js = f"onTranscribeError({json.dumps(job_id)}, {json.dumps(str(e))})"
+                _push(js)
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"job_id": job_id}
+
+    def get_transcript(self, job_id: str) -> Optional[dict]:
+        """Load transcript JSON for a given job_id."""
+        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def save_transcript(self, job_id: str, edits: list[dict]) -> bool:
+        """
+        Persist edited transcript segments.
+
+        edits: list of {"speaker", "start", "end", "text", "words"} dicts.
+        Uses a per-job lock and atomic rename to prevent data corruption from
+        concurrent saves or a mid-write crash.
+        """
+        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        with _transcript_locks_mutex:
+            if job_id not in _transcript_locks:
+                _transcript_locks[job_id] = threading.Lock()
+            lock = _transcript_locks[job_id]
+
+        with lock:
+            if not os.path.exists(path):
+                return False
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            data["segments"] = edits
+            tmp_path = path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)  # atomic on POSIX; best-effort on Windows
+        return True
+
+    # ── Realtime ───────────────────────────────────────────────────────────────
+
+    def start_realtime(self) -> dict:
+        """Start realtime transcription (stub — implemented in c04)."""
+        return {"status": "not_implemented"}
+
+    def stop_realtime(self) -> dict:
+        """Stop realtime transcription (stub — implemented in c04)."""
+        return {"status": "not_implemented"}
+
+    # ── Summary ────────────────────────────────────────────────────────────────
+
+    def summarize(self, job_id: str, template: dict) -> dict:
+        """Trigger summary generation (stub — implemented in c03)."""
+        return {"status": "not_implemented"}
+
+    # ── Model management ───────────────────────────────────────────────────────
+
+    def get_models(self) -> list[dict]:
+        """Return model catalog with download status."""
+        from src.model_manager import ModelManager
+        return ModelManager().list_models()
+
+    def download_model(self, name: str) -> dict:
+        """
+        Download a model in background.
+        Pushes onModelDownloadProgress(name, percent) events to JS.
+
+        Returns: {"status": "started"}
+        """
+        def _run():
+            try:
+                from src.model_manager import ModelManager
+
+                def _progress(pct: float, msg: str):
+                    js = f"onModelDownloadProgress({json.dumps(name)}, {pct:.4f})"
+                    _push(js)
+
+                ModelManager().download(name, progress_callback=_progress)
+            except Exception as e:
+                logger.exception(f"Model download failed: {name}")
+                js = f"onModelDownloadError({json.dumps(name)}, {json.dumps(str(e))})"
+                _push(js)
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "started"}
+
+    # ── Config ─────────────────────────────────────────────────────────────────
+
+    def save_api_config(self, config: dict) -> bool:
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        cfg = self._load_config()
+        cfg["api"] = config
+        self._save_config(cfg)
+        return True
+
+    def get_api_config(self) -> dict:
+        return self._load_config().get("api", {})
+
+    def save_summary_templates(self, templates: list[dict]) -> bool:
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        with open(TEMPLATES_PATH, "w", encoding="utf-8") as f:
+            json.dump(templates, f, ensure_ascii=False, indent=2)
+        return True
+
+    def get_summary_templates(self) -> list[dict]:
+        if not os.path.exists(TEMPLATES_PATH):
+            return []
+        with open(TEMPLATES_PATH, encoding="utf-8") as f:
+            return json.load(f)
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _load_config(self) -> dict:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                return json.load(f)
+        return {}
+
+    def _save_config(self, cfg: dict):
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
