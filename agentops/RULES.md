@@ -184,20 +184,11 @@ Builder 在 `feat/rXX-builder` 分支至少执行两次关键 commit：
 2. `feat/*`、`review/*`、`research/*` 默认禁止推送
 3. 只有用户明确要求，才允许推送非 `main` 分支
 
-## 11) 端口 / 资源隔离（强制）
+## 11) 端口 / 资源隔离
 
-如果项目依赖本地 daemon、dev server、测试服务，必须为各角色分配固定隔离资源。可直接套用下面这组约定后再按项目替换环境变量名：
+TranscribeApp 是 PyWebView 桌面应用，测试全部为 pytest 纯单元测试（全 mock），**无 daemon、无 dev server、无端口占用**。
 
-- Builder：`AGENTMB_PORT=19315` `AGENTMB_DATA_DIR=/tmp/agentmb-builder`
-- Reviewer-1：`AGENTMB_PORT=19357` `AGENTMB_DATA_DIR=/tmp/agentmb-reviewer-1`
-- Reviewer-2：`AGENTMB_PORT=19358` `AGENTMB_DATA_DIR=/tmp/agentmb-reviewer-2`
-
-要求：
-
-1. 所有测试、verify、daemon 启停命令必须显式携带这些环境变量
-2. Reviewer 全量门禁必须串行
-3. 禁止共用 Builder 端口
-4. 评审报告必须记录端口与 data dir
+本项目当前无需端口隔离配置。如未来引入本地服务（如 HTTP API server），再在此节补充各角色端口分配。
 
 ## 12) 进程清理与串行全量（强制）
 
