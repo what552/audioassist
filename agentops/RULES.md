@@ -18,19 +18,19 @@
   - 分支：`main`
   - 职责：任务编排、汇总报告、控制 Merge Gate、执行合并、执行归档
 - **Builder**
-  - worktree：`../<repo>-claude`
+  - worktree：`../audioassist-builder`
   - 分支：`feat/rXX-builder`
   - 职责：架构落地、核心实现、测试、更新开发总结
 - **Reviewer-1**
-  - worktree：`../<repo>-codex`
+  - worktree：`../audioassist-reviewer1`
   - 分支：`review/rXX-reviewer-1`
   - 职责：工程质量评审（build/lint/test/边界/异常）
 - **Reviewer-2**
-  - worktree：`../<repo>-gemini`
+  - worktree：`../audioassist-reviewer2`
   - 分支：`review/rXX-reviewer-2`
   - 职责：交付质量评审（README/env/部署/一致性）
 - **Researcher**
-  - worktree：`../<repo>-codex-research`
+  - worktree：`../audioassist-researcher`
   - 分支：`research/rXX-researcher`
   - 职责：前瞻研究、设计补充、风险补充、静态分析
 
@@ -175,8 +175,8 @@ Builder 在 `feat/rXX-builder` 分支至少执行两次关键 commit：
 5. 仅当用户明确下达“中断/重跑”指令时，Leader 才可中断对应 pane
 6. 向 Reviewer 下发评审指令时，必须显式包含 `Baseline SHA` 和 `Target SHA`
 7. 向 Builder / Reviewer 下发 prompt 时，必须包含：
-   - “禁止 `pkill -f dist/daemon/index`，仅按角色端口定向清理进程”
-   - “Reviewer 全量门禁必须串行，不得并行运行 `scripts/verify.sh`”
+   - “禁止 `pkill -f` 全局杀进程，仅按角色端口定向清理进程”
+   - “Reviewer 全量门禁必须串行，不得并行运行验证脚本”
 
 ## 10) 远端推送策略（强制）
 
