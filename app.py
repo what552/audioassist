@@ -119,10 +119,22 @@ class API:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             data["segments"] = edits
+
+            # Atomic JSON write
             tmp_path = path + ".tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, path)  # atomic on POSIX; best-effort on Windows
+            os.replace(tmp_path, path)
+
+            # Regenerate markdown sidecar
+            try:
+                from src.merge import SpeakerBlock, to_markdown
+                blocks = [SpeakerBlock(**{k: seg[k] for k in ("speaker", "start", "end", "text", "words")}) for seg in edits]
+                md_path = path[:-5] + ".md"  # replace .json with .md
+                to_markdown(blocks, data.get("audio", ""), data.get("language", ""), md_path)
+            except Exception:
+                logger.warning("save_transcript: failed to regenerate .md", exc_info=True)
+
         return True
 
     # ── Realtime ───────────────────────────────────────────────────────────────
