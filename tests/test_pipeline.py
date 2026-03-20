@@ -55,7 +55,8 @@ def mock_pipeline_deps(tmp_path):
     mock_diarize_instance.diarize.return_value = _make_speaker_segments()
     mock_diarize_cls = MagicMock(return_value=mock_diarize_instance)
 
-    with patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
+    with patch("os.path.isfile", return_value=True), \
+         patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
          patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
          patch(f"{PIPELINE}.ASREngine", mock_asr_cls), \
          patch(f"{PIPELINE}.WhisperASREngine", MagicMock(return_value=mock_asr_instance)), \
@@ -147,7 +148,8 @@ class TestEngineSelection:
         mock_diarize_instance = MagicMock()
         mock_diarize_instance.diarize.return_value = _make_speaker_segments()
 
-        with patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
+        with patch("os.path.isfile", return_value=True), \
+             patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
              patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
              patch(f"{PIPELINE}.ASREngine", mock_asr_cls), \
              patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
@@ -177,7 +179,8 @@ class TestTempFileCleanup:
         mock_diarize_instance = MagicMock()
         mock_diarize_instance.diarize.return_value = _make_speaker_segments()
 
-        with patch(f"{PIPELINE}.to_wav", return_value=(tmp_wav_path, True)), \
+        with patch("os.path.isfile", return_value=True), \
+             patch(f"{PIPELINE}.to_wav", return_value=(tmp_wav_path, True)), \
              patch(f"{PIPELINE}.split_to_chunks", return_value=[(tmp_wav_path, 0.0)]), \
              patch(f"{PIPELINE}.ASREngine", MagicMock(return_value=mock_asr_instance)), \
              patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \

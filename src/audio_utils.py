@@ -81,7 +81,12 @@ def get_duration(audio_path: str) -> float:
         raise RuntimeError(
             f"ffprobe failed for {audio_path!r}:\n{result.stderr}"
         )
-    return float(result.stdout.strip())
+    raw = result.stdout.strip()
+    if not raw:
+        raise RuntimeError(
+            f"ffprobe returned empty output for {audio_path!r}"
+        )
+    return float(raw)
 
 
 def split_to_chunks(wav_path: str, chunk_sec: int = CHUNK_SECONDS) -> list[tuple[str, float]]:
@@ -97,18 +102,30 @@ def split_to_chunks(wav_path: str, chunk_sec: int = CHUNK_SECONDS) -> list[tuple
 
     chunks = []
     start = 0.0
-    while start < duration:
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tmp.close()
-        cmd = [
-            "ffmpeg", "-y", "-i", wav_path,
-            "-ss", str(start), "-t", str(chunk_sec),
-            "-ar", "16000", "-ac", "1",
-            tmp.name,
-        ]
-        subprocess.run(cmd, capture_output=True, check=True)
-        chunks.append((tmp.name, start))
-        start += chunk_sec
+    try:
+        while start < duration:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            cmd = [
+                "ffmpeg", "-y", "-i", wav_path,
+                "-ss", str(start), "-t", str(chunk_sec),
+                "-ar", "16000", "-ac", "1",
+                tmp.name,
+            ]
+            try:
+                subprocess.run(cmd, capture_output=True, check=True)
+            except Exception:
+                os.unlink(tmp.name)
+                raise
+            chunks.append((tmp.name, start))
+            start += chunk_sec
+    except Exception:
+        for p, _ in chunks:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        raise
 
     logger.info(f"Split into {len(chunks)} chunks ({chunk_sec}s each)")
     return chunks

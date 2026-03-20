@@ -1,20 +1,25 @@
 # Core UI
 pywebview>=5.0
 
+# Cross-platform data directory resolution
+platformdirs>=4.0
+
 # ASR — Qwen3 (primary engine, CPU/CUDA)
 qwen-asr>=0.0.6
 torch
 
-# ASR — Whisper (Apple Silicon via MLX, or faster-whisper on other platforms)
-# Install one of the following depending on platform:
-# Apple Silicon: pip install mlx-whisper
-# Other:         pip install faster-whisper
+# ASR — Whisper (install ONE depending on platform)
+# Apple Silicon (macOS arm64):  pip install mlx-whisper
+# Other (Linux/Windows/x86):   pip install faster-whisper
 
 # Speaker diarization
 pyannote.audio>=3.1
 
 # Audio processing
-# ffmpeg and ffprobe must be installed separately (e.g. brew install ffmpeg)
+# ffmpeg and ffprobe must be installed separately:
+#   macOS:   brew install ffmpeg
+#   Linux:   sudo apt install ffmpeg
+#   Windows: https://ffmpeg.org/download.html (add to PATH)
 
 # Model downloading
 huggingface-hub>=0.23

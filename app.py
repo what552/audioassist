@@ -13,15 +13,21 @@ import os
 import threading
 from typing import Optional
 
+from platformdirs import user_data_dir
+
 logger = logging.getLogger(__name__)
 
 # Resolved at runtime after webview window is created
 _window = None
 
-APP_DATA_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "TranscribeApp")
+APP_DATA_DIR = user_data_dir("TranscribeApp", appauthor=False)
 OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
+
+# Per-job lock to prevent concurrent read-modify-write on transcript files
+_transcript_locks: dict[str, threading.Lock] = {}
+_transcript_locks_mutex = threading.Lock()
 
 
 def _push(js: str):
@@ -98,15 +104,25 @@ class API:
         Persist edited transcript segments.
 
         edits: list of {"speaker", "start", "end", "text", "words"} dicts.
+        Uses a per-job lock and atomic rename to prevent data corruption from
+        concurrent saves or a mid-write crash.
         """
         path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-        if not os.path.exists(path):
-            return False
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        data["segments"] = edits
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with _transcript_locks_mutex:
+            if job_id not in _transcript_locks:
+                _transcript_locks[job_id] = threading.Lock()
+            lock = _transcript_locks[job_id]
+
+        with lock:
+            if not os.path.exists(path):
+                return False
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            data["segments"] = edits
+            tmp_path = path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)  # atomic on POSIX; best-effort on Windows
         return True
 
     # ── Realtime ───────────────────────────────────────────────────────────────

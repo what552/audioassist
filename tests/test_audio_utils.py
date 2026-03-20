@@ -1,9 +1,10 @@
-"""Tests for src/audio_utils.py — to_wav, get_duration, _wav_needs_conversion."""
+"""Tests for src/audio_utils.py — to_wav, get_duration, _wav_needs_conversion, split_to_chunks."""
+import os
 import subprocess
 from unittest.mock import MagicMock, patch, call
 import pytest
 
-from src.audio_utils import to_wav, get_duration, _wav_needs_conversion
+from src.audio_utils import to_wav, get_duration, split_to_chunks, _wav_needs_conversion
 
 
 # ── _wav_needs_conversion ─────────────────────────────────────────────────────
@@ -110,3 +111,82 @@ class TestGetDuration:
         with patch("subprocess.run", return_value=fail):
             with pytest.raises(RuntimeError, match="ffprobe failed"):
                 get_duration("missing.mp3")
+
+    def test_empty_stdout_raises(self):
+        empty = MagicMock()
+        empty.returncode = 0
+        empty.stdout = "   \n"
+
+        with patch("subprocess.run", return_value=empty):
+            with pytest.raises(RuntimeError, match="empty output"):
+                get_duration("silent.mp3")
+
+
+# ── split_to_chunks ───────────────────────────────────────────────────────────
+
+class TestSplitToChunks:
+    def _ok(self):
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = ""
+        return m
+
+    def test_short_file_returns_single_entry(self):
+        with patch("src.audio_utils.get_duration", return_value=60.0):
+            result = split_to_chunks("audio.wav", chunk_sec=300)
+        assert result == [("audio.wav", 0.0)]
+
+    def test_exact_boundary_returns_single_entry(self):
+        with patch("src.audio_utils.get_duration", return_value=300.0):
+            result = split_to_chunks("audio.wav", chunk_sec=300)
+        assert result == [("audio.wav", 0.0)]
+
+    def test_long_file_creates_multiple_chunks(self, tmp_path):
+        with patch("src.audio_utils.get_duration", return_value=700.0), \
+             patch("subprocess.run", return_value=self._ok()):
+            result = split_to_chunks("audio.wav", chunk_sec=300)
+
+        assert len(result) == 3
+        offsets = [off for _, off in result]
+        assert offsets == [0.0, 300.0, 600.0]
+
+    def test_chunk_files_are_distinct_temp_paths(self, tmp_path):
+        with patch("src.audio_utils.get_duration", return_value=700.0), \
+             patch("subprocess.run", return_value=self._ok()):
+            result = split_to_chunks("audio.wav", chunk_sec=300)
+
+        paths = [p for p, _ in result]
+        assert len(paths) == len(set(paths))  # all unique
+
+    def test_ffmpeg_failure_on_first_chunk_cleans_up(self):
+        import subprocess as sp
+
+        with patch("src.audio_utils.get_duration", return_value=700.0), \
+             patch("subprocess.run", side_effect=sp.CalledProcessError(1, "ffmpeg")):
+            with pytest.raises(sp.CalledProcessError):
+                split_to_chunks("audio.wav", chunk_sec=300)
+
+    def test_ffmpeg_failure_on_second_chunk_cleans_up_first(self, tmp_path):
+        import subprocess as sp
+
+        call_count = 0
+        first_chunk_path = None
+
+        def _side_effect(cmd, **kwargs):
+            nonlocal call_count, first_chunk_path
+            call_count += 1
+            if call_count == 1:
+                # First chunk succeeds — record its path so we can check deletion
+                first_chunk_path = cmd[-1]
+                open(first_chunk_path, "w").close()  # create the file
+                return self._ok()
+            raise sp.CalledProcessError(1, "ffmpeg")
+
+        with patch("src.audio_utils.get_duration", return_value=700.0), \
+             patch("subprocess.run", side_effect=_side_effect):
+            with pytest.raises(sp.CalledProcessError):
+                split_to_chunks("audio.wav", chunk_sec=300)
+
+        # First chunk should have been cleaned up
+        assert first_chunk_path is not None
+        assert not os.path.exists(first_chunk_path)

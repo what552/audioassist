@@ -10,9 +10,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from platformdirs import user_data_dir
+
 logger = logging.getLogger(__name__)
 
-APP_DATA_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "TranscribeApp")
+APP_DATA_DIR = user_data_dir("TranscribeApp", appauthor=False)
 DEFAULT_MODELS_DIR = os.path.join(APP_DATA_DIR, "models")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 

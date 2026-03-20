@@ -45,6 +45,9 @@ def run(
     Returns:
         (json_path, md_path)
     """
+    if not os.path.isfile(audio_path):
+        raise FileNotFoundError(f"Audio file not found: {audio_path!r}")
+
     os.makedirs(output_dir, exist_ok=True)
 
     if job_id is None:
