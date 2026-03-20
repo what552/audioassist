@@ -85,10 +85,11 @@ REVIEWER1_BRANCH="review/${ROUND}-reviewer-1"
 REVIEWER2_BRANCH="review/${ROUND}-reviewer-2"
 RESEARCHER_BRANCH="research/${ROUND}-researcher"
 
-BUILDER_DIR="${PARENT_DIR}/${REPO_NAME}-claude"
-REVIEWER1_DIR="${PARENT_DIR}/${REPO_NAME}-codex"
-REVIEWER2_DIR="${PARENT_DIR}/${REPO_NAME}-gemini"
-RESEARCHER_DIR="${PARENT_DIR}/${REPO_NAME}-codex-research"
+PROJECT="${REPO_NAME%%-main}"
+BUILDER_DIR="${PARENT_DIR}/${PROJECT}-builder"
+REVIEWER1_DIR="${PARENT_DIR}/${PROJECT}-reviewer1"
+REVIEWER2_DIR="${PARENT_DIR}/${PROJECT}-reviewer2"
+RESEARCHER_DIR="${PARENT_DIR}/${PROJECT}-researcher"
 
 ensure_branch() {
   local branch="$1"
