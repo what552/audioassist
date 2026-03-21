@@ -527,6 +527,24 @@ class TestHFCacheDetection:
         mock_snap.assert_not_called()
         assert result == snap
 
+    def test_local_path_falls_through_when_hf_cache_incomplete(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        """HF cache dir exists but missing key file → fall through to app dir default."""
+        hf_root = str(tmp_path / "hf-cache")
+        # Build cache with wrong key file for a diarizer (config.json, not config.yaml)
+        _build_hf_cache(
+            tmp_path / "hf-cache",
+            "pyannote/speaker-diarization-community-1",
+            key_file="config.json",
+        )
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        result = mm.local_path("pyannote-diarization-community-1")
+        app_dir = os.path.join(
+            isolated_data_dir["models_dir"], "pyannote-diarization-community-1"
+        )
+        assert result == app_dir  # fell through to app dir default
+
     def test_hf_cache_path_returns_none_when_refs_main_is_empty(
         self, tmp_path, isolated_data_dir, monkeypatch
     ):

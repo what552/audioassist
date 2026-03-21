@@ -90,6 +90,17 @@ def run(
                     asr_id,
                     progress_callback=lambda p, m: _progress(0.03 + p * 0.02, m),
                 )
+            if not mm.is_downloaded(aligner_id):
+                try:
+                    _progress(0.04, f"Downloading aligner model ({aligner_id})…")
+                    mm.download(
+                        aligner_id,
+                        progress_callback=lambda p, m: _progress(0.04 + p * 0.01, m),
+                    )
+                except Exception:
+                    logger.warning(
+                        "Aligner download failed — word-level timestamps will be unavailable"
+                    )
             _progress(0.05, "Loading Qwen3-ASR model...")
             aligner_path = mm.local_path(aligner_id) if mm.is_downloaded(aligner_id) else None
             asr = ASREngine(

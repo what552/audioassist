@@ -42,15 +42,18 @@ class RealtimeTranscriber:
         engine: str = "qwen",
         on_result: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
+        output_path: Optional[str] = None,
     ):
-        self._engine     = engine
-        self._on_result  = on_result or (lambda text: None)
-        self._on_error   = on_error  or (lambda msg: None)
+        self._engine      = engine
+        self._on_result   = on_result or (lambda text: None)
+        self._on_error    = on_error  or (lambda msg: None)
+        self._output_path = output_path
 
-        self._running = False
-        self._stream  = None
-        self._asr     = None
-        self._vad     = None
+        self._running    = False
+        self._stream     = None
+        self._asr        = None
+        self._vad        = None
+        self._wav_writer = None  # wave.Wave_write for session recording
 
         # VAD state — accessed only from the audio callback thread
         self._speech_buffer: list = []
@@ -63,6 +66,16 @@ class RealtimeTranscriber:
         """Load models then open the microphone stream."""
         self._load_models()
         self._running = True
+
+        # Open session WAV writer before the stream captures audio
+        if self._output_path is not None:
+            parent = os.path.dirname(self._output_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            self._wav_writer = wave.open(self._output_path, "wb")
+            self._wav_writer.setnchannels(1)
+            self._wav_writer.setsampwidth(2)
+            self._wav_writer.setframerate(SAMPLE_RATE)
 
         import sounddevice as sd
         self._stream = sd.InputStream(
@@ -79,9 +92,13 @@ class RealtimeTranscriber:
         """Stop the microphone stream and flush any pending speech."""
         self._running = False
         if self._stream is not None:
-            self._stream.stop()
+            self._stream.stop()   # blocks until audio callback finishes
             self._stream.close()
             self._stream = None
+        # Stream is fully stopped — safe to close WAV writer (no more callbacks)
+        if self._wav_writer is not None:
+            self._wav_writer.close()
+            self._wav_writer = None
         if self._speech_buffer:
             self._flush_speech()
         logger.info("Realtime transcription stopped")
@@ -115,6 +132,12 @@ class RealtimeTranscriber:
             speech_prob = self._vad(chunk_t, SAMPLE_RATE).item()
         except Exception:
             speech_prob = 0.0
+
+        # Write every chunk to the session WAV file (continuous recording)
+        if self._wav_writer is not None:
+            import numpy as np
+            pcm = (chunk * 32767.0).clip(-32768, 32767).astype(np.int16)
+            self._wav_writer.writeframes(pcm.tobytes())
 
         is_speech = speech_prob >= VAD_THRESHOLD
 

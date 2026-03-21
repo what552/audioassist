@@ -279,3 +279,43 @@ class TestAutoDownload:
             from src.pipeline import run
             run("/audio/test.mp3", str(tmp_path), engine="qwen")
         mm.download.assert_not_called()
+
+
+# ── aligner auto-download ─────────────────────────────────────────────────────
+
+class TestAlignerAutoDownload:
+    """Aligner is optional — downloaded when missing, silently skipped on failure."""
+
+    def test_aligner_downloaded_when_missing(self, tmp_path, mock_pipeline_deps):
+        """mm.download() called for aligner when not present."""
+        from src.pipeline import run
+        mm = mock_pipeline_deps["mm_instance"]
+        # ASR and diarizer present; aligner missing
+        mm.is_downloaded.side_effect = lambda mid: mid != "qwen3-forced-aligner"
+        run("/audio/test.mp3", str(tmp_path), engine="qwen")
+        downloaded_ids = [c.args[0] for c in mm.download.call_args_list]
+        assert "qwen3-forced-aligner" in downloaded_ids
+
+    def test_aligner_not_downloaded_when_present(self, tmp_path, mock_pipeline_deps):
+        """mm.download() not called when aligner already present."""
+        from src.pipeline import run
+        mm = mock_pipeline_deps["mm_instance"]
+        mm.is_downloaded.return_value = True
+        run("/audio/test.mp3", str(tmp_path), engine="qwen")
+        downloaded_ids = [c.args[0] for c in mm.download.call_args_list]
+        assert "qwen3-forced-aligner" not in downloaded_ids
+
+    def test_aligner_download_failure_does_not_raise(self, tmp_path, mock_pipeline_deps):
+        """Pipeline continues (aligner_path=None) if download fails."""
+        from src.pipeline import run
+        mm = mock_pipeline_deps["mm_instance"]
+        # ASR and diarizer present; aligner never present
+        mm.is_downloaded.side_effect = (
+            lambda mid: mid in ("qwen3-asr-1.7b", "pyannote-diarization-community-1")
+        )
+        def _download(mid, **kwargs):
+            if mid == "qwen3-forced-aligner":
+                raise RuntimeError("network error")
+        mm.download.side_effect = _download
+        # Must not raise
+        run("/audio/test.mp3", str(tmp_path), engine="qwen")

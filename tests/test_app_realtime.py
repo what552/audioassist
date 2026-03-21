@@ -54,6 +54,24 @@ class TestJSEvents:
             _wait(0.3)
         assert any("onRealtimeStarted" in c for c in js_calls)
 
+    def test_start_pushes_onRealtimeStarted_with_session_id(self):
+        """onRealtimeStarted must be called with a UUID session_id argument."""
+        import re
+        api = API()
+        js_calls = []
+        with patch("src.realtime.RealtimeTranscriber") as MockRT, \
+             patch.object(app_module, "_push", side_effect=js_calls.append):
+            MockRT.return_value.start.return_value = None
+            api.start_realtime()
+            _wait(0.3)
+        started = [c for c in js_calls if "onRealtimeStarted" in c]
+        assert len(started) == 1
+        # Must contain a UUID string, e.g. onRealtimeStarted("xxxxxxxx-xxxx-...")
+        assert re.search(
+            r'onRealtimeStarted\("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\)',
+            started[0],
+        )
+
     def test_start_exception_pushes_onRealtimeError(self):
         api = API()
         js_calls = []

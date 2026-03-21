@@ -211,7 +211,7 @@ class ModelManager:
         if os.path.isdir(app) and os.listdir(app) and self._has_key_files(model_id, app):
             return app
         hf = self._hf_cache_path(model_id)
-        if hf is not None:
+        if hf is not None and self._has_key_files(model_id, hf):
             return hf
         return app
 

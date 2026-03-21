@@ -50,6 +50,11 @@ class TestDefaults:
         rt, _ = _make_rt()
         assert rt._engine == "qwen"
 
+    def test_default_output_path_is_none(self):
+        rt, _ = _make_rt()
+        assert rt._output_path is None
+        assert rt._wav_writer is None
+
     def test_initial_state(self):
         rt, _ = _make_rt()
         assert rt._speech_buffer == []
@@ -300,3 +305,73 @@ class TestWriteWav:
         assert samples[0] == 32767
         assert samples[1] == -32768
         assert samples[2] == pytest.approx(0.5 * 32767, abs=1)
+
+
+# ── output WAV writer ─────────────────────────────────────────────────────────
+
+class TestOutputWav:
+    def test_audio_callback_writes_to_wav_writer(self):
+        """Each audio chunk is written to _wav_writer when set."""
+        rt, m = _make_rt()
+        mock_wav = MagicMock()
+        rt._wav_writer = mock_wav
+        _set_vad_prob(rt, 0.1)  # silence — no VAD state change
+        with patch.dict(sys.modules, {"torch": _fake_torch()}):
+            rt._audio_callback(_chunk(0.5), 512, None, None)
+        mock_wav.writeframes.assert_called_once()
+
+    def test_audio_callback_no_wav_writer_does_not_raise(self):
+        """_wav_writer=None by default — callback must not raise."""
+        rt, m = _make_rt()
+        assert rt._wav_writer is None
+        _set_vad_prob(rt, 0.1)
+        with patch.dict(sys.modules, {"torch": _fake_torch()}):
+            rt._audio_callback(_chunk(), 512, None, None)
+
+    def test_stop_closes_wav_writer(self):
+        """stop() must close and clear _wav_writer."""
+        rt, _ = _make_rt()
+        mock_wav = MagicMock()
+        rt._wav_writer = mock_wav
+        rt._stream = MagicMock()
+        rt.stop()
+        mock_wav.close.assert_called_once()
+        assert rt._wav_writer is None
+
+    def test_stop_with_no_wav_writer_does_not_raise(self):
+        """stop() without a wav writer must not raise."""
+        rt, _ = _make_rt()
+        rt._stream = MagicMock()
+        assert rt._wav_writer is None
+        rt.stop()  # must not raise
+
+    def test_output_path_creates_file(self, tmp_path):
+        """With output_path set, start() opens a valid WAV file."""
+        wav_path = str(tmp_path / "session.wav")
+        rt, m = _make_rt(output_path=wav_path)
+
+        # Simulate what start() does for the WAV writer (models/stream already mocked)
+        import wave as _wave
+        parent = os.path.dirname(wav_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        rt._wav_writer = _wave.open(wav_path, "wb")
+        rt._wav_writer.setnchannels(1)
+        rt._wav_writer.setsampwidth(2)
+        rt._wav_writer.setframerate(m.SAMPLE_RATE)
+
+        # Write two chunks via callback
+        _set_vad_prob(rt, 0.1)
+        with patch.dict(sys.modules, {"torch": _fake_torch()}):
+            rt._audio_callback(_chunk(0.0), 512, None, None)
+            rt._audio_callback(_chunk(0.5), 512, None, None)
+
+        # Close (as stop() would do)
+        rt._wav_writer.close()
+        rt._wav_writer = None
+
+        with _wave.open(wav_path) as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+            assert wf.getframerate() == m.SAMPLE_RATE
+            assert wf.getnframes() == 512 * 2  # two chunks

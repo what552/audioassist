@@ -5,7 +5,7 @@
  *   Realtime.init()       — wire up DOM; call once after DOMContentLoaded
  *
  * Python → JS callbacks (called via evaluate_js):
- *   onRealtimeStarted()          — models loaded, mic open
+ *   onRealtimeStarted(sessionId) — models loaded, mic open; sessionId = WAV filename stem
  *   onRealtimeStopped()          — mic closed
  *   onRealtimeResult(text)       — one transcribed utterance
  *   onRealtimeError(message)     — error
@@ -55,7 +55,7 @@ const Realtime = (() => {
 
   // ── Python → JS callbacks ─────────────────────────────────────────────────
 
-  function onStarted() {
+  function onStarted(sessionId) {
     _recording = true;
     _setLoading(false);
     dom.btnToggle.textContent = '⏹ Stop';
@@ -107,7 +107,7 @@ const Realtime = (() => {
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
 
-function onRealtimeStarted()        { Realtime.onStarted(); }
+function onRealtimeStarted(sessionId) { Realtime.onStarted(sessionId); }
 function onRealtimeStopped()        { Realtime.onStopped(); }
 function onRealtimeResult(text)     { Realtime.onResult(text); }
 function onRealtimeError(message)   { Realtime.onError(message); }
