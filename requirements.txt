@@ -13,7 +13,7 @@ torch
 # Other (Linux/Windows/x86):   pip install faster-whisper
 
 # Speaker diarization
-pyannote.audio>=3.1
+pyannote.audio>=4.0
 
 # Audio processing
 # ffmpeg and ffprobe must be installed separately:

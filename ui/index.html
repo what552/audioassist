@@ -7,9 +7,74 @@
   <link rel="stylesheet" href="css/main.css" />
 </head>
 <body>
-  <div id="app">
-    <p>AudioAssist — UI coming in c02</p>
-  </div>
-  <script src="js/app.js"></script>
+<div id="app">
+
+  <!-- ── Toolbar ─────────────────────────────────────────────────────────── -->
+  <header id="toolbar">
+    <span class="app-title">AudioAssist</span>
+    <div class="toolbar-actions">
+      <select id="sel-engine" title="ASR engine">
+        <option value="qwen">Qwen3-ASR</option>
+        <option value="whisper">Whisper</option>
+      </select>
+      <button id="btn-open" class="btn-primary">Open File</button>
+    </div>
+  </header>
+
+  <!-- ── Main layout ─────────────────────────────────────────────────────── -->
+  <main id="main">
+
+    <!-- Left: transcript panel -->
+    <section id="transcript-panel">
+
+      <!-- Drop zone (idle state) -->
+      <div id="drop-zone">
+        <div class="drop-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <p class="drop-title">Drop audio or video here</p>
+        <p class="drop-sub">
+          or <button id="btn-select" class="btn-link">choose a file</button>
+        </p>
+        <p class="drop-formats">MP3 · MP4 · M4A · WAV · FLAC · MOV · MKV</p>
+      </div>
+
+      <!-- Progress panel (transcribing state) -->
+      <div id="progress-panel" hidden>
+        <p id="progress-filename"></p>
+        <div id="progress-bar-wrap">
+          <div id="progress-bar"></div>
+        </div>
+        <p id="progress-msg">Preparing…</p>
+      </div>
+
+      <!-- Transcript list (done state) -->
+      <div id="transcript-header" hidden>
+        <span id="transcript-meta"></span>
+        <button id="btn-save" class="btn-save" hidden>Save</button>
+        <span id="save-status" class="save-status"></span>
+      </div>
+      <div id="transcript-list" hidden></div>
+
+    </section>
+
+    <!-- Right: player panel -->
+    <aside id="player-panel">
+      <div id="player-filename"></div>
+      <audio id="audio-el" controls></audio>
+      <div id="player-time">00:00 / 00:00</div>
+    </aside>
+
+  </main>
+</div>
+
+<script src="js/player.js"></script>
+<script src="js/transcript.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>

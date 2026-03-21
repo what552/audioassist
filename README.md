@@ -2,6 +2,18 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
+## Features (v0.2 — r01-c02)
+
+- **Engine selector** — choose Qwen3-ASR or Whisper before transcribing
+- **Open File button** — native file picker for audio/video files
+- **Drag-and-drop** — drop a file onto the drop zone to start transcription
+- **Transcription progress** — live progress bar + status message while pipeline runs
+- **Transcript list** — speaker-labelled blocks with timestamps; click any row to seek the player
+- **Inline editing** — double-click a row's text to edit in-place (Enter/Blur saves, Escape cancels); unsaved rows highlighted in orange
+- **Save button** — flush all edits back to the JSON transcript; `.md` sidecar regenerated automatically
+- **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
+- **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
+
 ## Requirements
 
 - Python 3.12.2 (see `.python-version`)
@@ -23,15 +35,22 @@ python -m venv .venv
 source .venv/bin/activate        # macOS/Linux
 .venv\Scripts\activate           # Windows
 
-# 2. Install core dependencies
+# 2. Install core dependencies (includes Qwen3-ASR + torch)
 pip install -r requirements.txt
 
-# 3. Install ASR backend (choose one)
-#   Apple Silicon (macOS arm64):
+# 3. Install Whisper backend — only needed if you want engine="whisper"
+#    Choose ONE depending on your platform:
+#    Apple Silicon (macOS arm64):
 pip install mlx-whisper
-#   Other platforms:
+#    Other platforms (Linux / Windows / x86 macOS):
 pip install faster-whisper
 ```
+
+> **Note:** `requirements.txt` already includes `qwen-asr`, `torch`, and
+> `pyannote.audio>=4.0` (speaker diarization).
+> The Whisper backends (`mlx-whisper` / `faster-whisper`) are optional add-ons
+> and are **not** included in `requirements.txt` because the correct choice is
+> platform-dependent. Skip step 3 entirely if you only use the Qwen3-ASR engine.
 
 ## Run
 
@@ -60,7 +79,22 @@ App data (models, config, transcripts) is stored in the platform-standard locati
 
 ### Speaker diarization
 
-Requires a HuggingFace token with access to `pyannote/speaker-diarization-3.1`. Set `HF_TOKEN` environment variable or pass via `transcribe()` options.
+The default diarizer is **`pyannote-diarization-community-1`** — no HuggingFace
+token required.
+
+Two models are available:
+
+| Model ID | Token required | Notes |
+|----------|---------------|-------|
+| `pyannote-diarization-community-1` | No | Default; community model, works out of the box |
+| `pyannote-diarization-3.1` | Yes | Gated model; backward-compatible for existing users |
+
+To use `pyannote-diarization-3.1`, set `HF_TOKEN` before launching:
+
+```bash
+export HF_TOKEN=hf_...   # macOS / Linux
+set HF_TOKEN=hf_...      # Windows cmd
+```
 
 ## Running tests
 
@@ -68,4 +102,3 @@ Requires a HuggingFace token with access to `pyannote/speaker-diarization-3.1`. 
 pip install pytest
 python -m pytest tests/ -v
 ```
-
