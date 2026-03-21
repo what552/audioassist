@@ -48,10 +48,11 @@ class API:
 
     def select_file(self) -> Optional[str]:
         """Open a native file picker. Returns selected path or None."""
+        import webview
         result = _window.create_file_dialog(
-            dialog_type=0,  # OPEN_DIALOG
+            dialog_type=webview.OPEN_DIALOG,
             allow_multiple=False,
-            file_types=("Audio/Video (*.mp3;*.mp4;*.m4a;*.wav;*.flac;*.ogg;*.aac;*.mov;*.mkv)",),
+            file_types=("Audio Video (*.mp3;*.mp4;*.m4a;*.wav;*.flac;*.ogg;*.aac;*.mov;*.mkv)",),
         )
         return result[0] if result else None
 
