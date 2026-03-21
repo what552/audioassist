@@ -150,6 +150,10 @@ const Summary = (() => {
     if (prompt_ === null) return;
 
     const templates = await window.pywebview.api.get_summary_templates();
+    if (templates.some(t => t.name === name.trim())) {
+      alert(`A template named "${name.trim()}" already exists. Please choose a different name.`);
+      return;
+    }
     templates.push({ name: name.trim(), prompt: prompt_.trim() });
     await window.pywebview.api.save_summary_templates(templates);
     _renderTemplates(templates);
@@ -163,6 +167,10 @@ const Summary = (() => {
     const prompt_ = prompt('Prompt:', t.prompt);
     if (prompt_ === null) return;
 
+    if (name.trim() !== t.name && templates.some((u, i) => i !== index && u.name === name.trim())) {
+      alert(`A template named "${name.trim()}" already exists. Please choose a different name.`);
+      return;
+    }
     const updated = [...templates];
     updated[index] = { name: name.trim(), prompt: prompt_.trim() };
     await window.pywebview.api.save_summary_templates(updated);

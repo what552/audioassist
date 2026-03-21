@@ -39,7 +39,7 @@ OpenAI-compatible LLM 摘要包装层。
 | `_run()` 内部流程 | 读取 `OUTPUT_DIR/{job_id}.json`，拼接 segment 文本，从 config 读取 api 参数，调用 `src.summary.summarize(..., stream=True)` |
 | JS 事件推送 | 流式 chunk → `onSummaryChunk(jobId, chunk)`；结束 → `onSummaryComplete(jobId, fullText)`；异常 → `onSummaryError(jobId, message)` |
 | `get_api_config()` / `save_api_config(cfg)` | 读写 `config.json` 中的 `api` 字段（`base_url` / `api_key` / `model`） |
-| `get_summary_templates()` / `save_summary_templates(templates)` | 读写 `config.json` 中的 `summary_templates` 字段（`[{name, prompt}]` 列表） |
+| `get_summary_templates()` / `save_summary_templates(templates)` | 读写 `APP_DATA_DIR/templates.json`（独立文件，`[{name, prompt}]` 列表；与 `config.json` 分离） |
 
 ### 新增 — ui/js/summary.js
 
