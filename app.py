@@ -267,6 +267,67 @@ class API:
         threading.Thread(target=_run, daemon=True).start()
         return {"job_id": job_id, "status": "started"}
 
+    # ── History ────────────────────────────────────────────────────────────────
+
+    def get_history(self) -> list[dict]:
+        """
+        Return past transcription jobs, newest first.
+        Each entry: {job_id, filename, date, duration, language}.
+        """
+        import glob
+        result = []
+        if not os.path.isdir(OUTPUT_DIR):
+            return result
+        for path in sorted(
+            glob.glob(os.path.join(OUTPUT_DIR, "*.json")),
+            key=os.path.getmtime,
+            reverse=True,
+        ):
+            if os.path.basename(path).endswith("_summary.json"):
+                continue
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                job_id = os.path.splitext(os.path.basename(path))[0]
+                segs = data.get("segments", [])
+                duration = round(segs[-1]["end"]) if segs else 0
+                result.append({
+                    "job_id": job_id,
+                    "filename": data.get("filename") or data.get("audio") or job_id,
+                    "date": data.get("created_at", ""),
+                    "duration": duration,
+                    "language": data.get("language", ""),
+                })
+            except Exception:
+                pass
+        return result
+
+    def get_summary_versions(self, job_id: str) -> list[dict]:
+        """Return saved summary versions for a job (newest last)."""
+        path = os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
+        if not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def save_summary_version(self, job_id: str, text: str) -> bool:
+        """Append a new summary version; keep at most 3 per job."""
+        import time as _time
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        path = os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
+        versions: list[dict] = []
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    versions = json.load(f)
+            except Exception:
+                versions = []
+        versions.append({"text": text, "created_at": _time.strftime("%Y-%m-%d %H:%M")})
+        versions = versions[-3:]  # keep max 3
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(versions, f, ensure_ascii=False, indent=2)
+        return True
+
     # ── Model management ───────────────────────────────────────────────────────
 
     def get_models(self) -> list[dict]:

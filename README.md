@@ -2,18 +2,21 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.5 — r01-c06)
+## Features (v0.6 — r02-a)
 
+- **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
+- **History sidebar** — lists all past transcriptions (newest first); click any entry to reload its transcript and player
 - **Engine selector** — choose Qwen3-ASR or Whisper before transcribing
-- **Open File button** — native file picker for audio/video files
-- **Drag-and-drop** — drop a file onto the drop zone to start transcription
+- **Upload File button** — native file picker for audio/video files (sidebar footer)
+- **Start Recording button** — launch live microphone transcription from the sidebar footer
+- **Drag-and-drop** — drop a file onto the center panel to start transcription
 - **Transcription progress** — live progress bar + status message while pipeline runs
 - **Transcript list** — speaker-labelled blocks with timestamps; click any row to seek the player
 - **Inline editing** — double-click a row's text to edit in-place (Enter/Blur saves, Escape cancels); unsaved rows highlighted in orange
 - **Save button** — flush all edits back to the JSON transcript; `.md` sidecar regenerated automatically
 - **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
-- **Summary panel** — LLM-powered transcript summarization with streaming output (see [Summary panel](#summary-panel))
+- **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher (see [Summary panel](#summary-panel))
 - **Realtime transcription** — live microphone transcription with Silero VAD; utterances appear as you speak; full session audio saved as `.wav` (see [Realtime transcription](#realtime-transcription))
 - **Model auto-download** — ASR and diarizer model weights are downloaded automatically on first use; progress is shown in the UI progress bar; no manual setup required
 
@@ -115,7 +118,7 @@ set HF_TOKEN=hf_...      # Windows cmd
 
 ## Realtime transcription
 
-Click **🎙 Realtime** in the toolbar to start live microphone transcription.
+Click **🎙 Start Recording** in the history sidebar footer to start live microphone transcription.
 
 ### How it works
 
@@ -146,30 +149,32 @@ Click **🎙 Realtime** in the toolbar to start live microphone transcription.
 
 ## Summary panel
 
-After transcription completes, the **Summary** section appears in the right-hand player panel.
+After transcription completes, the collapsible **Summary** panel appears on the right. Click the **‹** / **›** strip to collapse or expand it.
 
 ### Layout
 
 ```
-┌─────────────────────────────────────────┐
-│  [Template ▼]  [Summarize]  [⚙]        │  ← summary controls
-│ ┌─────────────────────────────────────┐ │
-│ │  (streaming output / placeholder)  │ │  ← #summary-output
-│ └─────────────────────────────────────┘ │
-│  ── API config (hidden by default) ──   │  ← ⚙ settings panel
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│ ‹ │ [⚙] [Template ▼] [Generate]         │  ← controls
+│   │ [v1 · date] [v2 · date]              │  ← version switcher (when versions exist)
+│   │ ┌──────────────────────────────────┐ │
+│   │ │  (streaming output / versions)  │ │  ← #summary-output
+│   │ └──────────────────────────────────┘ │
+│   │  ── API config (hidden by default) ── │  ← ⚙ settings panel
+└──────────────────────────────────────────┘
 ```
 
 ### Usage
 
-1. **Select a template** from the drop-down list (left of the controls bar).
-2. Click **Summarize** — the transcript text is sent to the configured LLM endpoint and the response streams in token by token.
-3. Click **⚙** to open the settings panel and configure:
+1. **Select a template** from the drop-down list.
+2. Click **Generate** — the transcript is sent to the configured LLM and the response streams in.
+3. Each completed summary is saved automatically as a version (up to 3 per job). Click a version button to recall it.
+4. Click **⚙** to open the settings panel and configure:
    - **Base URL** — OpenAI-compatible endpoint (e.g. `https://api.openai.com/v1`, DeepSeek, Qwen, local Ollama).
    - **API Key** — authentication key for the endpoint.
    - **Model** — model identifier (e.g. `gpt-4o-mini`, `deepseek-chat`).
    - Click **Save** to persist the config to `config.json`.
-4. Use **+ Add template** to create a named prompt; **Edit** / **✕** to update or delete existing ones. Templates are saved to `templates.json`.
+5. Use **+ Add template** to create a named prompt; **Edit** / **✕** to update or delete existing ones. Templates are saved to `templates.json`.
 
 ### OpenAI-compatible endpoints
 

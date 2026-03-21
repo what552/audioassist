@@ -161,6 +161,27 @@ class TestToJson:
         # Should be at most 3 decimal places
         assert round(start, 3) == start
 
+    def test_has_filename_field(self, tmp_path, asr_result, two_speakers):
+        blocks = merge(asr_result, two_speakers)
+        out = str(tmp_path / "result.json")
+        to_json(blocks, "/audio/test.mp3", "zh", out)
+
+        with open(out) as f:
+            data = json.load(f)
+
+        assert data["filename"] == "test.mp3"
+
+    def test_has_created_at_field(self, tmp_path, asr_result, two_speakers):
+        blocks = merge(asr_result, two_speakers)
+        out = str(tmp_path / "result.json")
+        to_json(blocks, "/audio/test.mp3", "zh", out)
+
+        with open(out) as f:
+            data = json.load(f)
+
+        assert "created_at" in data
+        assert len(data["created_at"]) > 0
+
 
 # ── to_markdown ───────────────────────────────────────────────────────────────
 

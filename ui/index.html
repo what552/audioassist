@@ -17,32 +17,42 @@
         <option value="qwen">Qwen3-ASR</option>
         <option value="whisper">Whisper</option>
       </select>
-      <button id="btn-open" class="btn-primary">Open File</button>
-      <button id="btn-realtime" class="btn-realtime">🎙 Realtime</button>
     </div>
   </header>
 
-  <!-- ── Main layout ─────────────────────────────────────────────────────── -->
+  <!-- ── Main layout (3 columns) ─────────────────────────────────────────── -->
   <main id="main">
 
-    <!-- Left: transcript panel -->
-    <section id="transcript-panel">
+    <!-- ── Left: History sidebar ──────────────────────────────────────────── -->
+    <nav id="history-panel">
+      <div id="history-list"></div>
+      <div id="history-footer">
+        <button id="btn-upload" class="btn-sidebar">📁 Upload File</button>
+        <button id="btn-start-recording" class="btn-sidebar btn-sidebar-record">🎙 Start Recording</button>
+      </div>
+    </nav>
 
-      <!-- Drop zone (idle state) -->
-      <div id="drop-zone">
-        <div class="drop-icon">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+    <!-- ── Center: player + transcript content ────────────────────────────── -->
+    <section id="center-panel">
+
+      <!-- Player bar (shown when a job is loaded) -->
+      <div id="player-bar" hidden>
+        <div id="player-filename"></div>
+        <audio id="audio-el" controls></audio>
+        <div id="player-time">00:00 / 00:00</div>
+      </div>
+
+      <!-- Empty hint (idle state) -->
+      <div id="empty-hint">
+        <div class="empty-hint-icon">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
                stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/>
-            <line x1="12" y1="3" x2="12" y2="15"/>
+            <path d="M9 19V6l12-3v13"/>
+            <circle cx="6" cy="19" r="3"/>
+            <circle cx="18" cy="16" r="3"/>
           </svg>
         </div>
-        <p class="drop-title">Drop audio or video here</p>
-        <p class="drop-sub">
-          or <button id="btn-select" class="btn-link">choose a file</button>
-        </p>
-        <p class="drop-formats">MP3 · MP4 · M4A · WAV · FLAC · MOV · MKV</p>
+        <p class="empty-hint-text">Select a recording from the history,<br>or upload a new file.</p>
       </div>
 
       <!-- Progress panel (transcribing state) -->
@@ -54,7 +64,7 @@
         <p id="progress-msg">Preparing…</p>
       </div>
 
-      <!-- Transcript list (done state) -->
+      <!-- Transcript (done state) -->
       <div id="transcript-header" hidden>
         <span id="transcript-meta"></span>
         <button id="btn-save" class="btn-save" hidden>Save</button>
@@ -73,21 +83,24 @@
 
     </section>
 
-    <!-- Right: player + summary panel -->
-    <aside id="player-panel">
-      <div id="player-filename"></div>
-      <audio id="audio-el" controls></audio>
-      <div id="player-time">00:00 / 00:00</div>
+    <!-- ── Right: Summary panel (collapsible) ─────────────────────────────── -->
+    <aside id="summary-panel" hidden>
 
-      <!-- ── Summary section ──────────────────────────────────────────── -->
-      <div id="summary-section" hidden>
+      <!-- Toggle strip (always visible, 28px wide when collapsed) -->
+      <button id="btn-toggle-summary" class="summary-toggle" title="Toggle summary panel">‹</button>
 
-        <!-- Controls row: template selector + Summarize button -->
+      <!-- Summary content (hidden when collapsed) -->
+      <div id="summary-inner">
+
+        <!-- Controls row -->
         <div id="summary-controls">
-          <select id="sel-template" title="Summary template"></select>
-          <button id="btn-summarize" class="btn-primary btn-sm">Summarize</button>
           <button id="btn-summary-settings" class="btn-icon" title="API settings">⚙</button>
+          <select id="sel-template" title="Summary template"></select>
+          <button id="btn-summarize" class="btn-primary btn-sm">Generate</button>
         </div>
+
+        <!-- Version switcher -->
+        <div id="summary-versions" hidden></div>
 
         <!-- Output area -->
         <div id="summary-output">
@@ -124,8 +137,7 @@
           <div id="template-list"></div>
         </div>
 
-      </div>
-      <!-- ── / Summary section ─────────────────────────────────────────── -->
+      </div><!-- /#summary-inner -->
 
     </aside>
 
@@ -134,8 +146,9 @@
 
 <script src="js/player.js"></script>
 <script src="js/transcript.js"></script>
-<script src="js/summary.js"></script>
 <script src="js/realtime.js"></script>
+<script src="js/summary.js"></script>
+<script src="js/history.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

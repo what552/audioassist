@@ -111,8 +111,8 @@ class RealtimeTranscriber:
         logger.info("Silero VAD loaded")
 
         if self._engine == "whisper":
-            from .asr_whisper import WhisperEngine
-            self._asr = WhisperEngine(with_timestamps=False)
+            from .asr_whisper import WhisperASREngine
+            self._asr = WhisperASREngine(with_timestamps=False)
         else:
             from .asr import ASREngine
             self._asr = ASREngine(with_timestamps=False)

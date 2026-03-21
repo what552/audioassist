@@ -278,6 +278,50 @@ class TestStop:
         assert rt._stream is None
 
 
+# ── _load_models engine dispatch ─────────────────────────────────────────────
+
+class TestLoadModels:
+    def test_whisper_engine_uses_WhisperASREngine(self):
+        """engine='whisper' path imports WhisperASREngine (not WhisperEngine)."""
+        mock_whisper_cls = MagicMock()
+        mock_asr_whisper_mod = types.ModuleType("src.asr_whisper")
+        mock_asr_whisper_mod.WhisperASREngine = mock_whisper_cls
+
+        mock_silero = types.ModuleType("silero_vad")
+        mock_silero.load_silero_vad = MagicMock(return_value=MagicMock())
+
+        with patch.dict(sys.modules, {
+            "silero_vad": mock_silero,
+            "src.asr_whisper": mock_asr_whisper_mod,
+        }):
+            import src.realtime as m
+            rt = m.RealtimeTranscriber(engine="whisper")
+            rt._load_models()
+
+        mock_whisper_cls.assert_called_once_with(with_timestamps=False)
+        mock_whisper_cls.return_value.load.assert_called_once()
+
+    def test_qwen_engine_uses_ASREngine(self):
+        """engine='qwen' (default) path imports ASREngine."""
+        mock_asr_cls = MagicMock()
+        mock_asr_mod = types.ModuleType("src.asr")
+        mock_asr_mod.ASREngine = mock_asr_cls
+
+        mock_silero = types.ModuleType("silero_vad")
+        mock_silero.load_silero_vad = MagicMock(return_value=MagicMock())
+
+        with patch.dict(sys.modules, {
+            "silero_vad": mock_silero,
+            "src.asr": mock_asr_mod,
+        }):
+            import src.realtime as m
+            rt = m.RealtimeTranscriber(engine="qwen")
+            rt._load_models()
+
+        mock_asr_cls.assert_called_once_with(with_timestamps=False)
+        mock_asr_cls.return_value.load.assert_called_once()
+
+
 # ── _write_wav ────────────────────────────────────────────────────────────────
 
 class TestWriteWav:
