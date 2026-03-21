@@ -26,6 +26,10 @@ CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
 
 # Per-job lock to prevent concurrent read-modify-write on transcript files
+# TODO: _transcript_locks grows unbounded (one entry per job for the lifetime of
+#   the process).  Fine for a single-session desktop app, but should be cleaned
+#   up (e.g. evict locks after save_transcript returns, or use a WeakValueDictionary)
+#   if the app ever supports long-running multi-session use.
 _transcript_locks: dict[str, threading.Lock] = {}
 _transcript_locks_mutex = threading.Lock()
 

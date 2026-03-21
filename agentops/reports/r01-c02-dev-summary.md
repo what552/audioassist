@@ -59,7 +59,7 @@ $ python -m pytest tests/ -v
 
 ## 未完成项
 
-c02 范围内全部完成。以下为 c03+ 待做项：
+以下为 c03+ 待做项：
 
 - `app.py`：`summarize`、`save_api_config`、`get_api_config`、`save_summary_templates`、`get_summary_templates` 实现（c03）
 - `app.py`：`start_realtime`、`stop_realtime` 实现（c04）
@@ -67,3 +67,5 @@ c02 范围内全部完成。以下为 c03+ 待做项：
 - `src/realtime.py`：Silero VAD + sounddevice 实时转写（c04）
 - `model_manager.py`：`snapshot_download` 细粒度进度（目前仅 0% 和 100%）
 - 集成测试（需真实模型，留后续 cycle 联调时补充）
+- **`app.js`：转写进行中拖入新文件无中止机制**（`_startTranscription` 不检查 `_currentJobId` 状态，新拖入文件会覆盖 `_currentJobId` 但旧 pipeline 仍在后台运行，进度回调可能串台）——需在 `app.py` 侧加 `cancel_transcribe(job_id)` 接口，JS 侧在启动新任务前先调用（c03 处理）
+- **JS 单元测试（Jest）待补**：`player.js`、`transcript.js`、`app.js` 当前无自动化测试；需搭建 jsdom + Jest 环境后补充（c03 处理）

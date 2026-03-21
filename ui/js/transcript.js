@@ -11,7 +11,10 @@
 const Transcript = (() => {
   let _jobId = null;
   let _container = null;
-  let _segments = [];   // original segment objects (includes words)
+  // Shallow clone of each segment (see render() below) — words[] arrays are
+  // shared references to the original objects from the Python API response.
+  // Treat words[] as READ-ONLY; never mutate individual word objects in place.
+  let _segments = [];
   let _unsavedCount = 0;
 
   // ── Render ───────────────────────────────────────────────────────────────────
