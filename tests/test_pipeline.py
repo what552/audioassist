@@ -131,6 +131,29 @@ class TestProgressCallback:
         assert md_path.endswith(".md")
 
 
+# ── diarizer model selection ──────────────────────────────────────────────────
+
+class TestDiarizerModelSelection:
+    def test_diarizer_model_id_passed_to_engine(self, tmp_path, mock_pipeline_deps):
+        from src.pipeline import run
+        run("/audio/test.mp3", str(tmp_path), diarizer_model_id="pyannote-diarization-3.1")
+        call_kwargs = mock_pipeline_deps["diarize_cls"].call_args[1]
+        assert call_kwargs.get("model_id") == "pyannote-diarization-3.1"
+
+    def test_default_diarizer_model_id_is_none(self, tmp_path, mock_pipeline_deps):
+        """When diarizer_model_id not provided, None is passed (DiarizationEngine uses its default)."""
+        from src.pipeline import run
+        run("/audio/test.mp3", str(tmp_path))
+        call_kwargs = mock_pipeline_deps["diarize_cls"].call_args[1]
+        assert call_kwargs.get("model_id") is None
+
+    def test_hf_token_passed_to_diarizer(self, tmp_path, mock_pipeline_deps):
+        from src.pipeline import run
+        run("/audio/test.mp3", str(tmp_path), hf_token="hf_abc123")
+        call_kwargs = mock_pipeline_deps["diarize_cls"].call_args[1]
+        assert call_kwargs.get("hf_token") == "hf_abc123"
+
+
 # ── engine selection ──────────────────────────────────────────────────────────
 
 class TestEngineSelection:

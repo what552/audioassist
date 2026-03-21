@@ -40,7 +40,8 @@ class TestListModels:
         mm = _make_manager(isolated_data_dir)
         for entry in mm.list_models():
             for field in ("id", "name", "description", "size_gb", "engine",
-                          "role", "languages", "recommended", "downloaded", "local_path"):
+                          "role", "languages", "recommended", "requires_token",
+                          "downloaded", "local_path"):
                 assert field in entry, f"Missing field: {field}"
 
     def test_not_downloaded_when_dir_empty(self, isolated_data_dir):
@@ -202,6 +203,95 @@ class TestDelete:
     def test_delete_nonexistent_is_noop(self, isolated_data_dir):
         mm = _make_manager(isolated_data_dir)
         mm.delete("nonexistent-model")  # should not raise
+
+
+# ── diarizer catalog ──────────────────────────────────────────────────────────
+
+class TestDiarizerCatalog:
+    def test_community_1_in_catalog(self, isolated_data_dir):
+        from src.model_manager import CATALOG
+        ids = [m.id for m in CATALOG]
+        assert "pyannote-diarization-community-1" in ids
+
+    def test_diarization_3_1_in_catalog(self, isolated_data_dir):
+        from src.model_manager import CATALOG
+        ids = [m.id for m in CATALOG]
+        assert "pyannote-diarization-3.1" in ids
+
+    def test_community_1_requires_no_token(self, isolated_data_dir):
+        from src.model_manager import CATALOG
+        m = next(m for m in CATALOG if m.id == "pyannote-diarization-community-1")
+        assert m.requires_token is False
+
+    def test_diarization_3_1_requires_token(self, isolated_data_dir):
+        from src.model_manager import CATALOG
+        m = next(m for m in CATALOG if m.id == "pyannote-diarization-3.1")
+        assert m.requires_token is True
+
+    def test_community_1_is_recommended(self, isolated_data_dir):
+        from src.model_manager import CATALOG
+        m = next(m for m in CATALOG if m.id == "pyannote-diarization-community-1")
+        assert m.recommended is True
+
+    def test_diarizer_role(self, isolated_data_dir):
+        from src.model_manager import CATALOG
+        for m in CATALOG:
+            if m.id.startswith("pyannote-diarization"):
+                assert m.role == "diarizer"
+
+
+# ── select_diarizer / get_selected_diarizer ───────────────────────────────────
+
+class TestSelectAndGetSelectedDiarizer:
+    def _install_model(self, isolated_data_dir, model_id: str):
+        d = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(d, exist_ok=True)
+        open(os.path.join(d, "config.json"), "w").close()
+
+    def test_select_diarizer_saves_to_config(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        self._install_model(isolated_data_dir, "pyannote-diarization-community-1")
+        mm.select_diarizer_model("pyannote-diarization-community-1")
+
+        with open(isolated_data_dir["config_path"]) as f:
+            cfg = json.load(f)
+        assert cfg["diarizer_model"] == "pyannote-diarization-community-1"
+
+    def test_select_wrong_role_raises(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        self._install_model(isolated_data_dir, "qwen3-asr-1.7b")
+        with pytest.raises(ValueError, match="Not a diarizer model"):
+            mm.select_diarizer_model("qwen3-asr-1.7b")
+
+    def test_select_not_downloaded_raises(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        with pytest.raises(RuntimeError, match="not downloaded"):
+            mm.select_diarizer_model("pyannote-diarization-community-1")
+
+    def test_get_selected_diarizer_returns_config_value(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        self._install_model(isolated_data_dir, "pyannote-diarization-community-1")
+        mm.select_diarizer_model("pyannote-diarization-community-1")
+        assert mm.get_selected_diarizer() == "pyannote-diarization-community-1"
+
+    def test_get_selected_diarizer_auto_selects_recommended(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        self._install_model(isolated_data_dir, "pyannote-diarization-community-1")
+        assert mm.get_selected_diarizer() == "pyannote-diarization-community-1"
+
+    def test_get_selected_diarizer_returns_none_when_none_downloaded(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        assert mm.get_selected_diarizer() is None
+
+    def test_delete_clears_diarizer_config(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        self._install_model(isolated_data_dir, "pyannote-diarization-community-1")
+        mm.select_diarizer_model("pyannote-diarization-community-1")
+        mm.delete("pyannote-diarization-community-1")
+
+        with open(isolated_data_dir["config_path"]) as f:
+            cfg = json.load(f)
+        assert "diarizer_model" not in cfg
 
 
 # ── config I/O ────────────────────────────────────────────────────────────────

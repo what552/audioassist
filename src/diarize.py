@@ -1,13 +1,19 @@
 """
 Speaker diarization module using pyannote.audio.
-Requires HF_TOKEN env var or explicit token param.
+Models are loaded from local paths managed by ModelManager.
+HF_TOKEN is only required for pyannote-diarization-3.1 (gated model).
+pyannote-diarization-community-1 (default) requires no token.
 """
 from __future__ import annotations
 from dataclasses import dataclass
 import os
 import logging
 
+from .model_manager import ModelManager
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_DIARIZER_MODEL = "pyannote-diarization-community-1"
 
 
 @dataclass
@@ -18,44 +24,47 @@ class SpeakerSegment:
 
 
 class DiarizationEngine:
-    """Wraps pyannote/speaker-diarization-3.1."""
-
-    MODEL = "pyannote/speaker-diarization-3.1"
+    """Loads a pyannote diarization pipeline from a local ModelManager path."""
 
     def __init__(
         self,
+        model_id: str | None = None,
         hf_token: str | None = None,
         num_speakers: int | None = None,
-        hf_endpoint: str | None = None,
     ):
+        self.model_id = model_id or DEFAULT_DIARIZER_MODEL
+        # hf_token kept for backward compat (3.1 gated model); not passed to
+        # from_pretrained since we load from a local path.
         self.hf_token = hf_token or os.environ.get("HF_TOKEN")
         self.num_speakers = num_speakers
-        if hf_endpoint:
-            os.environ.setdefault("HF_ENDPOINT", hf_endpoint)
-        # Prevent pyannote from checking HF on every load (fails in China)
+        # Prevent pyannote from phoning home on every load (fails in China)
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         self._pipeline = None
 
     def load(self):
-        """Lazy-load pyannote pipeline."""
+        """Lazy-load pyannote pipeline from local ModelManager path."""
+        if self._pipeline is not None:
+            return
+
         try:
             from pyannote.audio import Pipeline
-            import torch
         except ImportError:
             raise ImportError(
                 "pyannote.audio not installed. Run: pip install pyannote.audio"
             )
 
-        if not self.hf_token:
+        mm = ModelManager()
+        info = mm.get_model(self.model_id)
+
+        if info is not None and info.requires_token and not self.hf_token:
             raise ValueError(
-                "HF_TOKEN required for pyannote. "
+                f"HF_TOKEN required for {self.model_id}. "
                 "Set env var HF_TOKEN or pass hf_token= to DiarizationEngine."
             )
 
-        logger.info(f"Loading diarization model: {self.MODEL}")
-        self._pipeline = Pipeline.from_pretrained(
-            self.MODEL, token=self.hf_token
-        )
+        local_path = mm.local_path(self.model_id)
+        logger.info(f"Loading diarization model from: {local_path}")
+        self._pipeline = Pipeline.from_pretrained(local_path)
 
         import torch
         if torch.backends.mps.is_available():

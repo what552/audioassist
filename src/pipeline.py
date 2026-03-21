@@ -25,6 +25,7 @@ def run(
     with_timestamps: bool = True,
     num_speakers: Optional[int] = None,
     engine: str = "qwen",
+    diarizer_model_id: Optional[str] = None,
     job_id: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> tuple[str, str]:
@@ -35,10 +36,13 @@ def run(
     Args:
         audio_path: Path to input audio/video file.
         output_dir: Directory for JSON and MD output.
-        hf_token: HuggingFace token for pyannote diarization.
+        hf_token: HuggingFace token for pyannote diarization (only required for
+            pyannote-diarization-3.1; community-1 default needs no token).
         with_timestamps: Whether to include word-level timestamps.
         num_speakers: Known number of speakers (optional hint for diarization).
         engine: ASR engine to use — "qwen" or "whisper".
+        diarizer_model_id: Diarization model catalog ID; defaults to
+            "pyannote-diarization-community-1".
         job_id: Unique job identifier; auto-generated if None.
         progress_callback: Called with (percent 0.0-1.0, message) at each step.
 
@@ -107,7 +111,11 @@ def run(
 
         # 3. Diarization
         _progress(0.6, "Running speaker diarization...")
-        diarizer = DiarizationEngine(hf_token=hf_token, num_speakers=num_speakers)
+        diarizer = DiarizationEngine(
+            model_id=diarizer_model_id,
+            hf_token=hf_token,
+            num_speakers=num_speakers,
+        )
         speaker_segments = diarizer.diarize(wav_path)
         logger.info(
             f"Found {len(set(s.speaker for s in speaker_segments))} speaker(s)"

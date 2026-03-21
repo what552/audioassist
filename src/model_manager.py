@@ -28,10 +28,11 @@ class ModelInfo:
     description: str
     repo_id: str
     size_gb: float
-    engine: str        # "qwen" | "mlx-whisper"
-    role: str          # "asr" | "aligner"
+    engine: str        # "qwen" | "mlx-whisper" | "pyannote"
+    role: str          # "asr" | "aligner" | "diarizer"
     languages: list[str] = field(default_factory=list)
     recommended: bool = False
+    requires_token: bool = False
 
 
 CATALOG: list[ModelInfo] = [
@@ -87,6 +88,27 @@ CATALOG: list[ModelInfo] = [
         role="asr",
         languages=["zh", "en", "ja", "ko", "fr", "de", "es"],
     ),
+    ModelInfo(
+        id="pyannote-diarization-community-1",
+        name="pyannote Speaker Diarization community-1",
+        description="无需 HF token，社区版说话人分离模型，适合大多数场景",
+        repo_id="pyannote/speaker-diarization-community-1",
+        size_gb=0.5,
+        engine="pyannote",
+        role="diarizer",
+        requires_token=False,
+        recommended=True,
+    ),
+    ModelInfo(
+        id="pyannote-diarization-3.1",
+        name="pyannote Speaker Diarization 3.1",
+        description="官方 3.1 版，需要 HF token 及 pyannote 模型访问权限",
+        repo_id="pyannote/speaker-diarization-3.1",
+        size_gb=0.5,
+        engine="pyannote",
+        role="diarizer",
+        requires_token=True,
+    ),
 ]
 
 
@@ -111,6 +133,7 @@ class ModelManager:
                 "role": m.role,
                 "languages": m.languages,
                 "recommended": m.recommended,
+                "requires_token": m.requires_token,
                 "downloaded": self.is_downloaded(m.id),
                 "local_path": self.local_path(m.id),
             }
@@ -184,7 +207,7 @@ class ModelManager:
             logger.info(f"Deleted: {model_id}")
         cfg = self._load_config()
         changed = False
-        for key in ("asr_model", "aligner_model"):
+        for key in ("asr_model", "aligner_model", "diarizer_model"):
             if cfg.get(key) == model_id:
                 del cfg[key]
                 changed = True
@@ -232,6 +255,29 @@ class ModelManager:
             return cfg["aligner_model"]
         for m in CATALOG:
             if m.role == "aligner" and self.is_downloaded(m.id):
+                return m.id
+        return None
+
+    def select_diarizer_model(self, model_id: str):
+        info = self.get_model(model_id)
+        if info is None or info.role != "diarizer":
+            raise ValueError(f"Not a diarizer model: {model_id}")
+        if not self.is_downloaded(model_id):
+            raise RuntimeError(f"Model not downloaded: {model_id}")
+        cfg = self._load_config()
+        cfg["diarizer_model"] = model_id
+        self._save_config(cfg)
+
+    def get_selected_diarizer(self) -> Optional[str]:
+        """Return selected diarizer model ID, or first downloaded recommended one."""
+        cfg = self._load_config()
+        if "diarizer_model" in cfg and self.is_downloaded(cfg["diarizer_model"]):
+            return cfg["diarizer_model"]
+        for m in CATALOG:
+            if m.role == "diarizer" and m.recommended and self.is_downloaded(m.id):
+                return m.id
+        for m in CATALOG:
+            if m.role == "diarizer" and self.is_downloaded(m.id):
                 return m.id
         return None
 
