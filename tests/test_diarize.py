@@ -161,3 +161,21 @@ class TestLocalPathLoading:
             engine.load()  # second call — pipeline already set
 
         assert mock_pipeline_cls.from_pretrained.call_count == 1
+
+
+# ── unknown model_id ──────────────────────────────────────────────────────────
+
+class TestUnknownModel:
+    def test_unknown_model_id_raises_on_load(self):
+        """load() must raise ValueError for a model_id not in CATALOG."""
+        engine = DiarizationEngine(model_id="totally-unknown-model")
+
+        fake_mods, _ = _fake_modules()
+        with patch("src.diarize.ModelManager") as mock_mm_cls, \
+             patch.dict(sys.modules, fake_mods):
+            mock_mm = MagicMock()
+            mock_mm.get_model.return_value = None  # not in catalog
+            mock_mm_cls.return_value = mock_mm
+
+            with pytest.raises(ValueError, match="Unknown diarizer model"):
+                engine.load()

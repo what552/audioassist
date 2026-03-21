@@ -171,8 +171,11 @@ class ModelManager:
         if not os.path.exists(refs_main):
             return None
 
-        with open(refs_main) as f:
+        with open(refs_main, encoding="utf-8") as f:
             snapshot_hash = f.read().strip()
+
+        if not snapshot_hash:
+            return None
 
         snapshot_path = os.path.join(cache_dir, "snapshots", snapshot_hash)
         if os.path.isdir(snapshot_path) and os.listdir(snapshot_path):

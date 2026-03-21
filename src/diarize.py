@@ -37,8 +37,6 @@ class DiarizationEngine:
         # from_pretrained since we load from a local path.
         self.hf_token = hf_token or os.environ.get("HF_TOKEN")
         self.num_speakers = num_speakers
-        # Prevent pyannote from phoning home on every load (fails in China)
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
         self._pipeline = None
 
     def load(self):
@@ -56,7 +54,13 @@ class DiarizationEngine:
         mm = ModelManager()
         info = mm.get_model(self.model_id)
 
-        if info is not None and info.requires_token and not self.hf_token:
+        if info is None:
+            raise ValueError(
+                f"Unknown diarizer model: {self.model_id!r}. "
+                "Check ModelManager.CATALOG for valid IDs."
+            )
+
+        if info.requires_token and not self.hf_token:
             raise ValueError(
                 f"HF_TOKEN required for {self.model_id}. "
                 "Set env var HF_TOKEN or pass hf_token= to DiarizationEngine."

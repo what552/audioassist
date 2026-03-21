@@ -46,7 +46,8 @@ pip install mlx-whisper
 pip install faster-whisper
 ```
 
-> **Note:** `requirements.txt` already includes `qwen-asr` and `torch`.
+> **Note:** `requirements.txt` already includes `qwen-asr`, `torch`, and
+> `pyannote.audio>=4.0` (speaker diarization).
 > The Whisper backends (`mlx-whisper` / `faster-whisper`) are optional add-ons
 > and are **not** included in `requirements.txt` because the correct choice is
 > platform-dependent. Skip step 3 entirely if you only use the Qwen3-ASR engine.
@@ -78,11 +79,17 @@ App data (models, config, transcripts) is stored in the platform-standard locati
 
 ### Speaker diarization
 
-Requires a HuggingFace token with access to `pyannote/speaker-diarization-3.1`.
+The default diarizer is **`pyannote-diarization-community-1`** — no HuggingFace
+token required.
 
-> **Current version:** HF token must be supplied via the `HF_TOKEN` environment
-> variable. There is no UI configuration entry for the token yet — that will be
-> added in c03.
+Two models are available:
+
+| Model ID | Token required | Notes |
+|----------|---------------|-------|
+| `pyannote-diarization-community-1` | No | Default; community model, works out of the box |
+| `pyannote-diarization-3.1` | Yes | Gated model; backward-compatible for existing users |
+
+To use `pyannote-diarization-3.1`, set `HF_TOKEN` before launching:
 
 ```bash
 export HF_TOKEN=hf_...   # macOS / Linux

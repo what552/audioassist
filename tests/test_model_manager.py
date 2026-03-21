@@ -451,3 +451,17 @@ class TestHFCacheDetection:
 
         mock_snap.assert_not_called()
         assert result == snap
+
+    def test_hf_cache_path_returns_none_when_refs_main_is_empty(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        """refs/main exists but is empty — should return None, not crash."""
+        hf_root = str(tmp_path / "hf-cache")
+        repo_id = "pyannote/speaker-diarization-community-1"
+        cache_name = "models--" + repo_id.replace("/", "--")
+        refs_dir = tmp_path / "hf-cache" / cache_name / "refs"
+        refs_dir.mkdir(parents=True)
+        (refs_dir / "main").write_text("")   # empty hash
+
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        assert mm._hf_cache_path("pyannote-diarization-community-1") is None
