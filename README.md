@@ -126,17 +126,17 @@ Click **🎙 Realtime** in the toolbar to start live microphone transcription.
 - Utterances shorter than ~160 ms are discarded as noise.
 - Realtime results are not saved automatically — copy the text manually if needed.
 
-### Additional dependencies
+### Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| `sounddevice` | Cross-platform microphone input |
-| `silero-vad` | Voice activity detection |
-| `numpy` | Audio array processing |
+`sounddevice`, `silero-vad`, and `numpy` are included in `requirements.txt` and installed automatically with `pip install -r requirements.txt`. No manual installation is needed.
 
-```bash
-pip install sounddevice silero-vad numpy
-```
+`sounddevice` wraps PortAudio. On most platforms PortAudio ships as a binary wheel, but on some Linux systems the system library must be present first:
+
+| Platform | System prerequisite |
+|----------|---------------------|
+| macOS | `brew install portaudio` (if pip install fails with a build error) |
+| Linux | `sudo apt install portaudio19-dev` (Debian/Ubuntu) |
+| Windows | No additional steps required — binary wheel includes PortAudio |
 
 ## Summary panel
 
@@ -175,6 +175,18 @@ Any endpoint that follows the OpenAI Chat Completions API can be used:
 | DeepSeek | `https://api.deepseek.com/v1` |
 | Qwen (Alibaba Cloud) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | Ollama (local) | `http://localhost:11434/v1` |
+
+## Known fixes
+
+### Open File dialog broken with `dialog_type=0` (pywebview ≥ 5.0)
+
+**Symptom:** Clicking **Open File** or **choose a file** threw a JavaScript-swallowed exception; `_startTranscription` was never reached.
+
+**Root cause:** `create_file_dialog` requires `dialog_type=webview.OPEN_DIALOG` (the symbolic constant). Passing the raw integer `0` is not a valid value in pywebview ≥ 5.0 and raises an internal error. Additionally, the `file_types` description string must not contain a forward slash — `"Audio/Video (*.mp3;…)"` caused a parse failure on some platforms; the description is now `"Audio Video (*.mp3;…)"`.
+
+**Fix (r01-c05, `32df34c`):**
+- `dialog_type=0` → `dialog_type=webview.OPEN_DIALOG` (imported lazily inside `select_file()` to keep the test environment, which has no pywebview installed, importable)
+- `"Audio/Video (…)"` → `"Audio Video (…)"`
 
 ## Running tests
 
