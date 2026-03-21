@@ -8,10 +8,18 @@ import pytest
 # the real ~/.local/share/TranscribeApp directory.
 import src.model_manager as _mm_module
 
+# Capture the real _hf_cache_path before any patching so TestHFCacheDetection
+# can restore it after the autouse fixture stubs it out.
+_REAL_HF_CACHE_PATH = _mm_module.ModelManager._hf_cache_path
+
 
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path, monkeypatch):
-    """Redirect all data-dir paths to a tmp directory for each test."""
+    """
+    Redirect all data-dir paths to a tmp directory for each test,
+    and stub out _hf_cache_path so the developer's real HF cache is
+    invisible unless a test explicitly overrides _hf_cache_path.
+    """
     data_dir = str(tmp_path / "TranscribeApp")
     models_dir = os.path.join(data_dir, "models")
     config_path = os.path.join(data_dir, "config.json")
@@ -19,6 +27,10 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(_mm_module, "APP_DATA_DIR", data_dir)
     monkeypatch.setattr(_mm_module, "DEFAULT_MODELS_DIR", models_dir)
     monkeypatch.setattr(_mm_module, "CONFIG_PATH", config_path)
+    # Isolate from real HF cache on the developer's machine
+    monkeypatch.setattr(
+        _mm_module.ModelManager, "_hf_cache_path", lambda self, model_id: None
+    )
     return {"data_dir": data_dir, "models_dir": models_dir, "config_path": config_path}
 
 
@@ -312,3 +324,130 @@ class TestConfigIO:
         with open(isolated_data_dir["config_path"]) as f:
             data = json.load(f)
         assert data == {"a": 1}
+
+
+# ── HF cache detection ────────────────────────────────────────────────────────
+
+def _build_hf_cache(tmp_path, repo_id: str, snapshot_hash: str = "abc123") -> str:
+    """
+    Create a minimal HF hub cache structure and return the snapshot path.
+
+    Layout:
+      tmp_path/
+        models--{org}--{name}/
+          refs/main          ← contains snapshot_hash
+          snapshots/{hash}/
+            config.json      ← non-empty marker file
+    """
+    cache_name = "models--" + repo_id.replace("/", "--")
+    repo_cache = tmp_path / cache_name
+    refs_dir = repo_cache / "refs"
+    refs_dir.mkdir(parents=True)
+    (refs_dir / "main").write_text(snapshot_hash)
+
+    snapshot_dir = repo_cache / "snapshots" / snapshot_hash
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "config.json").write_text("{}")
+    return str(snapshot_dir)
+
+
+class TestHFCacheDetection:
+    """
+    Tests for _hf_cache_path / is_downloaded / local_path HF cache fallback.
+    These tests bypass the autouse _hf_cache_path stub by calling the real
+    implementation via monkeypatch on HF_HUB_CACHE.
+    """
+
+    def _real_manager(self, isolated_data_dir, monkeypatch, hf_cache_dir: str):
+        """Return a ModelManager whose _hf_cache_path reads from hf_cache_dir."""
+        import huggingface_hub.constants as _hf_const
+        monkeypatch.setattr(_hf_const, "HF_HUB_CACHE", hf_cache_dir)
+        # Restore real implementation (autouse fixture replaced it with a stub)
+        monkeypatch.setattr(
+            _mm_module.ModelManager,
+            "_hf_cache_path",
+            _REAL_HF_CACHE_PATH,
+        )
+        from src.model_manager import ModelManager
+        return ModelManager(models_dir=isolated_data_dir["models_dir"])
+
+    def test_hf_cache_path_returns_snapshot_when_present(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        hf_root = str(tmp_path / "hf-cache")
+        snap = _build_hf_cache(
+            tmp_path / "hf-cache",
+            "pyannote/speaker-diarization-community-1",
+        )
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        result = mm._hf_cache_path("pyannote-diarization-community-1")
+        assert result == snap
+
+    def test_hf_cache_path_returns_none_when_no_cache(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        hf_root = str(tmp_path / "empty-hf-cache")
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        assert mm._hf_cache_path("pyannote-diarization-community-1") is None
+
+    def test_hf_cache_path_returns_none_for_unknown_model(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        hf_root = str(tmp_path / "hf-cache")
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        assert mm._hf_cache_path("no-such-model") is None
+
+    def test_is_downloaded_true_when_only_in_hf_cache(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        hf_root = str(tmp_path / "hf-cache")
+        _build_hf_cache(
+            tmp_path / "hf-cache",
+            "pyannote/speaker-diarization-community-1",
+        )
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        assert mm.is_downloaded("pyannote-diarization-community-1") is True
+
+    def test_local_path_returns_hf_cache_when_app_dir_empty(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        hf_root = str(tmp_path / "hf-cache")
+        snap = _build_hf_cache(
+            tmp_path / "hf-cache",
+            "pyannote/speaker-diarization-community-1",
+        )
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        assert mm.local_path("pyannote-diarization-community-1") == snap
+
+    def test_local_path_prefers_app_dir_over_hf_cache(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        hf_root = str(tmp_path / "hf-cache")
+        _build_hf_cache(
+            tmp_path / "hf-cache",
+            "pyannote/speaker-diarization-community-1",
+        )
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        # Populate the App dir too
+        app_dir = os.path.join(isolated_data_dir["models_dir"], "pyannote-diarization-community-1")
+        os.makedirs(app_dir)
+        open(os.path.join(app_dir, "config.json"), "w").close()
+
+        result = mm.local_path("pyannote-diarization-community-1")
+        assert result == app_dir
+
+    def test_download_skipped_when_in_hf_cache(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        hf_root = str(tmp_path / "hf-cache")
+        snap = _build_hf_cache(
+            tmp_path / "hf-cache",
+            "pyannote/speaker-diarization-community-1",
+        )
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+
+        with patch("huggingface_hub.snapshot_download") as mock_snap:
+            result = mm.download("pyannote-diarization-community-1")
+
+        mock_snap.assert_not_called()
+        assert result == snap

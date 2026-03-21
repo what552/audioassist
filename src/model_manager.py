@@ -143,12 +143,61 @@ class ModelManager:
     def get_model(self, model_id: str) -> Optional[ModelInfo]:
         return next((m for m in CATALOG if m.id == model_id), None)
 
-    def local_path(self, model_id: str) -> str:
+    def _app_path(self, model_id: str) -> str:
+        """App-managed path: {models_dir}/{model_id}/"""
         return os.path.join(self.models_dir, model_id)
 
+    def _hf_cache_path(self, model_id: str) -> Optional[str]:
+        """
+        Return the snapshot path in the HF hub cache if present, else None.
+
+        HF cache layout:
+          {HF_HUB_CACHE}/models--{org}--{name}/refs/main   ← snapshot hash
+          {HF_HUB_CACHE}/models--{org}--{name}/snapshots/{hash}/
+        """
+        info = self.get_model(model_id)
+        if info is None:
+            return None
+        try:
+            from huggingface_hub.constants import HF_HUB_CACHE
+        except ImportError:
+            return None
+
+        cache_dir = os.path.join(
+            HF_HUB_CACHE,
+            "models--" + info.repo_id.replace("/", "--"),
+        )
+        refs_main = os.path.join(cache_dir, "refs", "main")
+        if not os.path.exists(refs_main):
+            return None
+
+        with open(refs_main) as f:
+            snapshot_hash = f.read().strip()
+
+        snapshot_path = os.path.join(cache_dir, "snapshots", snapshot_hash)
+        if os.path.isdir(snapshot_path) and os.listdir(snapshot_path):
+            return snapshot_path
+        return None
+
+    def local_path(self, model_id: str) -> str:
+        """
+        Return the usable local path for a model.
+        Priority: App dir (if populated) → HF cache → App dir (default for new downloads).
+        """
+        app = self._app_path(model_id)
+        if os.path.isdir(app) and os.listdir(app):
+            return app
+        hf = self._hf_cache_path(model_id)
+        if hf is not None:
+            return hf
+        return app
+
     def is_downloaded(self, model_id: str) -> bool:
-        path = self.local_path(model_id)
-        return os.path.isdir(path) and bool(os.listdir(path))
+        """True if the model exists in the App dir or the HF hub cache."""
+        app = self._app_path(model_id)
+        if os.path.isdir(app) and os.listdir(app):
+            return True
+        return self._hf_cache_path(model_id) is not None
 
     # ── Download ──────────────────────────────────────────────────────────────
 
@@ -173,35 +222,37 @@ class ModelManager:
         if info is None:
             raise ValueError(f"Unknown model: {model_id}")
 
-        local = self.local_path(model_id)
         if self.is_downloaded(model_id):
-            logger.info(f"Already downloaded: {model_id}")
+            local = self.local_path(model_id)
+            logger.info(f"Already downloaded: {model_id} ({local})")
             if progress_callback:
                 progress_callback(1.0, f"Already downloaded: {info.name}")
             return local
 
+        # New download → always store under the App dir
+        app_local = self._app_path(model_id)
         from huggingface_hub import snapshot_download
 
         if progress_callback:
             progress_callback(0.0, f"Downloading {info.name} ({info.size_gb}GB)...")
 
-        logger.info(f"Downloading {info.repo_id} → {local}")
+        logger.info(f"Downloading {info.repo_id} → {app_local}")
         snapshot_download(
             repo_id=info.repo_id,
-            local_dir=local,
+            local_dir=app_local,
             endpoint=hf_endpoint,
         )
 
         if progress_callback:
             progress_callback(1.0, f"Downloaded: {info.name}")
 
-        return local
+        return app_local
 
     # ── Delete ────────────────────────────────────────────────────────────────
 
     def delete(self, model_id: str):
-        """Delete a downloaded model from disk."""
-        local = self.local_path(model_id)
+        """Delete the App-managed copy of a model from disk (HF cache is untouched)."""
+        local = self._app_path(model_id)
         if os.path.isdir(local):
             shutil.rmtree(local)
             logger.info(f"Deleted: {model_id}")
