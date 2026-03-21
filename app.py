@@ -41,14 +41,18 @@ def _push(js: str):
 
 
 class API:
+    def __init__(self):
+        self._realtime = None  # RealtimeTranscriber instance when active
+
     # ── File selection ─────────────────────────────────────────────────────────
 
     def select_file(self) -> Optional[str]:
         """Open a native file picker. Returns selected path or None."""
+        import webview
         result = _window.create_file_dialog(
-            dialog_type=0,  # OPEN_DIALOG
+            dialog_type=webview.OPEN_DIALOG,
             allow_multiple=False,
-            file_types=("Audio/Video (*.mp3;*.mp4;*.m4a;*.wav;*.flac;*.ogg;*.aac;*.mov;*.mkv)",),
+            file_types=("Audio Video (*.mp3;*.mp4;*.m4a;*.wav;*.flac;*.ogg;*.aac;*.mov;*.mkv)",),
         )
         return result[0] if result else None
 
@@ -143,13 +147,66 @@ class API:
 
     # ── Realtime ───────────────────────────────────────────────────────────────
 
-    def start_realtime(self) -> dict:
-        """Start realtime transcription (stub — implemented in c04)."""
-        return {"status": "not_implemented"}
+    def start_realtime(self, options: Optional[dict] = None) -> dict:
+        """
+        Start realtime microphone transcription in a background thread.
+        Model loading happens asynchronously; pushes JS events when ready:
+          onRealtimeStarted()            — models loaded, microphone open
+          onRealtimeResult(text)         — each transcribed utterance
+          onRealtimeError(message)       — error during load or transcription
+
+        Returns: {"status": "started"} or {"status": "already_running"}
+        """
+        if self._realtime is not None:
+            return {"status": "already_running"}
+
+        # Sentinel prevents a second call racing before _run() sets self._realtime
+        self._realtime = object()
+
+        options = options or {}
+        engine = options.get("engine", "qwen")
+
+        def _run():
+            try:
+                from src.realtime import RealtimeTranscriber
+                rt = RealtimeTranscriber(
+                    engine=engine,
+                    on_result=lambda text: _push(f"onRealtimeResult({json.dumps(text)})"),
+                    on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
+                )
+                rt.start()
+                self._realtime = rt
+                _push("onRealtimeStarted()")
+            except Exception as e:
+                logger.exception("Realtime start failed")
+                self._realtime = None
+                _push(f"onRealtimeError({json.dumps(str(e))})")
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "started"}
 
     def stop_realtime(self) -> dict:
-        """Stop realtime transcription (stub — implemented in c04)."""
-        return {"status": "not_implemented"}
+        """
+        Stop realtime transcription.
+        Pushes onRealtimeStopped() after the stream is closed.
+
+        Returns: {"status": "stopped"} or {"status": "not_running"}
+        """
+        rt = self._realtime
+        self._realtime = None
+        if rt is None:
+            return {"status": "not_running"}
+
+        def _run():
+            try:
+                if hasattr(rt, "stop"):
+                    rt.stop()
+            except Exception:
+                logger.exception("Realtime stop failed")
+            _push("onRealtimeStopped()")
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "stopped"}
 
     # ── Summary ────────────────────────────────────────────────────────────────
 
