@@ -18,6 +18,8 @@
 - [ ] 实时转写说话人回填
 - [ ] 模型管理 UI（下载进度、选择）
 - [ ] 首次启动模型引导下载
+- [ ] 模型管理 UI：下载/删除/进度显示，用户通过 App 下载模型存到 App 目录（~/Library/Application Support/TranscribeApp/models/），而不依赖 HF cache
+- [ ] 首次启动引导：检测模型是否已下载，未下载时引导用户在 App 内完成下载
 
 ## Backlog
 
@@ -25,3 +27,4 @@
 - [ ] UNKNOWN speaker 后处理合并
 - [ ] 打包 DMG / EXE
 - [ ] 输出标点优化
+- [ ] ModelManager 落地：目前 download() 已实现但无 UI 入口，模型全在 HF cache，需配合模型管理 UI 真正启用 App 自管目录
