@@ -51,10 +51,11 @@ class TestDefaultModel:
 # ── token handling ────────────────────────────────────────────────────────────
 
 class TestTokenHandling:
-    def _mock_mm(self, requires_token: bool, local_path: str):
+    def _mock_mm(self, requires_token: bool, local_path: str, is_downloaded: bool = True):
         mock_mm = MagicMock()
         mock_mm.get_model.return_value = MagicMock(requires_token=requires_token)
         mock_mm.local_path.return_value = local_path
+        mock_mm.is_downloaded.return_value = is_downloaded
         return mock_mm
 
     def test_community_1_loads_without_token(self, monkeypatch):
@@ -121,10 +122,11 @@ class TestTokenHandling:
 # ── local path loading ────────────────────────────────────────────────────────
 
 class TestLocalPathLoading:
-    def _mock_mm(self, requires_token: bool, local_path: str):
+    def _mock_mm(self, requires_token: bool, local_path: str, is_downloaded: bool = True):
         mock_mm = MagicMock()
         mock_mm.get_model.return_value = MagicMock(requires_token=requires_token)
         mock_mm.local_path.return_value = local_path
+        mock_mm.is_downloaded.return_value = is_downloaded
         return mock_mm
 
     def test_load_uses_model_manager_local_path(self):
@@ -179,3 +181,56 @@ class TestUnknownModel:
 
             with pytest.raises(ValueError, match="Unknown diarizer model"):
                 engine.load()
+
+
+# ── auto-download ─────────────────────────────────────────────────────────────
+
+class TestAutoDownload:
+    """load() should trigger mm.download() when model is not yet present."""
+
+    def _mock_mm(self, is_downloaded: bool, local_path: str = "/fake/path"):
+        mock_mm = MagicMock()
+        mock_mm.get_model.return_value = MagicMock(requires_token=False)
+        mock_mm.is_downloaded.return_value = is_downloaded
+        mock_mm.local_path.return_value = local_path
+        return mock_mm
+
+    def test_download_called_when_not_downloaded(self):
+        engine = DiarizationEngine(model_id="pyannote-diarization-community-1")
+        fake_mods, _ = _fake_modules()
+        with patch("src.diarize.ModelManager") as mock_mm_cls, \
+             patch.dict(sys.modules, fake_mods):
+            mock_mm = self._mock_mm(is_downloaded=False)
+            mock_mm_cls.return_value = mock_mm
+            engine.load()
+        mock_mm.download.assert_called_once_with(
+            "pyannote-diarization-community-1",
+            progress_callback=None,
+        )
+
+    def test_download_not_called_when_already_downloaded(self):
+        engine = DiarizationEngine(model_id="pyannote-diarization-community-1")
+        fake_mods, _ = _fake_modules()
+        with patch("src.diarize.ModelManager") as mock_mm_cls, \
+             patch.dict(sys.modules, fake_mods):
+            mock_mm = self._mock_mm(is_downloaded=True)
+            mock_mm_cls.return_value = mock_mm
+            engine.load()
+        mock_mm.download.assert_not_called()
+
+    def test_progress_callback_forwarded_to_download(self):
+        cb = MagicMock()
+        engine = DiarizationEngine(
+            model_id="pyannote-diarization-community-1",
+            progress_callback=cb,
+        )
+        fake_mods, _ = _fake_modules()
+        with patch("src.diarize.ModelManager") as mock_mm_cls, \
+             patch.dict(sys.modules, fake_mods):
+            mock_mm = self._mock_mm(is_downloaded=False)
+            mock_mm_cls.return_value = mock_mm
+            engine.load()
+        mock_mm.download.assert_called_once_with(
+            "pyannote-diarization-community-1",
+            progress_callback=cb,
+        )

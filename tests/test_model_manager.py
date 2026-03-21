@@ -61,9 +61,8 @@ class TestListModels:
         for entry in mm.list_models():
             assert entry["downloaded"] is False
 
-    def test_downloaded_when_dir_has_files(self, isolated_data_dir):
+    def test_downloaded_when_dir_has_key_file(self, isolated_data_dir):
         mm = _make_manager(isolated_data_dir)
-        # Simulate a downloaded model by creating its directory with a file
         model_id = "qwen3-asr-1.7b"
         model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
         os.makedirs(model_dir)
@@ -72,6 +71,77 @@ class TestListModels:
         entries = {e["id"]: e for e in mm.list_models()}
         assert entries[model_id]["downloaded"] is True
         assert entries["qwen3-forced-aligner"]["downloaded"] is False
+
+    def test_not_downloaded_when_dir_has_no_key_file(self, isolated_data_dir):
+        """Directory exists but missing config — treated as incomplete download."""
+        mm = _make_manager(isolated_data_dir)
+        model_id = "qwen3-asr-1.7b"
+        model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(model_dir)
+        open(os.path.join(model_dir, "some_weights.bin"), "w").close()
+
+        assert mm.is_downloaded(model_id) is False
+
+    def test_not_downloaded_when_diarizer_has_config_json_not_yaml(self, isolated_data_dir):
+        """Diarizer model needs config.yaml; config.json alone is insufficient."""
+        mm = _make_manager(isolated_data_dir)
+        model_id = "pyannote-diarization-community-1"
+        model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(model_dir)
+        open(os.path.join(model_dir, "config.json"), "w").close()  # wrong file
+
+        assert mm.is_downloaded(model_id) is False
+
+    def test_downloaded_when_diarizer_has_config_yaml(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        model_id = "pyannote-diarization-community-1"
+        model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(model_dir)
+        open(os.path.join(model_dir, "config.yaml"), "w").close()
+
+        assert mm.is_downloaded(model_id) is True
+
+
+# ── _has_key_files ─────────────────────────────────────────────────────────────
+
+class TestHasKeyFiles:
+    def _dir(self, isolated_data_dir, model_id, files):
+        d = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(d)
+        for f in files:
+            open(os.path.join(d, f), "w").close()
+        return d
+
+    def test_asr_config_json_ok(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        d = self._dir(isolated_data_dir, "qwen3-asr-1.7b", ["config.json"])
+        assert mm._has_key_files("qwen3-asr-1.7b", d) is True
+
+    def test_asr_config_yaml_ok(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        d = self._dir(isolated_data_dir, "qwen3-asr-1.7b", ["config.yaml"])
+        assert mm._has_key_files("qwen3-asr-1.7b", d) is True
+
+    def test_asr_no_config_returns_false(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        d = self._dir(isolated_data_dir, "qwen3-asr-1.7b", ["weights.bin"])
+        assert mm._has_key_files("qwen3-asr-1.7b", d) is False
+
+    def test_diarizer_config_yaml_ok(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        d = self._dir(isolated_data_dir, "pyannote-diarization-community-1", ["config.yaml"])
+        assert mm._has_key_files("pyannote-diarization-community-1", d) is True
+
+    def test_diarizer_config_json_not_ok(self, isolated_data_dir):
+        """Diarizer requires config.yaml, not config.json."""
+        mm = _make_manager(isolated_data_dir)
+        d = self._dir(isolated_data_dir, "pyannote-diarization-community-1", ["config.json"])
+        assert mm._has_key_files("pyannote-diarization-community-1", d) is False
+
+    def test_unknown_model_returns_false(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        d = self._dir(isolated_data_dir, "qwen3-asr-1.7b", ["config.json"])
+        assert mm._has_key_files("no-such-model", d) is False
 
 
 # ── download ──────────────────────────────────────────────────────────────────
@@ -256,9 +326,12 @@ class TestDiarizerCatalog:
 
 class TestSelectAndGetSelectedDiarizer:
     def _install_model(self, isolated_data_dir, model_id: str):
+        from src.model_manager import CATALOG
         d = os.path.join(isolated_data_dir["models_dir"], model_id)
         os.makedirs(d, exist_ok=True)
-        open(os.path.join(d, "config.json"), "w").close()
+        info = next((m for m in CATALOG if m.id == model_id), None)
+        key_file = "config.yaml" if (info and info.role == "diarizer") else "config.json"
+        open(os.path.join(d, key_file), "w").close()
 
     def test_select_diarizer_saves_to_config(self, isolated_data_dir):
         mm = _make_manager(isolated_data_dir)
@@ -328,7 +401,9 @@ class TestConfigIO:
 
 # ── HF cache detection ────────────────────────────────────────────────────────
 
-def _build_hf_cache(tmp_path, repo_id: str, snapshot_hash: str = "abc123") -> str:
+def _build_hf_cache(
+    tmp_path, repo_id: str, snapshot_hash: str = "abc123", key_file: str = "config.yaml"
+) -> str:
     """
     Create a minimal HF hub cache structure and return the snapshot path.
 
@@ -337,7 +412,7 @@ def _build_hf_cache(tmp_path, repo_id: str, snapshot_hash: str = "abc123") -> st
         models--{org}--{name}/
           refs/main          ← contains snapshot_hash
           snapshots/{hash}/
-            config.json      ← non-empty marker file
+            {key_file}       ← marker file (config.yaml for diarizers)
     """
     cache_name = "models--" + repo_id.replace("/", "--")
     repo_cache = tmp_path / cache_name
@@ -347,7 +422,7 @@ def _build_hf_cache(tmp_path, repo_id: str, snapshot_hash: str = "abc123") -> st
 
     snapshot_dir = repo_cache / "snapshots" / snapshot_hash
     snapshot_dir.mkdir(parents=True)
-    (snapshot_dir / "config.json").write_text("{}")
+    (snapshot_dir / key_file).write_text("{}")
     return str(snapshot_dir)
 
 
@@ -428,10 +503,10 @@ class TestHFCacheDetection:
             "pyannote/speaker-diarization-community-1",
         )
         mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
-        # Populate the App dir too
+        # Populate the App dir too (diarizer needs config.yaml)
         app_dir = os.path.join(isolated_data_dir["models_dir"], "pyannote-diarization-community-1")
         os.makedirs(app_dir)
-        open(os.path.join(app_dir, "config.json"), "w").close()
+        open(os.path.join(app_dir, "config.yaml"), "w").close()
 
         result = mm.local_path("pyannote-diarization-community-1")
         assert result == app_dir
@@ -451,6 +526,24 @@ class TestHFCacheDetection:
 
         mock_snap.assert_not_called()
         assert result == snap
+
+    def test_local_path_falls_through_when_hf_cache_incomplete(
+        self, tmp_path, isolated_data_dir, monkeypatch
+    ):
+        """HF cache dir exists but missing key file → fall through to app dir default."""
+        hf_root = str(tmp_path / "hf-cache")
+        # Build cache with wrong key file for a diarizer (config.json, not config.yaml)
+        _build_hf_cache(
+            tmp_path / "hf-cache",
+            "pyannote/speaker-diarization-community-1",
+            key_file="config.json",
+        )
+        mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
+        result = mm.local_path("pyannote-diarization-community-1")
+        app_dir = os.path.join(
+            isolated_data_dir["models_dir"], "pyannote-diarization-community-1"
+        )
+        assert result == app_dir  # fell through to app dir default
 
     def test_hf_cache_path_returns_none_when_refs_main_is_empty(
         self, tmp_path, isolated_data_dir, monkeypatch

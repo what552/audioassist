@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.4 — r01-c05)
+## Features (v0.5 — r01-c06)
 
 - **Engine selector** — choose Qwen3-ASR or Whisper before transcribing
 - **Open File button** — native file picker for audio/video files
@@ -14,7 +14,8 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
 - **Summary panel** — LLM-powered transcript summarization with streaming output (see [Summary panel](#summary-panel))
-- **Realtime transcription** — live microphone transcription with Silero VAD; utterances appear as you speak (see [Realtime transcription](#realtime-transcription))
+- **Realtime transcription** — live microphone transcription with Silero VAD; utterances appear as you speak; full session audio saved as `.wav` (see [Realtime transcription](#realtime-transcription))
+- **Model auto-download** — ASR and diarizer model weights are downloaded automatically on first use; progress is shown in the UI progress bar; no manual setup required
 
 ## Requirements
 
@@ -82,6 +83,7 @@ Files written inside the data directory:
 | `templates.json` | Summary templates — list of `{name, prompt}` objects managed in the ⚙ settings panel |
 | `output/<job_id>.json` | Full transcript with word-level timing and speaker labels |
 | `output/<job_id>.md` | Human-readable transcript sidecar (regenerated on each save) |
+| `output/<session_id>.wav` | Full microphone recording from a realtime session |
 | `models/` | Downloaded ASR and diarization model weights |
 
 ### ASR engine
@@ -89,10 +91,13 @@ Files written inside the data directory:
 - **Qwen3-ASR** (`engine="qwen"`): best accuracy for Chinese + 30 languages; requires CPU (MPS causes SIGBUS); runs on macOS/Linux/Windows.
 - **Whisper** (`engine="whisper"`): Apple Silicon — uses `mlx-whisper` (Neural Engine); other platforms — uses `faster-whisper` (CPU/CUDA).
 
+> **First run:** If the selected ASR model (and optional ForcedAligner) is not yet downloaded, it is fetched automatically when you start a transcription. Download progress is shown in the UI progress bar. Subsequent runs use the cached weights with no network access.
+
 ### Speaker diarization
 
-The default diarizer is **`pyannote-diarization-community-1`** — no HuggingFace
-token required.
+The default diarizer is **`pyannote-diarization-community-1`** — no HuggingFace token required.
+
+> **First run:** The diarizer model is downloaded automatically if not present when a transcription starts. No manual step needed.
 
 Two models are available:
 
@@ -124,7 +129,8 @@ Click **🎙 Realtime** in the toolbar to start live microphone transcription.
 - The first click loads the VAD model and the ASR engine; this may take a few seconds.
 - The ASR engine is the same one selected in the toolbar dropdown (Qwen3-ASR or Whisper).
 - Utterances shorter than ~160 ms are discarded as noise.
-- Realtime results are not saved automatically — copy the text manually if needed.
+- The complete microphone recording is saved as `output/<session_id>.wav` when you stop. The session ID is provided to the frontend via `onRealtimeStarted(sessionId)`.
+- Realtime transcript text is not automatically saved — copy manually if needed.
 
 ### Dependencies
 

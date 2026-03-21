@@ -50,7 +50,7 @@ class API:
         """Open a native file picker. Returns selected path or None."""
         import webview
         result = _window.create_file_dialog(
-            dialog_type=webview.OPEN_DIALOG,
+            dialog_type=webview.FileDialog.OPEN,
             allow_multiple=False,
             file_types=("Audio Video (*.mp3;*.mp4;*.m4a;*.wav;*.flac;*.ogg;*.aac;*.mov;*.mkv)",),
         )
@@ -168,15 +168,26 @@ class API:
 
         def _run():
             try:
+                import uuid
+                session_id = str(uuid.uuid4())
+                output_path = os.path.join(OUTPUT_DIR, f"{session_id}.wav")
+                os.makedirs(OUTPUT_DIR, exist_ok=True)
+
                 from src.realtime import RealtimeTranscriber
                 rt = RealtimeTranscriber(
                     engine=engine,
+                    output_path=output_path,
                     on_result=lambda text: _push(f"onRealtimeResult({json.dumps(text)})"),
                     on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                 )
                 rt.start()
+                # Race: stop_realtime() may have cleared self._realtime while
+                # models were loading. If so, shut down immediately and return.
+                if self._realtime is None:
+                    rt.stop()
+                    return
                 self._realtime = rt
-                _push("onRealtimeStarted()")
+                _push(f"onRealtimeStarted({json.dumps(session_id)})")
             except Exception as e:
                 logger.exception("Realtime start failed")
                 self._realtime = None

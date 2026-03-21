@@ -182,25 +182,48 @@ class ModelManager:
             return snapshot_path
         return None
 
+    def _has_key_files(self, model_id: str, path: str) -> bool:
+        """
+        Return True if the expected config file for this model role exists in path.
+
+        Diarizer models (pyannote) require config.yaml (pipeline definition).
+        ASR / aligner models (HuggingFace) require config.json or config.yaml.
+        A directory that lacks these files is treated as an incomplete download
+        so that auto-repair can re-trigger the download.
+        """
+        info = self.get_model(model_id)
+        if info is None:
+            return False
+        if info.role == "diarizer":
+            return os.path.exists(os.path.join(path, "config.yaml"))
+        # asr / aligner — standard HuggingFace layout
+        return (
+            os.path.exists(os.path.join(path, "config.json"))
+            or os.path.exists(os.path.join(path, "config.yaml"))
+        )
+
     def local_path(self, model_id: str) -> str:
         """
-        Return the usable local path for a model.
-        Priority: App dir (if populated) → HF cache → App dir (default for new downloads).
+        Return the usable local path for a model (key-file validated).
+        Priority: App dir (if complete) → HF cache → App dir (default for new downloads).
         """
         app = self._app_path(model_id)
-        if os.path.isdir(app) and os.listdir(app):
+        if os.path.isdir(app) and os.listdir(app) and self._has_key_files(model_id, app):
             return app
         hf = self._hf_cache_path(model_id)
-        if hf is not None:
+        if hf is not None and self._has_key_files(model_id, hf):
             return hf
         return app
 
     def is_downloaded(self, model_id: str) -> bool:
-        """True if the model exists in the App dir or the HF hub cache."""
+        """True if the model exists with key files in the App dir or HF cache."""
         app = self._app_path(model_id)
-        if os.path.isdir(app) and os.listdir(app):
+        if os.path.isdir(app) and os.listdir(app) and self._has_key_files(model_id, app):
             return True
-        return self._hf_cache_path(model_id) is not None
+        hf = self._hf_cache_path(model_id)
+        if hf is not None and self._has_key_files(model_id, hf):
+            return True
+        return False
 
     # ── Download ──────────────────────────────────────────────────────────────
 
