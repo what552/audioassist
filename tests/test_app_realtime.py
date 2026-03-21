@@ -128,6 +128,36 @@ class TestJSEvents:
         assert any("onRealtimeError" in c for c in js_calls)
 
 
+# ── Race condition: stop_realtime() during model load ─────────────────────────
+
+class TestRaceCondition:
+    def test_stop_during_load_calls_rt_stop(self):
+        """
+        If stop_realtime() is called while start_realtime() is still loading
+        models (before rt.start() returns), the background thread detects
+        self._realtime is None and calls rt.stop() to abort cleanly.
+        """
+        api = API()
+        rt_stopped = []
+
+        def slow_start():
+            # Simulate model loading time; stop_realtime clears _realtime meanwhile
+            api._realtime = None  # mimic stop_realtime() called externally
+
+        def capture_init(*args, **kwargs):
+            inst = MagicMock()
+            inst.start.side_effect = slow_start
+            inst.stop.side_effect = lambda: rt_stopped.append(True)
+            return inst
+
+        with patch("src.realtime.RealtimeTranscriber", side_effect=capture_init), \
+             patch.object(app_module, "_push"):
+            api.start_realtime()
+            _wait(0.3)
+
+        assert rt_stopped, "rt.stop() must be called when stop_realtime() races with load"
+
+
 # ── Engine option passed through ──────────────────────────────────────────────
 
 class TestEngineOption:

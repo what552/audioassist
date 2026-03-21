@@ -11,9 +11,10 @@ from typing import Callable, Optional
 from .types import WordSegment, TranscriptResult
 from .asr import ASREngine
 from .asr_whisper import WhisperASREngine
-from .diarize import DiarizationEngine, SpeakerSegment
+from .diarize import DiarizationEngine, SpeakerSegment, DEFAULT_DIARIZER_MODEL
 from .merge import merge, to_json, to_markdown
 from .audio_utils import to_wav, split_to_chunks
+from .model_manager import ModelManager
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +76,27 @@ def run(
         chunks = split_to_chunks(wav_path)
         temp_files += [p for p, _ in chunks if p != wav_path]
 
-        # 2. ASR
-        _progress(0.05, f"Loading {engine} ASR model...")
+        # 2. ASR — auto-download and load from ModelManager-managed local path
+        mm = ModelManager()
         if engine == "whisper":
+            _progress(0.05, "Loading Whisper ASR model...")
             asr: ASREngine | WhisperASREngine = WhisperASREngine()
         else:
-            asr = ASREngine(with_timestamps=with_timestamps)
+            asr_id     = "qwen3-asr-1.7b"
+            aligner_id = "qwen3-forced-aligner"
+            if not mm.is_downloaded(asr_id):
+                _progress(0.03, f"Downloading ASR model ({asr_id})…")
+                mm.download(
+                    asr_id,
+                    progress_callback=lambda p, m: _progress(0.03 + p * 0.02, m),
+                )
+            _progress(0.05, "Loading Qwen3-ASR model...")
+            aligner_path = mm.local_path(aligner_id) if mm.is_downloaded(aligner_id) else None
+            asr = ASREngine(
+                with_timestamps=with_timestamps,
+                model_path=mm.local_path(asr_id),
+                aligner_path=aligner_path,
+            )
         asr.load()
 
         all_words: list[WordSegment] = []
@@ -109,12 +125,20 @@ def run(
             f"Transcript ({len(merged_asr.text)} chars): {merged_asr.text[:80]}..."
         )
 
-        # 3. Diarization
+        # 3. Diarization — auto-download if needed, then load
+        actual_diarizer_id = diarizer_model_id or DEFAULT_DIARIZER_MODEL
+        if not mm.is_downloaded(actual_diarizer_id):
+            _progress(0.58, f"Downloading diarizer model ({actual_diarizer_id})…")
+            mm.download(
+                actual_diarizer_id,
+                progress_callback=lambda p, m: _progress(0.58 + p * 0.02, m),
+            )
         _progress(0.6, "Running speaker diarization...")
         diarizer = DiarizationEngine(
             model_id=diarizer_model_id,
             hf_token=hf_token,
             num_speakers=num_speakers,
+            progress_callback=lambda p, m: _progress(0.6 + p * 0.02, m),
         )
         speaker_segments = diarizer.diarize(wav_path)
         logger.info(

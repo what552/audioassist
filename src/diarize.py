@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import logging
+from typing import Callable, Optional
 
 from .model_manager import ModelManager
 
@@ -31,12 +32,14 @@ class DiarizationEngine:
         model_id: str | None = None,
         hf_token: str | None = None,
         num_speakers: int | None = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
     ):
         self.model_id = model_id or DEFAULT_DIARIZER_MODEL
         # hf_token kept for backward compat (3.1 gated model); not passed to
         # from_pretrained since we load from a local path.
         self.hf_token = hf_token or os.environ.get("HF_TOKEN")
         self.num_speakers = num_speakers
+        self._progress_callback = progress_callback
         self._pipeline = None
 
     def load(self):
@@ -65,6 +68,10 @@ class DiarizationEngine:
                 f"HF_TOKEN required for {self.model_id}. "
                 "Set env var HF_TOKEN or pass hf_token= to DiarizationEngine."
             )
+
+        if not mm.is_downloaded(self.model_id):
+            logger.info("Diarizer model not found locally, downloading: %s", self.model_id)
+            mm.download(self.model_id, progress_callback=self._progress_callback)
 
         local_path = mm.local_path(self.model_id)
         logger.info(f"Loading diarization model from: {local_path}")

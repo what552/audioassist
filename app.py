@@ -175,6 +175,11 @@ class API:
                     on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                 )
                 rt.start()
+                # Race: stop_realtime() may have cleared self._realtime while
+                # models were loading. If so, shut down immediately and return.
+                if self._realtime is None:
+                    rt.stop()
+                    return
                 self._realtime = rt
                 _push("onRealtimeStarted()")
             except Exception as e:

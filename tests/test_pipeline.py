@@ -55,12 +55,18 @@ def mock_pipeline_deps(tmp_path):
     mock_diarize_instance.diarize.return_value = _make_speaker_segments()
     mock_diarize_cls = MagicMock(return_value=mock_diarize_instance)
 
+    mock_mm_instance = MagicMock()
+    mock_mm_instance.is_downloaded.return_value = True
+    mock_mm_instance.local_path.return_value = "/fake/model/path"
+    mock_mm_cls = MagicMock(return_value=mock_mm_instance)
+
     with patch("os.path.isfile", return_value=True), \
          patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
          patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
          patch(f"{PIPELINE}.ASREngine", mock_asr_cls), \
          patch(f"{PIPELINE}.WhisperASREngine", MagicMock(return_value=mock_asr_instance)), \
          patch(f"{PIPELINE}.DiarizationEngine", mock_diarize_cls), \
+         patch(f"{PIPELINE}.ModelManager", mock_mm_cls), \
          patch(f"{PIPELINE}.merge", return_value=_make_blocks()), \
          patch(f"{PIPELINE}.to_json"), \
          patch(f"{PIPELINE}.to_markdown"):
@@ -70,6 +76,8 @@ def mock_pipeline_deps(tmp_path):
             "asr_instance": mock_asr_instance,
             "diarize_cls": mock_diarize_cls,
             "diarize_instance": mock_diarize_instance,
+            "mm_cls": mock_mm_cls,
+            "mm_instance": mock_mm_instance,
         }
 
 
@@ -170,6 +178,9 @@ class TestEngineSelection:
         mock_asr_cls = MagicMock()
         mock_diarize_instance = MagicMock()
         mock_diarize_instance.diarize.return_value = _make_speaker_segments()
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.is_downloaded.return_value = True
+        mock_mm_instance.local_path.return_value = "/fake/model/path"
 
         with patch("os.path.isfile", return_value=True), \
              patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
@@ -177,6 +188,7 @@ class TestEngineSelection:
              patch(f"{PIPELINE}.ASREngine", mock_asr_cls), \
              patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
              patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
+             patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
              patch(f"{PIPELINE}.merge", return_value=_make_blocks()), \
              patch(f"{PIPELINE}.to_json"), \
              patch(f"{PIPELINE}.to_markdown"):
@@ -202,11 +214,15 @@ class TestTempFileCleanup:
         mock_diarize_instance = MagicMock()
         mock_diarize_instance.diarize.return_value = _make_speaker_segments()
 
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.is_downloaded.return_value = True
+        mock_mm_instance.local_path.return_value = "/fake/model/path"
         with patch("os.path.isfile", return_value=True), \
              patch(f"{PIPELINE}.to_wav", return_value=(tmp_wav_path, True)), \
              patch(f"{PIPELINE}.split_to_chunks", return_value=[(tmp_wav_path, 0.0)]), \
              patch(f"{PIPELINE}.ASREngine", MagicMock(return_value=mock_asr_instance)), \
              patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
+             patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
              patch(f"{PIPELINE}.merge", return_value=_make_blocks()), \
              patch(f"{PIPELINE}.to_json"), \
              patch(f"{PIPELINE}.to_markdown"):
@@ -214,3 +230,52 @@ class TestTempFileCleanup:
             run("/audio/test.mp3", str(tmp_path))
 
         assert not os.path.exists(tmp_wav_path)
+
+
+# ── auto-download ─────────────────────────────────────────────────────────────
+
+class TestAutoDownload:
+    """pipeline.run() must auto-download missing ASR / diarizer models."""
+
+    def _make_deps(self, tmp_path, mm_instance):
+        """Shared patch context for auto-download tests."""
+        wav = str(tmp_path / "audio.wav")
+        mock_asr_instance = MagicMock()
+        mock_asr_instance.transcribe.return_value = _make_asr_result()
+        mock_diarize_instance = MagicMock()
+        mock_diarize_instance.diarize.return_value = _make_speaker_segments()
+        return (
+            wav,
+            patch("os.path.isfile", return_value=True),
+            patch(f"{PIPELINE}.to_wav", return_value=(wav, False)),
+            patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]),
+            patch(f"{PIPELINE}.ASREngine", MagicMock(return_value=mock_asr_instance)),
+            patch(f"{PIPELINE}.WhisperASREngine", MagicMock(return_value=mock_asr_instance)),
+            patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)),
+            patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mm_instance)),
+            patch(f"{PIPELINE}.merge", return_value=_make_blocks()),
+            patch(f"{PIPELINE}.to_json"),
+            patch(f"{PIPELINE}.to_markdown"),
+        )
+
+    def test_asr_model_downloaded_when_missing(self, tmp_path):
+        mm = MagicMock()
+        mm.is_downloaded.return_value = False
+        mm.local_path.return_value = "/fake/model/path"
+        _, *patches = self._make_deps(tmp_path, mm)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+             patches[5], patches[6], patches[7], patches[8], patches[9]:
+            from src.pipeline import run
+            run("/audio/test.mp3", str(tmp_path), engine="qwen")
+        mm.download.assert_called()
+
+    def test_asr_model_not_downloaded_when_present(self, tmp_path):
+        mm = MagicMock()
+        mm.is_downloaded.return_value = True
+        mm.local_path.return_value = "/fake/model/path"
+        _, *patches = self._make_deps(tmp_path, mm)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+             patches[5], patches[6], patches[7], patches[8], patches[9]:
+            from src.pipeline import run
+            run("/audio/test.mp3", str(tmp_path), engine="qwen")
+        mm.download.assert_not_called()
