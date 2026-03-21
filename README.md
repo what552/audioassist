@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.3 — r01-c04)
+## Features (v0.4 — r01-c05)
 
 - **Engine selector** — choose Qwen3-ASR or Whisper before transcribing
 - **Open File button** — native file picker for audio/video files
@@ -14,6 +14,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
 - **Summary panel** — LLM-powered transcript summarization with streaming output (see [Summary panel](#summary-panel))
+- **Realtime transcription** — live microphone transcription with Silero VAD; utterances appear as you speak (see [Realtime transcription](#realtime-transcription))
 
 ## Requirements
 
@@ -105,6 +106,36 @@ To use `pyannote-diarization-3.1`, set `HF_TOKEN` before launching:
 ```bash
 export HF_TOKEN=hf_...   # macOS / Linux
 set HF_TOKEN=hf_...      # Windows cmd
+```
+
+## Realtime transcription
+
+Click **🎙 Realtime** in the toolbar to start live microphone transcription.
+
+### How it works
+
+1. **Silero VAD** monitors the microphone stream in real time, detecting speech vs. silence at 16 kHz / 32 ms chunks.
+2. Each utterance (speech segment followed by ~480 ms of silence) is extracted and passed to the selected ASR engine.
+3. Transcribed text appears in the realtime panel sentence by sentence as you speak.
+4. Click **⏹ Stop** to end recording.
+
+### Notes
+
+- The first click loads the VAD model and the ASR engine; this may take a few seconds.
+- The ASR engine is the same one selected in the toolbar dropdown (Qwen3-ASR or Whisper).
+- Utterances shorter than ~160 ms are discarded as noise.
+- Realtime results are not saved automatically — copy the text manually if needed.
+
+### Additional dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `sounddevice` | Cross-platform microphone input |
+| `silero-vad` | Voice activity detection |
+| `numpy` | Audio array processing |
+
+```bash
+pip install sounddevice silero-vad numpy
 ```
 
 ## Summary panel

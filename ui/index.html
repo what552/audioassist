@@ -18,6 +18,7 @@
         <option value="whisper">Whisper</option>
       </select>
       <button id="btn-open" class="btn-primary">Open File</button>
+      <button id="btn-realtime" class="btn-realtime">🎙 Realtime</button>
     </div>
   </header>
 
@@ -60,6 +61,15 @@
         <span id="save-status" class="save-status"></span>
       </div>
       <div id="transcript-list" hidden></div>
+
+      <!-- Realtime panel (realtime state) -->
+      <div id="realtime-panel" hidden>
+        <div id="realtime-header">
+          <span id="realtime-dot" class="realtime-dot"></span>
+          <span id="realtime-status" class="realtime-status-text">Idle</span>
+        </div>
+        <div id="realtime-list"></div>
+      </div>
 
     </section>
 
@@ -125,6 +135,7 @@
 <script src="js/player.js"></script>
 <script src="js/transcript.js"></script>
 <script src="js/summary.js"></script>
+<script src="js/realtime.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

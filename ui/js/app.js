@@ -35,6 +35,7 @@ const App = (() => {
       transcriptHeader:   document.getElementById('transcript-header'),
       transcriptMeta:     document.getElementById('transcript-meta'),
       transcriptList:     document.getElementById('transcript-list'),
+      realtimePanel:      document.getElementById('realtime-panel'),
       playerPanel:        document.getElementById('player-panel'),
       playerFilename:     document.getElementById('player-filename'),
       audioEl:            document.getElementById('audio-el'),
@@ -48,6 +49,7 @@ const App = (() => {
 
     Player.init(dom.audioEl);
     Summary.init();
+    Realtime.init();
 
     // Player → transcript highlight sync
     Player.onTimeUpdate((t) => {
@@ -132,6 +134,7 @@ const App = (() => {
     dom.transcriptHeader.hidden = state !== 'done';
     dom.transcriptList.hidden   = state !== 'done';
     dom.saveBtn.hidden          = state !== 'done';
+    dom.realtimePanel.hidden    = state !== 'realtime';
   }
 
   function _setProgress(pct, msg) {
