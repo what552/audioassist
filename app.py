@@ -154,8 +154,50 @@ class API:
     # ── Summary ────────────────────────────────────────────────────────────────
 
     def summarize(self, job_id: str, template: dict) -> dict:
-        """Trigger summary generation (stub — implemented in c03)."""
-        return {"status": "not_implemented"}
+        """
+        Generate a summary for the given transcript in a background thread.
+
+        Pushes JS events:
+          onSummaryChunk(jobId, chunk)       — streaming chunk
+          onSummaryComplete(jobId, fullText) — generation finished
+          onSummaryError(jobId, message)     — error
+
+        template: {"name": str, "prompt": str}
+        Returns: {"job_id": str, "status": "started"}
+        """
+        def _run():
+            try:
+                path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+                if not os.path.exists(path):
+                    _push(f"onSummaryError({json.dumps(job_id)}, {json.dumps('Transcript not found')})")
+                    return
+
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                text = " ".join(seg.get("text", "") for seg in data.get("segments", []))
+
+                cfg = self._load_config().get("api", {})
+                base_url = cfg.get("base_url", "")
+                api_key  = cfg.get("api_key", "")
+                model    = cfg.get("model", "")
+                prompt   = template.get("prompt", "Summarize the following transcript.")
+
+                from src.summary import summarize as _summarize
+                chunks = _summarize(text, prompt, base_url, api_key, model, stream=True)
+
+                full_text = ""
+                for chunk in chunks:
+                    full_text += chunk
+                    _push(f"onSummaryChunk({json.dumps(job_id)}, {json.dumps(chunk)})")
+
+                _push(f"onSummaryComplete({json.dumps(job_id)}, {json.dumps(full_text)})")
+
+            except Exception as e:
+                logger.exception("Summary failed")
+                _push(f"onSummaryError({json.dumps(job_id)}, {json.dumps(str(e))})")
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"job_id": job_id, "status": "started"}
 
     # ── Model management ───────────────────────────────────────────────────────
 
