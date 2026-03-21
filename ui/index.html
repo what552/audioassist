@@ -63,11 +63,60 @@
 
     </section>
 
-    <!-- Right: player panel -->
+    <!-- Right: player + summary panel -->
     <aside id="player-panel">
       <div id="player-filename"></div>
       <audio id="audio-el" controls></audio>
       <div id="player-time">00:00 / 00:00</div>
+
+      <!-- ── Summary section ──────────────────────────────────────────── -->
+      <div id="summary-section" hidden>
+
+        <!-- Controls row: template selector + Summarize button -->
+        <div id="summary-controls">
+          <select id="sel-template" title="Summary template"></select>
+          <button id="btn-summarize" class="btn-primary btn-sm">Summarize</button>
+          <button id="btn-summary-settings" class="btn-icon" title="API settings">⚙</button>
+        </div>
+
+        <!-- Output area -->
+        <div id="summary-output">
+          <div id="summary-placeholder" class="summary-placeholder">
+            Summary will appear here
+          </div>
+          <div id="summary-text" hidden></div>
+          <div id="summary-loading" class="summary-loading" hidden>
+            <span class="summary-spinner"></span> Generating…
+          </div>
+        </div>
+
+        <!-- API config form (collapsible) -->
+        <div id="summary-config" hidden>
+          <div class="config-row">
+            <label for="cfg-base-url">Base URL</label>
+            <input id="cfg-base-url" type="text" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div class="config-row">
+            <label for="cfg-api-key">API Key</label>
+            <input id="cfg-api-key" type="password" placeholder="sk-…" />
+          </div>
+          <div class="config-row">
+            <label for="cfg-model">Model</label>
+            <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
+          </div>
+          <div class="config-actions">
+            <button id="btn-save-config" class="btn-primary btn-sm">Save</button>
+          </div>
+
+          <div class="config-section-title">Templates
+            <button id="btn-add-template" class="btn-link btn-sm">+ Add</button>
+          </div>
+          <div id="template-list"></div>
+        </div>
+
+      </div>
+      <!-- ── / Summary section ─────────────────────────────────────────── -->
+
     </aside>
 
   </main>
@@ -75,6 +124,7 @@
 
 <script src="js/player.js"></script>
 <script src="js/transcript.js"></script>
+<script src="js/summary.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

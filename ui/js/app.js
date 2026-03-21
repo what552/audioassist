@@ -47,6 +47,7 @@ const App = (() => {
     };
 
     Player.init(dom.audioEl);
+    Summary.init();
 
     // Player → transcript highlight sync
     Player.onTimeUpdate((t) => {
@@ -175,6 +176,7 @@ const App = (() => {
         `${data.segments.length} segments · ${data.language || ''}`;
       Player.load(_currentAudioPath);
       Transcript.render(data, jobId, dom.transcriptList);
+      Summary.showForJob(jobId);
     } catch (err) {
       console.error('[App] onTranscribeComplete error:', err);
       _setView('idle');
