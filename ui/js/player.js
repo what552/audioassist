@@ -54,6 +54,12 @@ const Player = (() => {
     _el && _el.pause();
   }
 
+  function stop() {
+    if (!_el) return;
+    _el.pause();
+    _el.currentTime = 0;
+  }
+
   function onTimeUpdate(cb) {
     _timeUpdateCb = cb;
   }
@@ -64,6 +70,7 @@ const Player = (() => {
     seekTo,
     play,
     pause,
+    stop,
     onTimeUpdate,
     get currentTime() { return _el ? _el.currentTime : 0; },
     get duration()    { return _el ? _el.duration || 0 : 0; },

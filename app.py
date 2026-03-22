@@ -370,6 +370,31 @@ class API:
             json.dump(versions, f, ensure_ascii=False, indent=2)
         return True
 
+    def rename_session(self, job_id: str, name: str) -> bool:
+        """Rename a transcript session (updates the filename field in its JSON)."""
+        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        if not os.path.exists(path):
+            return False
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        data["filename"] = name
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+        return True
+
+    def delete_session(self, job_id: str) -> bool:
+        """Delete a transcript session and its associated summary file."""
+        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        if not os.path.exists(path):
+            return False
+        os.remove(path)
+        summary_path = os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
+        if os.path.exists(summary_path):
+            os.remove(summary_path)
+        return True
+
     # ── Model management ───────────────────────────────────────────────────────
 
     def get_models(self) -> list[dict]:

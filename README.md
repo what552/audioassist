@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.7 — r02-a)
+## Features (v0.8 — r02-b1)
 
 - **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
 - **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
@@ -18,7 +18,12 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
 - **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher (see [Summary panel](#summary-panel))
-- **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved and wired to the player (see [Realtime transcription](#realtime-transcription))
+- **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the WAV is automatically transcribed with the selected ASR engine + speaker diarization (see [Realtime transcription](#realtime-transcription))
+- **Auto-transcribe on finish** — stopping a realtime session immediately starts a full transcription pipeline on the saved WAV, producing a speaker-labelled JSON + MD transcript identical to a file upload
+- **Session rename** — hover over any history item and click ✏ to rename inline (Enter to save, Esc to cancel)
+- **Session delete** — hover and click 🗑 to delete; removes transcript JSON and summary file after confirmation
+- **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model) and template management; no longer embedded inside the summary panel
+- **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
 - **Model auto-download** — ASR and diarizer model weights are downloaded automatically on first use; progress is shown in the UI progress bar; no manual setup required
 
 ## Requirements

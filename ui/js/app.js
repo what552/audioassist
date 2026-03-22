@@ -202,9 +202,18 @@ const App = (() => {
       _updateSession(_activeRealtimeId, { status: 'recording' });
       _startTimer();
     } else if (state === 'stopped') {
-      _updateSession(_activeRealtimeId, { status: 'done' });
+      const rtSession = _sessions.get(_activeRealtimeId);
+      const wavPath   = rtSession?.audioPath;
+      const rtName    = rtSession?.filename;
+      _sessions.delete(_activeRealtimeId);
+      if (_selectedId === _activeRealtimeId) _selectedId = null;
       _activeRealtimeId = null;
       _resetTimer();
+      if (wavPath) {
+        (async () => { await _startTranscription(wavPath, rtName); })();
+      } else {
+        _render();
+      }
     } else if (state === 'error') {
       if (_selectedId === _activeRealtimeId) _selectedId = null;
       _sessions.delete(_activeRealtimeId);
@@ -217,8 +226,28 @@ const App = (() => {
   // ── History ────────────────────────────────────────────────────────────────
 
   function _onHistorySelect(id) {
+    Player.stop();
     _selectedId = id;
     _render();
+  }
+
+  function _onHistoryRename(id, newName) {
+    if (!newName || !newName.trim()) return;
+    window.pywebview.api.rename_session(id, newName.trim())
+      .then(() => _updateSession(id, { filename: newName.trim() }))
+      .catch(e => console.error('[App] rename_session error:', e));
+  }
+
+  function _onHistoryDelete(id) {
+    if (!confirm('Delete this recording? This cannot be undone.')) return;
+    window.pywebview.api.delete_session(id)
+      .then(ok => {
+        if (!ok) return;
+        if (_selectedId === id) _selectedId = null;
+        _sessions.delete(id);
+        _render();
+      })
+      .catch(e => console.error('[App] delete_session error:', e));
   }
 
   async function _loadHistory() {
@@ -266,8 +295,8 @@ const App = (() => {
     }
   }
 
-  async function _startTranscription(filePath) {
-    const filename = filePath.split('/').pop().split('\\').pop();
+  async function _startTranscription(filePath, displayName) {
+    const filename = displayName || filePath.split('/').pop().split('\\').pop();
     try {
       const { job_id } = await window.pywebview.api.transcribe(filePath, {
         engine:       dom.selEngine.value,
@@ -366,7 +395,7 @@ const App = (() => {
     Player.init(dom.audioEl);
     Summary.init();
     Realtime.init(_onRealtimeState, _canStartRecording);
-    History.init(_onHistorySelect);
+    History.init(_onHistorySelect, _onHistoryRename, _onHistoryDelete);
 
     Player.onTimeUpdate((t) => {
       Transcript.highlightAt(t);
