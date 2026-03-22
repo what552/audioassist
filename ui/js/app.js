@@ -137,11 +137,13 @@ const App = (() => {
 
   function _onRealtimeState(state, sessionId) {
     if (state === 'started') {
+      History.setRecording(sessionId);
       _setView('realtime');
     } else if (state === 'stopped') {
-      History.reload();
+      History.reload();   // clears placeholder, refreshes list
       _setView('idle');
     } else if (state === 'error') {
+      History.reload();
       _setView('idle');
     }
   }

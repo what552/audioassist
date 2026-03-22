@@ -2,12 +2,15 @@
  * History — left sidebar listing past jobs.
  *
  * Public API:
- *   History.init(onSelect)  — wire up DOM; onSelect(jobId, filename) called on click
- *   History.reload()        — refresh the list from the backend
+ *   History.init(onSelect)         — wire up DOM; onSelect(jobId, filename) on click
+ *   History.reload()               — refresh the list from the backend
+ *   History.setRecording(sessionId) — show a live "Recording…" placeholder at top
+ *   History.clearRecording()       — remove the placeholder (called automatically by reload)
  */
 const History = (() => {
   let dom = {};
   let _onSelect = null;
+  let _recordingEl = null;
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -19,9 +22,42 @@ const History = (() => {
     reload();
   }
 
+  // ── Recording placeholder ──────────────────────────────────────────────────
+
+  function setRecording(sessionId) {
+    clearRecording();
+
+    const el = document.createElement('div');
+    el.className = 'history-item history-item-recording';
+
+    const name = document.createElement('div');
+    name.className = 'history-item-name';
+    name.textContent = '🔴 Recording…';
+
+    const meta = document.createElement('div');
+    meta.className = 'history-item-meta';
+    meta.textContent = sessionId ? sessionId.slice(0, 8) + '…' : '';
+
+    el.append(name, meta);
+    _recordingEl = el;
+
+    // Remove empty-hint if present, then prepend
+    const emptyEl = dom.list.querySelector('.history-empty');
+    if (emptyEl) emptyEl.remove();
+    dom.list.prepend(el);
+  }
+
+  function clearRecording() {
+    if (_recordingEl) {
+      _recordingEl.remove();
+      _recordingEl = null;
+    }
+  }
+
   // ── Reload ─────────────────────────────────────────────────────────────────
 
   async function reload() {
+    clearRecording();
     try {
       const items = await window.pywebview.api.get_history();
       _render(items);
@@ -76,5 +112,5 @@ const History = (() => {
     return `${m}:${String(s).padStart(2, '0')}`;
   }
 
-  return { init, reload };
+  return { init, reload, setRecording, clearRecording };
 })();

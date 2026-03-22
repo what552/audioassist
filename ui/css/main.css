@@ -2,6 +2,8 @@
 
 /* ── Reset ──────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* Ensure [hidden] always wins over element-level display rules (e.g. display:flex) */
+[hidden] { display: none !important; }
 
 /* ── Design tokens ──────────────────────────────────────────────────────────── */
 :root {
@@ -133,9 +135,14 @@ select { font-family: inherit; }
   transition: background 0.1s;
 }
 .history-item:hover { background: var(--bg-hover); }
-.history-item.selected {
+.history-item.active {
   background: rgba(30, 58, 95, 0.35);
   border-left-color: var(--accent);
+}
+.history-item-recording {
+  border-left-color: #e06c6c !important;
+  opacity: 0.75;
+  cursor: default;
 }
 
 .history-item-name {
