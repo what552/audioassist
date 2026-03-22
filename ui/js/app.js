@@ -417,22 +417,7 @@ function onModelDownloadError(name, message)        { console.error(`[model] err
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 // pywebview injects window.pywebview.api asynchronously after DOM is ready.
 // Wait for 'pywebviewready' so _loadHistory() (and all other API calls in
-// init) can actually reach the backend.  Fall back to DOMContentLoaded for
-// non-pywebview environments (unit tests, browser dev-mode).
+// init) can actually reach the backend.
+// Tests call App.init() directly — no bootstrap needed in that environment.
 
-let _initDone = false;
-function _initOnce() {
-  if (_initDone) return;
-  _initDone = true;
-  App.init();
-}
-
-window.addEventListener('pywebviewready', _initOnce);
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    if (!window.pywebview) setTimeout(_initOnce, 0);
-  });
-} else {
-  if (!window.pywebview) setTimeout(_initOnce, 0);
-}
+window.addEventListener('pywebviewready', () => App.init());
