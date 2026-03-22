@@ -44,7 +44,7 @@
 - [ ] 转写取消：转写进行中显示取消按钮，chunk 间检查 cancel flag 中止，推送 onTranscribeCancel 事件
 - [ ] 转写失败重试：onTranscribeError 时显示重试入口，记住上次文件路径和参数，点击直接重新发起 transcribe()
 - [ ] 模型管理 UI（下载进度、选择、删除）
-- [ ] pyannote-community-1 repo_id 切换为 pyannote-community/speaker-diarization-community-1（无 HF token，CC-BY-4.0，~33MB）
+- [ ] pyannote community-1 无 token 化（r02-b2）：repo_id 切换为 pyannote-community/speaker-diarization-community-1 + _has_key_files() 校验加强（5 文件全检）+ size_gb 更正为 0.034。详见 agentops/reports/community-1-packaging-prd.md
 
 ## Backlog
 
