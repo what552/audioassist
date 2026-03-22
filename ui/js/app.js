@@ -226,9 +226,25 @@ function onModelDownloadProgress(name, percent)     { console.log(`[model] ${nam
 function onModelDownloadError(name, message)        { console.error(`[model] error: ${name} — ${message}`); }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
+// pywebview injects window.pywebview.api asynchronously after DOM is ready.
+// Wait for 'pywebviewready' so History.reload() (and all other API calls in
+// init) can actually reach the backend.  Fall back to DOMContentLoaded for
+// non-pywebview environments (unit tests, browser dev-mode).
+
+let _initDone = false;
+function _initOnce() {
+  if (_initDone) return;
+  _initDone = true;
+  App.init();
+}
+
+window.addEventListener('pywebviewready', _initOnce);
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', App.init);
+  document.addEventListener('DOMContentLoaded', () => {
+    // Give pywebview a short grace period; if it fires first we're already done.
+    if (!window.pywebview) setTimeout(_initOnce, 0);
+  });
 } else {
-  App.init();
+  if (!window.pywebview) setTimeout(_initOnce, 0);
 }
