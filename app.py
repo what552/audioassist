@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import threading
 from typing import Optional
 
@@ -89,6 +90,28 @@ class API:
                     job_id=job_id,
                     progress_callback=_progress,
                 )
+
+                # Copy original audio into output dir for persistent playback.
+                # The copy is kept alongside the transcript so history playback
+                # works regardless of whether the source file has moved or been
+                # deleted.  If the copy fails we log a warning and continue.
+                try:
+                    _, ext = os.path.splitext(path)
+                    audio_copy = os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}")
+                    shutil.copy2(path, audio_copy)
+                    # Patch the JSON: replace the basename "audio" field with
+                    # the absolute path of the internal copy so Player.load()
+                    # can resolve it via file:// URL.
+                    with open(json_path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    data["audio"] = audio_copy
+                    tmp_json = json_path + ".tmp"
+                    with open(tmp_json, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    os.replace(tmp_json, json_path)
+                except Exception:
+                    logger.warning("transcribe: failed to copy audio file", exc_info=True)
+
                 js = f"onTranscribeComplete({json.dumps(job_id)}, {json.dumps(json_path)})"
                 _push(js)
             except Exception as e:
@@ -313,35 +336,64 @@ class API:
 
     def get_history(self) -> list[dict]:
         """
-        Return past transcription jobs, newest first.
-        Each entry: {job_id, filename, date, duration, language}.
+        Return past transcription jobs and realtime recordings, newest first.
+
+        Each entry: {job_id, filename, date, duration, language, audio_path, type}
+          type = "file"     — transcription job (has a JSON transcript)
+          type = "realtime" — realtime WAV recording without a transcript JSON
         """
         import glob
-        result = []
+        import datetime as _dt
+
+        result: list[dict] = []
         if not os.path.isdir(OUTPUT_DIR):
             return result
-        for path in sorted(
-            glob.glob(os.path.join(OUTPUT_DIR, "*.json")),
-            key=os.path.getmtime,
-            reverse=True,
-        ):
+
+        json_stems: set[str] = set()
+
+        # ── Transcription jobs (*.json) ────────────────────────────────────────
+        for path in glob.glob(os.path.join(OUTPUT_DIR, "*.json")):
             if os.path.basename(path).endswith("_summary.json"):
                 continue
             try:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
-                job_id = os.path.splitext(os.path.basename(path))[0]
+                stem = os.path.splitext(os.path.basename(path))[0]
+                json_stems.add(stem)
                 segs = data.get("segments", [])
                 duration = round(segs[-1]["end"]) if segs else 0
                 result.append({
-                    "job_id": job_id,
-                    "filename": data.get("filename") or data.get("audio") or job_id,
+                    "job_id": stem,
+                    "filename": data.get("filename") or data.get("audio") or stem,
                     "date": data.get("created_at", ""),
                     "duration": duration,
                     "language": data.get("language", ""),
+                    "audio_path": data.get("audio", ""),
+                    "type": "file",
                 })
             except Exception:
                 pass
+
+        # ── WAV-only realtime recordings (no transcript JSON) ──────────────────
+        for wav_path in glob.glob(os.path.join(OUTPUT_DIR, "*.wav")):
+            stem = os.path.splitext(os.path.basename(wav_path))[0]
+            if stem.endswith("_audio"):
+                continue  # internal audio copy from transcribe(); not a recording
+            if stem in json_stems:
+                continue  # already covered by a JSON entry
+            mtime = os.path.getmtime(wav_path)
+            date_str = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H:%M:%S")
+            result.append({
+                "job_id": stem,
+                "filename": stem[:8],
+                "date": date_str,
+                "duration": 0,
+                "language": "",
+                "audio_path": os.path.abspath(wav_path),
+                "type": "realtime",
+            })
+
+        result.sort(key=lambda x: x["date"], reverse=True)
         return result
 
     def get_summary_versions(self, job_id: str) -> list[dict]:

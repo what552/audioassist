@@ -256,9 +256,14 @@ const App = (() => {
       for (const item of items) {
         if (!_sessions.has(item.job_id)) {
           _sessions.set(item.job_id, {
-            id: item.job_id, type: 'file', status: 'done',
-            filename: item.filename, created_at: item.date,
-            duration: item.duration, language: item.language,
+            id:         item.job_id,
+            type:       item.type || 'file',
+            status:     'done',
+            filename:   item.filename,
+            created_at: item.date,
+            duration:   item.duration,
+            language:   item.language,
+            audioPath:  item.audio_path || null,
           });
         }
       }
