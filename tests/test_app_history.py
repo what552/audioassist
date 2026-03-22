@@ -150,6 +150,18 @@ class TestGetHistoryWavEntries:
         result = api.get_history()
         assert len(result) == 0  # _audio suffix → internal copy, skipped
 
+    def test_wav_with_transcribed_job_id_excluded(self, env):
+        """WAV with transcribed_job_id in _meta.json must not appear in history."""
+        api, tmp = env
+        stem = "realtime-0000-0000-0000-000000000000"
+        (tmp / f"{stem}.wav").write_bytes(b"RIFF")
+        (tmp / f"{stem}_meta.json").write_text(
+            json.dumps({"filename": "My Rec", "transcribed_job_id": "some-new-uuid"}),
+            encoding="utf-8",
+        )
+        result = api.get_history()
+        assert len(result) == 0, "WAV with transcribed_job_id should be hidden"
+
     def test_wav_and_json_entries_combined_and_sorted(self, env):
         api, tmp = env
         # JSON job with an older date

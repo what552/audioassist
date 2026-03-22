@@ -94,8 +94,7 @@ const Summary = (() => {
         document.querySelectorAll('.version-btn.active')
           .forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        dom.summaryText.textContent = v.text;
-        _setOutput('text');
+        _setOutput('text', v.text);
       });
       dom.versions.appendChild(btn);
     });

@@ -26,6 +26,34 @@ OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
 
+_LANG_INSTRUCTIONS: dict[str, str] = {
+    "zh":    "请用中文生成纪要。",
+    "yue":   "請用粵語（繁體中文）生成紀要。",
+    "ja":    "日本語で要約してください。",
+    "ko":    "한국어로 요약해 주세요。",
+    "fr":    "Veuillez répondre en français.",
+    "de":    "Bitte auf Deutsch antworten.",
+    "es":    "Por favor, responde en español.",
+    "pt":    "Por favor, responda em português.",
+    "ru":    "Пожалуйста, отвечайте на русском языке.",
+    "ar":    "يرجى الرد باللغة العربية.",
+    "en":    "Please respond in English.",
+}
+
+
+def _lang_instruction(language: str, text: str) -> str:
+    """Return a language instruction to prepend to the LLM prompt."""
+    lang = (language or "").strip().lower()
+    if lang in _LANG_INSTRUCTIONS:
+        return _LANG_INSTRUCTIONS[lang]
+    # Auto-detect: if >10 % of chars are CJK, assume Chinese
+    if text:
+        cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+        if cjk / len(text) > 0.10:
+            return _LANG_INSTRUCTIONS["zh"]
+    return ""
+
+
 _DEFAULT_TEMPLATES = [
     {
         "name": "General Summary",
@@ -135,6 +163,31 @@ class API:
                     os.replace(tmp_json, json_path)
                 except Exception:
                     logger.warning("transcribe: failed to copy audio file", exc_info=True)
+
+                # If source was a realtime WAV from our output dir, record
+                # transcribed_job_id in its _meta.json so get_history() can
+                # skip the orphaned WAV entry on next launch.
+                try:
+                    if path.lower().endswith(".wav"):
+                        src_abs = os.path.abspath(path)
+                        out_abs = os.path.abspath(OUTPUT_DIR)
+                        if os.path.dirname(src_abs) == out_abs:
+                            wav_stem = os.path.splitext(os.path.basename(path))[0]
+                            meta_path_rt = os.path.join(OUTPUT_DIR, f"{wav_stem}_meta.json")
+                            rt_meta: dict = {}
+                            if os.path.exists(meta_path_rt):
+                                try:
+                                    with open(meta_path_rt, encoding="utf-8") as f:
+                                        rt_meta = json.load(f)
+                                except Exception:
+                                    pass
+                            rt_meta["transcribed_job_id"] = job_id
+                            tmp_rt = meta_path_rt + ".tmp"
+                            with open(tmp_rt, "w", encoding="utf-8") as f:
+                                json.dump(rt_meta, f, ensure_ascii=False, indent=2)
+                            os.replace(tmp_rt, meta_path_rt)
+                except Exception:
+                    logger.warning("transcribe: failed to write WAV meta", exc_info=True)
 
                 js = f"onTranscribeComplete({json.dumps(job_id)}, {json.dumps(json_path)})"
                 _push(js)
@@ -338,6 +391,9 @@ class API:
                 api_key  = cfg.get("api_key", "")
                 model    = cfg.get("model", "")
                 prompt   = template.get("prompt", "Summarize the following transcript.")
+                lang_inst = _lang_instruction(data.get("language", ""), text)
+                if lang_inst:
+                    prompt = lang_inst + "\n\n" + prompt
 
                 from src.summary import summarize as _summarize
                 chunks = _summarize(text, prompt, base_url, api_key, model, stream=True)
@@ -377,7 +433,8 @@ class API:
 
         # ── Transcription jobs (*.json) ────────────────────────────────────────
         for path in glob.glob(os.path.join(OUTPUT_DIR, "*.json")):
-            if os.path.basename(path).endswith("_summary.json"):
+            basename = os.path.basename(path)
+            if basename.endswith("_summary.json") or basename.endswith("_meta.json"):
                 continue
             try:
                 with open(path, encoding="utf-8") as f:
@@ -413,6 +470,8 @@ class API:
                 try:
                     with open(meta_path, encoding="utf-8") as f:
                         meta = json.load(f)
+                    if meta.get("transcribed_job_id"):
+                        continue  # already transcribed; shown as a file entry
                     display_name = meta.get("filename", display_name)
                 except Exception:
                     pass

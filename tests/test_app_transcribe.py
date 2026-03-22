@@ -150,3 +150,69 @@ class TestCopyResilience:
             "onTranscribeComplete must be pushed even when audio copy fails"
         )
         assert not any("onTranscribeError" in p for p in pushes)
+
+
+# ── WAV meta (transcribed_job_id) ─────────────────────────────────────────────
+
+class TestWavTranscribedJobId:
+    def test_meta_written_when_source_is_wav_in_output_dir(self, env, tmp_path):
+        """transcribe() writes transcribed_job_id to _meta.json for realtime WAVs."""
+        api, out_dir = env
+        # Source WAV lives inside out_dir (simulates a realtime recording)
+        src = out_dir / "abcd1234-0000-0000-0000-000000000000.wav"
+        src.write_bytes(b"RIFF")
+
+        job_ids = []
+
+        def _capture(audio_path, output_dir, job_id, **kw):
+            job_ids.append(job_id)
+            return _fake_pipeline(audio_path, output_dir, job_id, **kw)
+
+        with patch("src.pipeline.run", side_effect=_capture), \
+             patch.object(app_module, "_push"):
+            api.transcribe(str(src), {})
+            _wait()
+
+        meta_path = out_dir / "abcd1234-0000-0000-0000-000000000000_meta.json"
+        assert meta_path.exists(), "_meta.json should be created for realtime WAV"
+        import json as _json
+        data = _json.loads(meta_path.read_text(encoding="utf-8"))
+        assert data.get("transcribed_job_id") == job_ids[0]
+
+    def test_meta_not_written_for_external_source(self, env, tmp_path):
+        """transcribe() must NOT write meta when source is outside output dir."""
+        import tempfile, pathlib
+        api, out_dir = env
+        # Use a completely separate temp directory so it's clearly not out_dir
+        ext_dir = pathlib.Path(tempfile.mkdtemp())
+        src = ext_dir / "external.wav"
+        src.write_bytes(b"RIFF")
+
+        with patch("src.pipeline.run", side_effect=_fake_pipeline), \
+             patch.object(app_module, "_push"):
+            api.transcribe(str(src), {})
+            _wait()
+
+        # No _meta.json for external sources
+        metas = list(out_dir.glob("*_meta.json"))
+        assert len(metas) == 0
+
+    def test_meta_preserves_existing_fields(self, env, tmp_path):
+        """transcribed_job_id is merged into existing _meta.json, not overwritten."""
+        api, out_dir = env
+        stem = "abcd1234-0000-0000-0000-000000000001"
+        src = out_dir / f"{stem}.wav"
+        src.write_bytes(b"RIFF")
+        # Pre-existing meta with a custom filename
+        meta_path = out_dir / f"{stem}_meta.json"
+        import json as _json
+        meta_path.write_text(_json.dumps({"filename": "My Recording"}), encoding="utf-8")
+
+        with patch("src.pipeline.run", side_effect=_fake_pipeline), \
+             patch.object(app_module, "_push"):
+            api.transcribe(str(src), {})
+            _wait()
+
+        data = _json.loads(meta_path.read_text(encoding="utf-8"))
+        assert data["filename"] == "My Recording", "existing fields must be preserved"
+        assert "transcribed_job_id" in data
