@@ -278,6 +278,81 @@ class TestStop:
         assert rt._stream is None
 
 
+# ── pause / resume ────────────────────────────────────────────────────────────
+
+class TestPauseResume:
+    def test_pause_sets_running_false(self):
+        rt, _ = _make_rt()
+        mock_stream = MagicMock()
+        rt._stream = mock_stream
+        rt.pause()
+        assert rt._running is False
+
+    def test_pause_stops_stream_without_closing(self):
+        rt, _ = _make_rt()
+        mock_stream = MagicMock()
+        rt._stream = mock_stream
+        rt.pause()
+        mock_stream.stop.assert_called_once()
+        mock_stream.close.assert_not_called()
+        assert rt._stream is mock_stream  # stream kept open
+
+    def test_pause_flushes_speech_buffer(self):
+        rt, _ = _make_rt()
+        rt._stream = MagicMock()
+        rt._speech_buffer = [np.zeros(512, dtype=np.float32)] * 5
+        with patch.object(rt, "_flush_speech") as mock_flush:
+            rt.pause()
+        mock_flush.assert_called_once()
+
+    def test_pause_skips_flush_when_buffer_empty(self):
+        rt, _ = _make_rt()
+        rt._stream = MagicMock()
+        rt._speech_buffer = []
+        with patch.object(rt, "_flush_speech") as mock_flush:
+            rt.pause()
+        mock_flush.assert_not_called()
+
+    def test_pause_without_stream_does_not_raise(self):
+        rt, _ = _make_rt()
+        assert rt._stream is None
+        rt.pause()  # must not raise
+
+    def test_resume_sets_running_true(self):
+        rt, _ = _make_rt()
+        rt._running = False
+        rt._stream = MagicMock()
+        rt.resume()
+        assert rt._running is True
+
+    def test_resume_starts_stream(self):
+        rt, _ = _make_rt()
+        mock_stream = MagicMock()
+        rt._stream = mock_stream
+        rt._running = False
+        rt.resume()
+        mock_stream.start.assert_called_once()
+
+    def test_resume_resets_vad_state(self):
+        rt, _ = _make_rt()
+        rt._stream = MagicMock()
+        rt._running = False
+        rt._in_speech = True
+        rt._silence_count = 7
+        rt._speech_buffer = [np.zeros(512, dtype=np.float32)] * 3
+        rt.resume()
+        assert rt._in_speech is False
+        assert rt._silence_count == 0
+        assert rt._speech_buffer == []
+
+    def test_resume_without_stream_does_nothing(self):
+        rt, _ = _make_rt()
+        rt._stream = None
+        rt._running = False
+        rt.resume()
+        assert rt._running is False  # unchanged
+
+
 # ── _load_models engine dispatch ─────────────────────────────────────────────
 
 class TestLoadModels:

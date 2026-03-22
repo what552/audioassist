@@ -196,6 +196,48 @@ class API:
         threading.Thread(target=_run, daemon=True).start()
         return {"status": "started"}
 
+    def pause_realtime(self) -> dict:
+        """
+        Pause realtime transcription.
+        Pushes onRealtimePaused() after the stream is paused.
+
+        Returns: {"status": "pausing"} or {"status": "not_running"}
+        """
+        rt = self._realtime
+        if rt is None or not hasattr(rt, 'pause'):
+            return {"status": "not_running"}
+
+        def _run():
+            try:
+                rt.pause()
+            except Exception:
+                logger.exception("Realtime pause failed")
+            _push("onRealtimePaused()")
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "pausing"}
+
+    def resume_realtime(self) -> dict:
+        """
+        Resume realtime transcription.
+        Pushes onRealtimeResumed() after the stream is resumed.
+
+        Returns: {"status": "resuming"} or {"status": "not_running"}
+        """
+        rt = self._realtime
+        if rt is None or not hasattr(rt, 'resume'):
+            return {"status": "not_running"}
+
+        def _run():
+            try:
+                rt.resume()
+            except Exception:
+                logger.exception("Realtime resume failed")
+            _push("onRealtimeResumed()")
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "resuming"}
+
     def stop_realtime(self) -> dict:
         """
         Stop realtime transcription.

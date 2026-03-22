@@ -81,6 +81,21 @@
         <div id="realtime-list"></div>
       </div>
 
+      <!-- Realtime control bar (realtime-rec / realtime-paused states) -->
+      <div id="realtime-control-bar" hidden>
+        <div class="rc-left">
+          <span id="rc-session-name"></span>
+        </div>
+        <div class="rc-center">
+          <span id="rc-timer" class="rc-timer">00:00</span>
+          <button id="rc-btn-pause" class="btn-rc" title="Pause / Resume">⏸</button>
+          <button id="rc-btn-play"  class="btn-rc" title="Play recording" disabled>▶</button>
+        </div>
+        <div class="rc-right">
+          <button id="rc-btn-finish" class="btn-primary btn-sm">Finish</button>
+        </div>
+      </div>
+
     </section>
 
     <!-- ── Right: Summary panel (collapsible) ─────────────────────────────── -->

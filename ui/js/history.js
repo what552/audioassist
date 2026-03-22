@@ -1,16 +1,16 @@
 /**
- * History — left sidebar listing past jobs.
+ * History — left sidebar listing sessions.
+ *
+ * Pure view module: no backend calls, no internal state management.
+ * App drives all data via render().
  *
  * Public API:
- *   History.init(onSelect)         — wire up DOM; onSelect(jobId, filename) on click
- *   History.reload()               — refresh the list from the backend
- *   History.setRecording(sessionId) — show a live "Recording…" placeholder at top
- *   History.clearRecording()       — remove the placeholder (called automatically by reload)
+ *   History.init(onSelect)              — wire up DOM; onSelect(sessionId) on click
+ *   History.render(sessions, selectedId) — redraw list from session array
  */
 const History = (() => {
   let dom = {};
   let _onSelect = null;
-  let _recordingEl = null;
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -19,88 +19,44 @@ const History = (() => {
     dom = {
       list: document.getElementById('history-list'),
     };
-    reload();
-  }
-
-  // ── Recording placeholder ──────────────────────────────────────────────────
-
-  function setRecording(sessionId) {
-    clearRecording();
-
-    const el = document.createElement('div');
-    el.className = 'history-item history-item-recording';
-
-    const name = document.createElement('div');
-    name.className = 'history-item-name';
-    name.textContent = '🔴 Recording…';
-
-    const meta = document.createElement('div');
-    meta.className = 'history-item-meta';
-    meta.textContent = sessionId ? sessionId.slice(0, 8) + '…' : '';
-
-    el.append(name, meta);
-    _recordingEl = el;
-
-    // Remove empty-hint if present, then prepend
-    const emptyEl = dom.list.querySelector('.history-empty');
-    if (emptyEl) emptyEl.remove();
-    dom.list.prepend(el);
-  }
-
-  function clearRecording() {
-    if (_recordingEl) {
-      _recordingEl.remove();
-      _recordingEl = null;
-    }
-  }
-
-  // ── Reload ─────────────────────────────────────────────────────────────────
-
-  async function reload() {
-    clearRecording();
-    try {
-      const items = await window.pywebview.api.get_history();
-      _render(items);
-    } catch (e) {
-      console.warn('[History] reload error:', e);
-    }
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  function _render(items) {
+  function render(sessions, selectedId) {
     dom.list.innerHTML = '';
-    if (!items.length) {
+    if (!sessions.length) {
       const empty = document.createElement('div');
       empty.className = 'history-empty';
       empty.textContent = 'No recordings yet';
       dom.list.appendChild(empty);
       return;
     }
-    items.forEach(item => dom.list.appendChild(_makeItem(item)));
+    sessions.forEach(session => dom.list.appendChild(_makeItem(session, selectedId)));
   }
 
-  function _makeItem(item) {
+  function _makeItem(session, selectedId) {
     const el = document.createElement('div');
     el.className = 'history-item';
-    el.dataset.jobId = item.job_id;
+    if (session.id === selectedId) el.classList.add('active');
+
+    const isLive = session.status === 'recording' || session.status === 'paused';
+    if (isLive) el.classList.add('history-item-recording');
 
     const name = document.createElement('div');
     name.className = 'history-item-name';
-    name.textContent = item.filename || item.job_id;
-    name.title = item.filename || item.job_id;
+    name.textContent = (isLive ? '🔴 ' : '') + (session.filename || session.id);
+    name.title = session.filename || session.id;
 
     const meta = document.createElement('div');
     meta.className = 'history-item-meta';
-    const dur = item.duration ? _fmtDuration(item.duration) : '';
-    meta.textContent = [item.date, dur].filter(Boolean).join(' · ');
+    const dateStr = session.created_at ? session.created_at.slice(0, 10) : '';
+    const dur = session.duration ? _fmtDuration(session.duration) : '';
+    meta.textContent = [dateStr, dur].filter(Boolean).join(' · ');
 
     el.append(name, meta);
     el.addEventListener('click', () => {
-      document.querySelectorAll('.history-item.active')
-        .forEach(x => x.classList.remove('active'));
-      el.classList.add('active');
-      if (_onSelect) _onSelect(item.job_id, item.filename || item.job_id);
+      if (_onSelect) _onSelect(session.id);
     });
     return el;
   }
@@ -112,5 +68,5 @@ const History = (() => {
     return `${m}:${String(s).padStart(2, '0')}`;
   }
 
-  return { init, reload, setRecording, clearRecording };
+  return { init, render };
 })();

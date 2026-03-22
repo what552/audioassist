@@ -176,6 +176,84 @@ class TestRaceCondition:
         assert rt_stopped, "rt.stop() must be called when stop_realtime() races with load"
 
 
+# ── pause_realtime / resume_realtime ─────────────────────────────────────────
+
+class TestPauseResumeAPI:
+    def test_pause_returns_not_running_when_no_session(self):
+        api = API()
+        result = api.pause_realtime()
+        assert result["status"] == "not_running"
+
+    def test_resume_returns_not_running_when_no_session(self):
+        api = API()
+        result = api.resume_realtime()
+        assert result["status"] == "not_running"
+
+    def test_pause_returns_pausing(self):
+        api = API()
+        api._realtime = MagicMock(spec=["pause", "resume"])
+        with patch.object(app_module, "_push"):
+            result = api.pause_realtime()
+        assert result["status"] == "pausing"
+
+    def test_resume_returns_resuming(self):
+        api = API()
+        api._realtime = MagicMock(spec=["pause", "resume"])
+        with patch.object(app_module, "_push"):
+            result = api.resume_realtime()
+        assert result["status"] == "resuming"
+
+    def test_pause_calls_rt_pause_and_pushes_onRealtimePaused(self):
+        api = API()
+        mock_rt = MagicMock(spec=["pause", "resume"])
+        api._realtime = mock_rt
+        js_calls = []
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            api.pause_realtime()
+            _wait(0.3)
+        mock_rt.pause.assert_called_once()
+        assert any("onRealtimePaused" in c for c in js_calls)
+
+    def test_resume_calls_rt_resume_and_pushes_onRealtimeResumed(self):
+        api = API()
+        mock_rt = MagicMock(spec=["pause", "resume"])
+        api._realtime = mock_rt
+        js_calls = []
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            api.resume_realtime()
+            _wait(0.3)
+        mock_rt.resume.assert_called_once()
+        assert any("onRealtimeResumed" in c for c in js_calls)
+
+    def test_pause_exception_still_pushes_onRealtimePaused(self):
+        api = API()
+        mock_rt = MagicMock(spec=["pause", "resume"])
+        mock_rt.pause.side_effect = RuntimeError("pause failed")
+        api._realtime = mock_rt
+        js_calls = []
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            api.pause_realtime()
+            _wait(0.3)
+        assert any("onRealtimePaused" in c for c in js_calls)
+
+    def test_resume_exception_still_pushes_onRealtimeResumed(self):
+        api = API()
+        mock_rt = MagicMock(spec=["pause", "resume"])
+        mock_rt.resume.side_effect = RuntimeError("resume failed")
+        api._realtime = mock_rt
+        js_calls = []
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            api.resume_realtime()
+            _wait(0.3)
+        assert any("onRealtimeResumed" in c for c in js_calls)
+
+    def test_pause_returns_not_running_when_rt_has_no_pause_method(self):
+        api = API()
+        api._realtime = object()  # no pause/resume methods
+        result = api.pause_realtime()
+        assert result["status"] == "not_running"
+
+
 # ── Engine option passed through ──────────────────────────────────────────────
 
 class TestEngineOption:

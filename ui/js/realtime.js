@@ -94,6 +94,18 @@ const Realtime = (() => {
     if (_onStateChange) _onStateChange('error');
   }
 
+  function onPaused() {
+    _setStatus('Paused');
+    dom.statusDot.classList.remove('active');
+    if (_onStateChange) _onStateChange('paused');
+  }
+
+  function onResumed() {
+    _setStatus('Recording…');
+    dom.statusDot.classList.add('active');
+    if (_onStateChange) _onStateChange('resumed');
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   function _setLoading(active) {
@@ -104,7 +116,7 @@ const Realtime = (() => {
     dom.statusText.textContent = text;
   }
 
-  return { init, onStarted, onStopped, onResult, onError };
+  return { init, onStarted, onStopped, onResult, onError, onPaused, onResumed };
 })();
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
@@ -113,3 +125,5 @@ function onRealtimeStarted(sessionId) { Realtime.onStarted(sessionId); }
 function onRealtimeStopped()          { Realtime.onStopped(); }
 function onRealtimeResult(text)       { Realtime.onResult(text); }
 function onRealtimeError(message)     { Realtime.onError(message); }
+function onRealtimePaused()           { Realtime.onPaused(); }
+function onRealtimeResumed()          { Realtime.onResumed(); }
