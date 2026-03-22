@@ -78,6 +78,15 @@ _DEFAULT_TEMPLATES = [
     },
 ]
 
+# Per-job cancel events for in-flight transcriptions
+_cancel_flags: dict[str, threading.Event] = {}
+_cancel_flags_mutex = threading.Lock()
+
+
+class _TranscriptionCancelled(Exception):
+    """Raised inside transcribe() thread when the job is cancelled."""
+
+
 # Per-job lock to prevent concurrent read-modify-write on transcript files
 # TODO: _transcript_locks grows unbounded (one entry per job for the lifetime of
 #   the process).  Fine for a single-session desktop app, but should be cleaned
@@ -122,10 +131,15 @@ class API:
         job_id = str(uuid.uuid4())
 
         def _run():
+            cancel_ev = threading.Event()
+            with _cancel_flags_mutex:
+                _cancel_flags[job_id] = cancel_ev
             try:
                 from src.pipeline import run as pipeline_run
 
                 def _progress(pct: float, msg: str):
+                    if cancel_ev.is_set():
+                        raise _TranscriptionCancelled()
                     js = f"onTranscribeProgress({json.dumps(job_id)}, {pct:.4f}, {json.dumps(msg)})"
                     _push(js)
 
@@ -191,13 +205,33 @@ class API:
 
                 js = f"onTranscribeComplete({json.dumps(job_id)}, {json.dumps(json_path)})"
                 _push(js)
+            except _TranscriptionCancelled:
+                logger.info("Transcription cancelled: %s", job_id)
+                _push(f"onTranscribeCancel({json.dumps(job_id)})")
             except Exception as e:
                 logger.exception("Transcription failed")
                 js = f"onTranscribeError({json.dumps(job_id)}, {json.dumps(str(e))})"
                 _push(js)
+            finally:
+                with _cancel_flags_mutex:
+                    _cancel_flags.pop(job_id, None)
 
         threading.Thread(target=_run, daemon=True).start()
         return {"job_id": job_id}
+
+    def cancel_transcription(self, job_id: str) -> bool:
+        """
+        Request cancellation of an in-flight transcription job.
+
+        Returns True if the job was found and flagged for cancellation,
+        False if no matching job is running.
+        """
+        with _cancel_flags_mutex:
+            ev = _cancel_flags.get(job_id)
+        if ev is None:
+            return False
+        ev.set()
+        return True
 
     def get_transcript(self, job_id: str) -> Optional[dict]:
         """Load transcript JSON for a given job_id."""
@@ -560,6 +594,25 @@ class API:
         return deleted
 
     # ── Model management ───────────────────────────────────────────────────────
+
+    def get_setup_status(self) -> dict:
+        """
+        Return download readiness for the two required model families.
+
+        Returns: {
+            "asr_ready":      bool,  # any recommended ASR model downloaded
+            "diarizer_ready": bool,  # any recommended diarizer downloaded
+        }
+        """
+        from src.model_manager import ModelManager, CATALOG
+        mm = ModelManager()
+        asr_ready = any(
+            mm.is_downloaded(m.id) for m in CATALOG if m.role == "asr" and m.recommended
+        )
+        diarizer_ready = any(
+            mm.is_downloaded(m.id) for m in CATALOG if m.role == "diarizer" and m.recommended
+        )
+        return {"asr_ready": asr_ready, "diarizer_ready": diarizer_ready}
 
     def get_models(self) -> list[dict]:
         """Return model catalog with download status."""

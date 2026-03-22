@@ -7,6 +7,15 @@ import pytest
 # Override APP_DATA_DIR before importing ModelManager so tests never touch
 # the real ~/.local/share/TranscribeApp directory.
 import src.model_manager as _mm_module
+from src.model_manager import _DIARIZER_REQUIRED_FILES
+
+
+def _create_diarizer_files(directory: str) -> None:
+    """Create all required files for a fully-populated diarizer model directory."""
+    for rel_path in _DIARIZER_REQUIRED_FILES:
+        full_path = os.path.join(directory, rel_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        open(full_path, "w").close()
 
 # Capture the real _hf_cache_path before any patching so TestHFCacheDetection
 # can restore it after the autouse fixture stubs it out.
@@ -92,12 +101,22 @@ class TestListModels:
 
         assert mm.is_downloaded(model_id) is False
 
-    def test_downloaded_when_diarizer_has_config_yaml(self, isolated_data_dir):
+    def test_not_downloaded_when_diarizer_has_config_yaml_only(self, isolated_data_dir):
+        """config.yaml alone is no longer sufficient — all 5 files required."""
         mm = _make_manager(isolated_data_dir)
         model_id = "pyannote-diarization-community-1"
         model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
         os.makedirs(model_dir)
         open(os.path.join(model_dir, "config.yaml"), "w").close()
+
+        assert mm.is_downloaded(model_id) is False
+
+    def test_downloaded_when_diarizer_has_all_required_files(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        model_id = "pyannote-diarization-community-1"
+        model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(model_dir)
+        _create_diarizer_files(model_dir)
 
         assert mm.is_downloaded(model_id) is True
 
@@ -107,9 +126,11 @@ class TestListModels:
 class TestHasKeyFiles:
     def _dir(self, isolated_data_dir, model_id, files):
         d = os.path.join(isolated_data_dir["models_dir"], model_id)
-        os.makedirs(d)
+        os.makedirs(d, exist_ok=True)
         for f in files:
-            open(os.path.join(d, f), "w").close()
+            full = os.path.join(d, f)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            open(full, "w").close()
         return d
 
     def test_asr_config_json_ok(self, isolated_data_dir):
@@ -127,15 +148,33 @@ class TestHasKeyFiles:
         d = self._dir(isolated_data_dir, "qwen3-asr-1.7b", ["weights.bin"])
         assert mm._has_key_files("qwen3-asr-1.7b", d) is False
 
-    def test_diarizer_config_yaml_ok(self, isolated_data_dir):
+    def test_diarizer_all_files_ok(self, isolated_data_dir):
         mm = _make_manager(isolated_data_dir)
-        d = self._dir(isolated_data_dir, "pyannote-diarization-community-1", ["config.yaml"])
+        d = os.path.join(isolated_data_dir["models_dir"], "pyannote-diarization-community-1")
+        os.makedirs(d)
+        _create_diarizer_files(d)
         assert mm._has_key_files("pyannote-diarization-community-1", d) is True
 
+    def test_diarizer_config_yaml_only_not_ok(self, isolated_data_dir):
+        """All 5 files required; config.yaml alone is insufficient."""
+        mm = _make_manager(isolated_data_dir)
+        d = self._dir(isolated_data_dir, "pyannote-diarization-community-1", ["config.yaml"])
+        assert mm._has_key_files("pyannote-diarization-community-1", d) is False
+
     def test_diarizer_config_json_not_ok(self, isolated_data_dir):
-        """Diarizer requires config.yaml, not config.json."""
+        """Diarizer requires config.yaml (+ 4 others), not config.json."""
         mm = _make_manager(isolated_data_dir)
         d = self._dir(isolated_data_dir, "pyannote-diarization-community-1", ["config.json"])
+        assert mm._has_key_files("pyannote-diarization-community-1", d) is False
+
+    def test_diarizer_missing_one_file_not_ok(self, isolated_data_dir):
+        """All 5 files must be present; missing any one returns False."""
+        mm = _make_manager(isolated_data_dir)
+        d = os.path.join(isolated_data_dir["models_dir"], "pyannote-diarization-community-1")
+        os.makedirs(d)
+        _create_diarizer_files(d)
+        # Remove one required file
+        os.remove(os.path.join(d, "config.yaml"))
         assert mm._has_key_files("pyannote-diarization-community-1", d) is False
 
     def test_unknown_model_returns_false(self, isolated_data_dir):
@@ -315,6 +354,16 @@ class TestDiarizerCatalog:
         m = next(m for m in CATALOG if m.id == "pyannote-diarization-community-1")
         assert m.recommended is True
 
+    def test_community_1_uses_community_repo(self, isolated_data_dir):
+        from src.model_manager import CATALOG
+        m = next(m for m in CATALOG if m.id == "pyannote-diarization-community-1")
+        assert m.repo_id == "pyannote-community/speaker-diarization-community-1"
+
+    def test_community_1_size_is_small(self, isolated_data_dir):
+        from src.model_manager import CATALOG
+        m = next(m for m in CATALOG if m.id == "pyannote-diarization-community-1")
+        assert m.size_gb == pytest.approx(0.034)
+
     def test_diarizer_role(self, isolated_data_dir):
         from src.model_manager import CATALOG
         for m in CATALOG:
@@ -330,8 +379,10 @@ class TestSelectAndGetSelectedDiarizer:
         d = os.path.join(isolated_data_dir["models_dir"], model_id)
         os.makedirs(d, exist_ok=True)
         info = next((m for m in CATALOG if m.id == model_id), None)
-        key_file = "config.yaml" if (info and info.role == "diarizer") else "config.json"
-        open(os.path.join(d, key_file), "w").close()
+        if info and info.role == "diarizer":
+            _create_diarizer_files(d)
+        else:
+            open(os.path.join(d, "config.json"), "w").close()
 
     def test_select_diarizer_saves_to_config(self, isolated_data_dir):
         mm = _make_manager(isolated_data_dir)
@@ -401,8 +452,14 @@ class TestConfigIO:
 
 # ── HF cache detection ────────────────────────────────────────────────────────
 
+_COMMUNITY1_REPO = "pyannote-community/speaker-diarization-community-1"
+
+
 def _build_hf_cache(
-    tmp_path, repo_id: str, snapshot_hash: str = "abc123", key_file: str = "config.yaml"
+    tmp_path,
+    repo_id: str,
+    snapshot_hash: str = "abc123",
+    key_files: tuple = ("config.yaml",),
 ) -> str:
     """
     Create a minimal HF hub cache structure and return the snapshot path.
@@ -410,9 +467,9 @@ def _build_hf_cache(
     Layout:
       tmp_path/
         models--{org}--{name}/
-          refs/main          ← contains snapshot_hash
+          refs/main                  ← contains snapshot_hash
           snapshots/{hash}/
-            {key_file}       ← marker file (config.yaml for diarizers)
+            {key_files[0]}, ...      ← marker files
     """
     cache_name = "models--" + repo_id.replace("/", "--")
     repo_cache = tmp_path / cache_name
@@ -422,7 +479,10 @@ def _build_hf_cache(
 
     snapshot_dir = repo_cache / "snapshots" / snapshot_hash
     snapshot_dir.mkdir(parents=True)
-    (snapshot_dir / key_file).write_text("{}")
+    for rel in key_files:
+        target = snapshot_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}")
     return str(snapshot_dir)
 
 
@@ -452,7 +512,8 @@ class TestHFCacheDetection:
         hf_root = str(tmp_path / "hf-cache")
         snap = _build_hf_cache(
             tmp_path / "hf-cache",
-            "pyannote/speaker-diarization-community-1",
+            _COMMUNITY1_REPO,
+            key_files=_DIARIZER_REQUIRED_FILES,
         )
         mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
         result = mm._hf_cache_path("pyannote-diarization-community-1")
@@ -478,7 +539,8 @@ class TestHFCacheDetection:
         hf_root = str(tmp_path / "hf-cache")
         _build_hf_cache(
             tmp_path / "hf-cache",
-            "pyannote/speaker-diarization-community-1",
+            _COMMUNITY1_REPO,
+            key_files=_DIARIZER_REQUIRED_FILES,
         )
         mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
         assert mm.is_downloaded("pyannote-diarization-community-1") is True
@@ -489,7 +551,8 @@ class TestHFCacheDetection:
         hf_root = str(tmp_path / "hf-cache")
         snap = _build_hf_cache(
             tmp_path / "hf-cache",
-            "pyannote/speaker-diarization-community-1",
+            _COMMUNITY1_REPO,
+            key_files=_DIARIZER_REQUIRED_FILES,
         )
         mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
         assert mm.local_path("pyannote-diarization-community-1") == snap
@@ -500,13 +563,14 @@ class TestHFCacheDetection:
         hf_root = str(tmp_path / "hf-cache")
         _build_hf_cache(
             tmp_path / "hf-cache",
-            "pyannote/speaker-diarization-community-1",
+            _COMMUNITY1_REPO,
+            key_files=_DIARIZER_REQUIRED_FILES,
         )
         mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
-        # Populate the App dir too (diarizer needs config.yaml)
+        # Populate the App dir with all required diarizer files
         app_dir = os.path.join(isolated_data_dir["models_dir"], "pyannote-diarization-community-1")
         os.makedirs(app_dir)
-        open(os.path.join(app_dir, "config.yaml"), "w").close()
+        _create_diarizer_files(app_dir)
 
         result = mm.local_path("pyannote-diarization-community-1")
         assert result == app_dir
@@ -517,7 +581,8 @@ class TestHFCacheDetection:
         hf_root = str(tmp_path / "hf-cache")
         snap = _build_hf_cache(
             tmp_path / "hf-cache",
-            "pyannote/speaker-diarization-community-1",
+            _COMMUNITY1_REPO,
+            key_files=_DIARIZER_REQUIRED_FILES,
         )
         mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
 
@@ -530,13 +595,13 @@ class TestHFCacheDetection:
     def test_local_path_falls_through_when_hf_cache_incomplete(
         self, tmp_path, isolated_data_dir, monkeypatch
     ):
-        """HF cache dir exists but missing key file → fall through to app dir default."""
+        """HF cache dir exists but missing key files → fall through to app dir default."""
         hf_root = str(tmp_path / "hf-cache")
-        # Build cache with wrong key file for a diarizer (config.json, not config.yaml)
+        # Only config.yaml, missing the other 4 required files
         _build_hf_cache(
             tmp_path / "hf-cache",
-            "pyannote/speaker-diarization-community-1",
-            key_file="config.json",
+            _COMMUNITY1_REPO,
+            key_files=("config.yaml",),
         )
         mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
         result = mm.local_path("pyannote-diarization-community-1")
@@ -550,8 +615,7 @@ class TestHFCacheDetection:
     ):
         """refs/main exists but is empty — should return None, not crash."""
         hf_root = str(tmp_path / "hf-cache")
-        repo_id = "pyannote/speaker-diarization-community-1"
-        cache_name = "models--" + repo_id.replace("/", "--")
+        cache_name = "models--" + _COMMUNITY1_REPO.replace("/", "--")
         refs_dir = tmp_path / "hf-cache" / cache_name / "refs"
         refs_dir.mkdir(parents=True)
         (refs_dir / "main").write_text("")   # empty hash

@@ -92,8 +92,8 @@ CATALOG: list[ModelInfo] = [
         id="pyannote-diarization-community-1",
         name="pyannote Speaker Diarization community-1",
         description="无需 HF token，社区版说话人分离模型，适合大多数场景",
-        repo_id="pyannote/speaker-diarization-community-1",
-        size_gb=0.5,
+        repo_id="pyannote-community/speaker-diarization-community-1",
+        size_gb=0.034,
         engine="pyannote",
         role="diarizer",
         requires_token=False,
@@ -110,6 +110,17 @@ CATALOG: list[ModelInfo] = [
         requires_token=True,
     ),
 ]
+
+
+# Required files for a fully downloaded pyannote diarizer (community or 3.x).
+# All paths are relative to the model root directory.
+_DIARIZER_REQUIRED_FILES: tuple[str, ...] = (
+    "config.yaml",
+    os.path.join("embedding", "pytorch_model.bin"),
+    os.path.join("plda", "plda.npz"),
+    os.path.join("plda", "xvec_transform.npz"),
+    os.path.join("segmentation", "pytorch_model.bin"),
+)
 
 
 # ── ModelManager ──────────────────────────────────────────────────────────────
@@ -195,7 +206,10 @@ class ModelManager:
         if info is None:
             return False
         if info.role == "diarizer":
-            return os.path.exists(os.path.join(path, "config.yaml"))
+            return all(
+                os.path.exists(os.path.join(path, f))
+                for f in _DIARIZER_REQUIRED_FILES
+            )
         # asr / aligner — standard HuggingFace layout
         return (
             os.path.exists(os.path.join(path, "config.json"))

@@ -92,6 +92,10 @@ const App = (() => {
       if (session.status === 'transcribing') {
         _setView('transcribing');
         dom.progressFilename.textContent = session.filename;
+      } else if (session.status === 'error') {
+        _setView('error');
+        dom.errorFilename.textContent = session.filename;
+        dom.errorMsg.textContent = session.errorMsg || 'Unknown error';
       } else { // done
         _setView('file-done');
         if (session._data) {
@@ -140,8 +144,10 @@ const App = (() => {
   // ── View ───────────────────────────────────────────────────────────────────
 
   function _setView(state) {
+    dom.setupPanel.hidden         = state !== 'setup';
     dom.emptyHint.hidden          = state !== 'idle';
     dom.progressPanel.hidden      = state !== 'transcribing';
+    dom.errorPanel.hidden         = state !== 'error';
     dom.transcriptHeader.hidden   = state !== 'file-done';
     dom.transcriptList.hidden     = state !== 'file-done';
     dom.realtimePanel.hidden      =
@@ -361,22 +367,44 @@ const App = (() => {
 
   function onTranscribeError(jobId, message) {
     if (!_sessions.has(jobId)) return;
+    _updateSession(jobId, { status: 'error', errorMsg: message });
+  }
+
+  function onTranscribeCancel(jobId) {
+    if (!_sessions.has(jobId)) return;
     if (_selectedId === jobId) _selectedId = null;
     _sessions.delete(jobId);
     _render();
-    alert('Transcription error: ' + message);
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
+  // ── Model IDs used by the setup panel ──────────────────────────────────────
+  const _SETUP_ASR_ID      = 'qwen3-asr-1.7b';
+  const _SETUP_DIARIZER_ID = 'pyannote-diarization-community-1';
+
   function init() {
     dom = {
       centerPanel:        document.getElementById('center-panel'),
+      setupPanel:         document.getElementById('setup-panel'),
+      setupAsrBadge:      document.getElementById('setup-asr-badge'),
+      setupAsrProgress:   document.getElementById('setup-asr-progress'),
+      setupAsrBar:        document.getElementById('setup-asr-bar'),
+      setupDiarizerBadge: document.getElementById('setup-diarizer-badge'),
+      setupDiarizerProgress: document.getElementById('setup-diarizer-progress'),
+      setupDiarizerBar:   document.getElementById('setup-diarizer-bar'),
+      btnSetupAsr:        document.getElementById('btn-setup-asr'),
+      btnSetupDiarizer:   document.getElementById('btn-setup-diarizer'),
       emptyHint:          document.getElementById('empty-hint'),
       progressPanel:      document.getElementById('progress-panel'),
       progressFilename:   document.getElementById('progress-filename'),
       progressBar:        document.getElementById('progress-bar'),
       progressMsg:        document.getElementById('progress-msg'),
+      btnCancelTranscribe: document.getElementById('btn-cancel-transcribe'),
+      errorPanel:         document.getElementById('error-panel'),
+      errorFilename:      document.getElementById('error-filename'),
+      errorMsg:           document.getElementById('error-msg'),
+      btnRetry:           document.getElementById('btn-retry'),
       transcriptHeader:   document.getElementById('transcript-header'),
       transcriptMeta:     document.getElementById('transcript-meta'),
       transcriptList:     document.getElementById('transcript-list'),
@@ -418,6 +446,26 @@ const App = (() => {
     dom.rcBtnPlay.addEventListener('click', _onPlayRecording);
     dom.rcBtnFinish.addEventListener('click', () => window.pywebview.api.stop_realtime());
 
+    // Setup panel — download buttons
+    dom.btnSetupAsr.addEventListener('click', () => _setupDownload('asr'));
+    dom.btnSetupDiarizer.addEventListener('click', () => _setupDownload('diarizer'));
+
+    // Cancel transcription
+    dom.btnCancelTranscribe.addEventListener('click', () => {
+      if (_selectedId) window.pywebview.api.cancel_transcription(_selectedId);
+    });
+
+    // Retry failed transcription
+    dom.btnRetry.addEventListener('click', () => {
+      const s = _selectedId ? _sessions.get(_selectedId) : null;
+      if (!s || s.status !== 'error' || !s.audioPath) return;
+      const filePath    = s.audioPath;
+      const displayName = s.filename;
+      _sessions.delete(_selectedId);
+      _selectedId = null;
+      _startTranscription(filePath, displayName);
+    });
+
     // Drag-and-drop on center panel
     dom.centerPanel.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -434,10 +482,71 @@ const App = (() => {
       if (file) _startTranscription(file.path || file.name);
     });
 
-    _loadHistory();
+    _checkSetup();
   }
 
-  return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError };
+  // ── Setup panel logic ───────────────────────────────────────────────────────
+
+  async function _checkSetup() {
+    try {
+      const status = await window.pywebview.api.get_setup_status();
+      _applySetupStatus(status);
+      if (status.asr_ready && status.diarizer_ready) {
+        _setView('idle');
+        _loadHistory();
+      } else {
+        _setView('setup');
+      }
+    } catch (e) {
+      console.warn('[App] _checkSetup error:', e);
+      _loadHistory();  // fail-open: if API unavailable, proceed normally
+    }
+  }
+
+  function _applySetupStatus(status) {
+    _setSetupItem('asr', status.asr_ready);
+    _setSetupItem('diarizer', status.diarizer_ready);
+  }
+
+  function _setSetupItem(key, ready) {
+    const badge = key === 'asr' ? dom.setupAsrBadge : dom.setupDiarizerBadge;
+    const btn   = key === 'asr' ? dom.btnSetupAsr  : dom.btnSetupDiarizer;
+    if (ready) {
+      badge.textContent = '✓ Ready';
+      badge.className   = 'setup-badge setup-badge-ok';
+      btn.disabled      = true;
+    } else {
+      badge.textContent = 'Not downloaded';
+      badge.className   = 'setup-badge setup-badge-pending';
+      btn.disabled      = false;
+    }
+  }
+
+  async function _setupDownload(key) {
+    const modelId = key === 'asr' ? _SETUP_ASR_ID : _SETUP_DIARIZER_ID;
+    const badge   = key === 'asr' ? dom.setupAsrBadge       : dom.setupDiarizerBadge;
+    const bar     = key === 'asr' ? dom.setupAsrBar         : dom.setupDiarizerBar;
+    const prog    = key === 'asr' ? dom.setupAsrProgress    : dom.setupDiarizerProgress;
+    const btn     = key === 'asr' ? dom.btnSetupAsr         : dom.btnSetupDiarizer;
+
+    btn.disabled      = true;
+    badge.textContent = 'Downloading…';
+    badge.className   = 'setup-badge setup-badge-pending';
+    prog.hidden       = false;
+    bar.style.width   = '0%';
+
+    try {
+      await window.pywebview.api.download_model(modelId);
+    } catch (e) {
+      badge.textContent = 'Error';
+      badge.className   = 'setup-badge setup-badge-error';
+      btn.disabled      = false;
+    }
+    // Progress arrives via onModelDownloadProgress; completion via pct === 1.0
+  }
+
+  return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
+           onTranscribeCancel };
 })();
 
 // ── Global event handlers (called by Python via evaluate_js) ──────────────────
@@ -445,8 +554,53 @@ const App = (() => {
 function onTranscribeProgress(jobId, pct, message) { App.onTranscribeProgress(jobId, pct, message); }
 function onTranscribeComplete(jobId, jsonPath)      { App.onTranscribeComplete(jobId, jsonPath); }
 function onTranscribeError(jobId, message)          { App.onTranscribeError(jobId, message); }
-function onModelDownloadProgress(name, percent)     { console.log(`[model] ${name} ${(percent * 100).toFixed(0)}%`); }
-function onModelDownloadError(name, message)        { console.error(`[model] error: ${name} — ${message}`); }
+function onTranscribeCancel(jobId)                  { App.onTranscribeCancel(jobId); }
+
+function onModelDownloadProgress(name, percent) {
+  console.log(`[model] ${name} ${(percent * 100).toFixed(0)}%`);
+  // Drive setup panel progress bars
+  const isAsr = name === 'qwen3-asr-1.7b';
+  const isDiar = name === 'pyannote-diarization-community-1';
+  if (!isAsr && !isDiar) return;
+
+  const bar  = isAsr
+    ? document.getElementById('setup-asr-bar')
+    : document.getElementById('setup-diarizer-bar');
+  if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
+
+  if (percent >= 1.0) {
+    // Re-check setup status; auto-proceed if both ready
+    if (window.pywebview?.api?.get_setup_status) {
+      window.pywebview.api.get_setup_status().then(status => {
+        const badge = isAsr
+          ? document.getElementById('setup-asr-badge')
+          : document.getElementById('setup-diarizer-badge');
+        if (badge) {
+          badge.textContent = '✓ Ready';
+          badge.className   = 'setup-badge setup-badge-ok';
+        }
+        if (status.asr_ready && status.diarizer_ready) {
+          App.init._checkSetup?.() || location.reload();
+        }
+      }).catch(() => {});
+    }
+  }
+}
+
+function onModelDownloadError(name, message) {
+  console.error(`[model] error: ${name} — ${message}`);
+  const isAsr = name === 'qwen3-asr-1.7b';
+  const isDiar = name === 'pyannote-diarization-community-1';
+  if (!isAsr && !isDiar) return;
+  const badge = isAsr
+    ? document.getElementById('setup-asr-badge')
+    : document.getElementById('setup-diarizer-badge');
+  const btn = isAsr
+    ? document.getElementById('btn-setup-asr')
+    : document.getElementById('btn-setup-diarizer');
+  if (badge) { badge.textContent = 'Error'; badge.className = 'setup-badge setup-badge-error'; }
+  if (btn)   btn.disabled = false;
+}
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 // pywebview injects window.pywebview.api asynchronously after DOM is ready.

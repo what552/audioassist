@@ -788,3 +788,87 @@ select { font-family: inherit; }
 }
 .btn-rc:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .btn-rc:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Setup panel ─────────────────────────────────────────────────────────────── */
+#setup-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  height: 100%;
+  padding: 40px 32px;
+  text-align: center;
+}
+.setup-title { font-size: 20px; font-weight: 600; color: var(--text); }
+.setup-subtitle { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+.setup-items {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 380px;
+}
+.setup-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: left;
+}
+.setup-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.setup-item-name { font-size: 13px; font-weight: 500; color: var(--text); }
+.setup-item-size { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+.setup-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.setup-badge-pending  { background: var(--bg-input); color: var(--text-muted); }
+.setup-badge-ok       { background: #1a3a1a; color: #6dbf6d; }
+.setup-badge-error    { background: #3a1a1a; color: #e06c6c; }
+.setup-progress {
+  height: 4px;
+  background: var(--bg-input);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.setup-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.2s ease;
+}
+
+/* ── Error panel ─────────────────────────────────────────────────────────────── */
+#error-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  padding: 40px 32px;
+  text-align: center;
+}
+.error-icon   { font-size: 36px; color: var(--warn); }
+.error-filename { font-size: 13px; font-weight: 500; color: var(--text); }
+.error-msg    { font-size: 13px; color: var(--text-muted); max-width: 380px; line-height: 1.6; }
+
+/* ── Cancel button (progress panel) ─────────────────────────────────────────── */
+#btn-cancel-transcribe {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+#btn-cancel-transcribe:hover { color: var(--warn); }

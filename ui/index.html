@@ -44,6 +44,37 @@
         <div id="player-time">00:00 / 00:00</div>
       </div>
 
+      <!-- Setup panel (first-run: models not downloaded) -->
+      <div id="setup-panel" hidden>
+        <div class="setup-title">Welcome to AudioAssist</div>
+        <p class="setup-subtitle">Download the required models to get started.<br>No account or token needed.</p>
+        <div class="setup-items">
+
+          <div class="setup-item">
+            <div class="setup-item-header">
+              <span class="setup-item-name">ASR Model <span class="setup-item-size">(3.5 GB)</span></span>
+              <span id="setup-asr-badge" class="setup-badge setup-badge-pending">Not downloaded</span>
+            </div>
+            <div id="setup-asr-progress" class="setup-progress" hidden>
+              <div id="setup-asr-bar" class="setup-progress-fill"></div>
+            </div>
+            <button id="btn-setup-asr" class="btn-primary btn-sm">Download</button>
+          </div>
+
+          <div class="setup-item">
+            <div class="setup-item-header">
+              <span class="setup-item-name">Diarizer Model <span class="setup-item-size">(34 MB)</span></span>
+              <span id="setup-diarizer-badge" class="setup-badge setup-badge-pending">Not downloaded</span>
+            </div>
+            <div id="setup-diarizer-progress" class="setup-progress" hidden>
+              <div id="setup-diarizer-bar" class="setup-progress-fill"></div>
+            </div>
+            <button id="btn-setup-diarizer" class="btn-primary btn-sm">Download</button>
+          </div>
+
+        </div>
+      </div>
+
       <!-- Empty hint (idle state) -->
       <div id="empty-hint">
         <div class="empty-hint-icon">
@@ -64,6 +95,15 @@
           <div id="progress-bar"></div>
         </div>
         <p id="progress-msg">Preparing…</p>
+        <button id="btn-cancel-transcribe" class="btn-link btn-sm">Cancel</button>
+      </div>
+
+      <!-- Error panel (transcription failed) -->
+      <div id="error-panel" hidden>
+        <div class="error-icon">⚠</div>
+        <p id="error-filename" class="error-filename"></p>
+        <p id="error-msg" class="error-msg"></p>
+        <button id="btn-retry" class="btn-primary btn-sm">Retry</button>
       </div>
 
       <!-- Transcript (done state) -->
