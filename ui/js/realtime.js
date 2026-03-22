@@ -13,12 +13,14 @@
 const Realtime = (() => {
   let _recording = false;
   let _onStateChange = null;
+  let _canStart = null;
   let dom = {};
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
-  function init(onStateChange) {
+  function init(onStateChange, canStart) {
     _onStateChange = onStateChange;
+    _canStart = canStart || null;
     dom = {
       btnToggle:  document.getElementById('btn-start-recording'),
       statusDot:  document.getElementById('realtime-dot'),
@@ -40,6 +42,7 @@ const Realtime = (() => {
         _setLoading(false);
       }
     } else {
+      if (_canStart && !_canStart()) return;
       const engine = document.getElementById('sel-engine').value;
       _setLoading(true);
       _setStatus('Loading…');
@@ -55,7 +58,7 @@ const Realtime = (() => {
 
   // ── Python → JS callbacks ─────────────────────────────────────────────────
 
-  function onStarted(sessionId) {
+  function onStarted(sessionId, wavPath) {
     _recording = true;
     _setLoading(false);
     dom.btnToggle.textContent = '⏹ Stop Recording';
@@ -63,7 +66,7 @@ const Realtime = (() => {
     dom.statusDot.classList.add('active');
     _setStatus('Recording…');
     dom.list.innerHTML = '';
-    if (_onStateChange) _onStateChange('started', sessionId);
+    if (_onStateChange) _onStateChange('started', sessionId, wavPath);
   }
 
   function onStopped() {
@@ -121,7 +124,7 @@ const Realtime = (() => {
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
 
-function onRealtimeStarted(sessionId) { Realtime.onStarted(sessionId); }
+function onRealtimeStarted(sessionId, wavPath) { Realtime.onStarted(sessionId, wavPath); }
 function onRealtimeStopped()          { Realtime.onStopped(); }
 function onRealtimeResult(text)       { Realtime.onResult(text); }
 function onRealtimeError(message)     { Realtime.onError(message); }

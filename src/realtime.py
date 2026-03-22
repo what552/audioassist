@@ -132,7 +132,7 @@ class RealtimeTranscriber:
 
         if self._engine == "whisper":
             from .asr_whisper import WhisperASREngine
-            self._asr = WhisperASREngine(with_timestamps=False)
+            self._asr = WhisperASREngine()
         else:
             from .asr import ASREngine
             self._asr = ASREngine(with_timestamps=False)

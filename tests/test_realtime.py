@@ -373,7 +373,7 @@ class TestLoadModels:
             rt = m.RealtimeTranscriber(engine="whisper")
             rt._load_models()
 
-        mock_whisper_cls.assert_called_once_with(with_timestamps=False)
+        mock_whisper_cls.assert_called_once_with()  # WhisperASREngine() — no with_timestamps
         mock_whisper_cls.return_value.load.assert_called_once()
 
     def test_qwen_engine_uses_ASREngine(self):

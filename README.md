@@ -2,13 +2,14 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.6 — r02-a)
+## Features (v0.7 — r02-a)
 
 - **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
-- **History sidebar** — lists all past transcriptions (newest first); click any entry to reload its transcript and player
+- **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
+- **History sidebar** — lists all sessions (active first, then newest-first); click any entry to switch the center panel; live sessions show a 🔴 indicator
 - **Engine selector** — choose Qwen3-ASR or Whisper before transcribing
-- **Upload File button** — native file picker for audio/video files (sidebar footer)
-- **Start Recording button** — launch live microphone transcription from the sidebar footer
+- **Upload File button** — native file picker for audio/video files (sidebar footer); blocked while a recording is active
+- **Start Recording button** — launch live microphone transcription from the sidebar footer; blocked while a file transcription is in progress
 - **Drag-and-drop** — drop a file onto the center panel to start transcription
 - **Transcription progress** — live progress bar + status message while pipeline runs
 - **Transcript list** — speaker-labelled blocks with timestamps; click any row to seek the player
@@ -17,7 +18,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
 - **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher (see [Summary panel](#summary-panel))
-- **Realtime transcription** — live microphone transcription with Silero VAD; utterances appear as you speak; full session audio saved as `.wav` (see [Realtime transcription](#realtime-transcription))
+- **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved and wired to the player (see [Realtime transcription](#realtime-transcription))
 - **Model auto-download** — ASR and diarizer model weights are downloaded automatically on first use; progress is shown in the UI progress bar; no manual setup required
 
 ## Requirements
@@ -125,15 +126,19 @@ Click **🎙 Start Recording** in the history sidebar footer to start live micro
 1. **Silero VAD** monitors the microphone stream in real time, detecting speech vs. silence at 16 kHz / 32 ms chunks.
 2. Each utterance (speech segment followed by ~480 ms of silence) is extracted and passed to the selected ASR engine.
 3. Transcribed text appears in the realtime panel sentence by sentence as you speak.
-4. Click **⏹ Stop** to end recording.
+4. Use the **control bar** (bottom of the center panel) to manage the session:
+   - **⏸ / ▶ (Pause / Resume)** — suspend and resume microphone capture mid-session; the timer pauses accordingly; the partial WAV is kept open and continues filling on resume.
+   - **▶ (Play)** — available in paused state; plays back the audio recorded so far.
+   - **Finish** — stops recording, closes the WAV file, and transitions the session to `done` state with the player loaded.
 
 ### Notes
 
 - The first click loads the VAD model and the ASR engine; this may take a few seconds.
 - The ASR engine is the same one selected in the toolbar dropdown (Qwen3-ASR or Whisper).
 - Utterances shorter than ~160 ms are discarded as noise.
-- The complete microphone recording is saved as `output/<session_id>.wav` when you stop. The session ID is provided to the frontend via `onRealtimeStarted(sessionId)`.
+- The complete microphone recording is saved as `output/<session_id>.wav`; the path is passed to the frontend via `onRealtimeStarted(sessionId, wavPath)` and stored in `session.audioPath` so the player is wired automatically when the session finishes.
 - Realtime transcript text is not automatically saved — copy manually if needed.
+- **Concurrency rules:** Uploading a file is blocked while a recording is active; starting a new recording is blocked while a file transcription is running.
 
 ### Dependencies
 

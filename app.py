@@ -187,7 +187,7 @@ class API:
                     rt.stop()
                     return
                 self._realtime = rt
-                _push(f"onRealtimeStarted({json.dumps(session_id)})")
+                _push(f"onRealtimeStarted({json.dumps(session_id)}, {json.dumps(output_path)})")
             except Exception as e:
                 logger.exception("Realtime start failed")
                 self._realtime = None

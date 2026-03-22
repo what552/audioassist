@@ -20,6 +20,10 @@
  *   onModelDownloadError(name, message)
  *   onRealtimePaused()
  *   onRealtimeResumed()
+ *
+ * Concurrency rules:
+ *   Upload is blocked while a realtime session is recording/paused.
+ *   Start Recording is blocked while any file transcription is in progress.
  */
 const App = (() => {
   // ── Session store ──────────────────────────────────────────────────────────
@@ -180,12 +184,13 @@ const App = (() => {
 
   // ── Realtime state ─────────────────────────────────────────────────────────
 
-  function _onRealtimeState(state, sessionId) {
+  function _onRealtimeState(state, sessionId, wavPath) {
     if (state === 'started') {
       _activeRealtimeId = sessionId;
       _sessions.set(sessionId, {
         id: sessionId, type: 'realtime', status: 'recording',
         filename: 'Recording ' + sessionId.slice(0, 8), created_at: _now(),
+        audioPath: wavPath || null,
       });
       _selectedId = sessionId;
       _startTimer();
@@ -234,9 +239,25 @@ const App = (() => {
     }
   }
 
+  // ── Concurrency guards ────────────────────────────────────────────────────
+
+  function _canStartRecording() {
+    for (const s of _sessions.values()) {
+      if (s.status === 'transcribing') {
+        alert('A transcription is in progress. Please wait for it to finish before recording.');
+        return false;
+      }
+    }
+    return true;
+  }
+
   // ── Upload / Transcription ─────────────────────────────────────────────────
 
   async function _onUpload() {
+    if (_activeRealtimeId !== null) {
+      alert('A recording is in progress. Please finish it before uploading a file.');
+      return;
+    }
     try {
       const path = await window.pywebview.api.select_file();
       if (path) _startTranscription(path);
@@ -344,7 +365,7 @@ const App = (() => {
 
     Player.init(dom.audioEl);
     Summary.init();
-    Realtime.init(_onRealtimeState);
+    Realtime.init(_onRealtimeState, _canStartRecording);
     History.init(_onHistorySelect);
 
     Player.onTimeUpdate((t) => {

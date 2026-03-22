@@ -54,8 +54,8 @@ class TestJSEvents:
             _wait(0.3)
         assert any("onRealtimeStarted" in c for c in js_calls)
 
-    def test_start_pushes_onRealtimeStarted_with_session_id(self):
-        """onRealtimeStarted must be called with a UUID session_id argument."""
+    def test_start_pushes_onRealtimeStarted_with_session_id_and_wav_path(self):
+        """onRealtimeStarted must be called with a UUID session_id AND a wav path."""
         import re
         api = API()
         js_calls = []
@@ -66,11 +66,13 @@ class TestJSEvents:
             _wait(0.3)
         started = [c for c in js_calls if "onRealtimeStarted" in c]
         assert len(started) == 1
-        # Must contain a UUID string, e.g. onRealtimeStarted("xxxxxxxx-xxxx-...")
+        # Must contain UUID session_id and a wav path ending in .wav
+        # e.g. onRealtimeStarted("uuid", "/path/to/uuid.wav")
         assert re.search(
-            r'onRealtimeStarted\("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\)',
+            r'onRealtimeStarted\("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"',
             started[0],
         )
+        assert '.wav"' in started[0]
 
     def test_start_exception_pushes_onRealtimeError(self):
         api = API()
