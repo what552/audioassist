@@ -54,6 +54,47 @@ class TestRenameSession(unittest.TestCase):
         self.assertFalse(os.path.exists(tmp))
 
 
+class TestRenameSessionWavOnly(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        import app as app_module
+        self._orig_output_dir = app_module.OUTPUT_DIR
+        app_module.OUTPUT_DIR = self.tmpdir
+        from app import API
+        self.api = API()
+        self.job_id = "wav-only-job"
+        self.wav_path = os.path.join(self.tmpdir, f"{self.job_id}.wav")
+        self.meta_path = os.path.join(self.tmpdir, f"{self.job_id}_meta.json")
+        with open(self.wav_path, "wb") as f:
+            f.write(b"RIFF")
+
+    def tearDown(self):
+        import app as app_module
+        app_module.OUTPUT_DIR = self._orig_output_dir
+
+    def test_rename_wav_only_returns_true(self):
+        ok = self.api.rename_session(self.job_id, "My Recording")
+        self.assertTrue(ok)
+
+    def test_rename_wav_only_writes_meta_json(self):
+        self.api.rename_session(self.job_id, "My Recording")
+        self.assertTrue(os.path.exists(self.meta_path))
+        with open(self.meta_path, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data["filename"], "My Recording")
+
+    def test_rename_returns_false_when_neither_json_nor_wav(self):
+        ok = self.api.rename_session("no-such-id", "name")
+        self.assertFalse(ok)
+
+    def test_rename_wav_only_meta_appears_in_history(self):
+        self.api.rename_session(self.job_id, "Renamed")
+        history = self.api.get_history()
+        entry = next((h for h in history if h["job_id"] == self.job_id), None)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["filename"], "Renamed")
+
+
 class TestDeleteSession(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -93,6 +134,39 @@ class TestDeleteSession(unittest.TestCase):
     def test_delete_returns_false_for_missing_job(self):
         ok = self.api.delete_session("nonexistent-id")
         self.assertFalse(ok)
+
+
+class TestDeleteSessionWavOnly(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        import app as app_module
+        self._orig_output_dir = app_module.OUTPUT_DIR
+        app_module.OUTPUT_DIR = self.tmpdir
+        from app import API
+        self.api = API()
+        self.job_id = "wav-delete-job"
+        self.wav_path = os.path.join(self.tmpdir, f"{self.job_id}.wav")
+        self.meta_path = os.path.join(self.tmpdir, f"{self.job_id}_meta.json")
+        with open(self.wav_path, "wb") as f:
+            f.write(b"RIFF")
+
+    def tearDown(self):
+        import app as app_module
+        app_module.OUTPUT_DIR = self._orig_output_dir
+
+    def test_delete_removes_wav_file(self):
+        self.api.delete_session(self.job_id)
+        self.assertFalse(os.path.exists(self.wav_path))
+
+    def test_delete_wav_only_returns_true(self):
+        ok = self.api.delete_session(self.job_id)
+        self.assertTrue(ok)
+
+    def test_delete_also_removes_meta_json(self):
+        with open(self.meta_path, "w", encoding="utf-8") as f:
+            json.dump({"filename": "My Rec"}, f)
+        self.api.delete_session(self.job_id)
+        self.assertFalse(os.path.exists(self.meta_path))
 
 
 if __name__ == "__main__":

@@ -111,6 +111,7 @@ const History = (() => {
     input.select();
 
     function _commit() {
+      input.removeEventListener('blur', _commit);
       const newName = input.value.trim();
       // Restore the name element
       const restored = document.createElement('div');
@@ -124,6 +125,7 @@ const History = (() => {
     }
 
     function _cancel() {
+      input.removeEventListener('blur', _commit);
       const restored = document.createElement('div');
       restored.className = 'history-item-name';
       restored.textContent = original;

@@ -383,9 +383,18 @@ class API:
                 continue  # already covered by a JSON entry
             mtime = os.path.getmtime(wav_path)
             date_str = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H:%M:%S")
+            display_name = stem[:8]
+            meta_path = os.path.join(OUTPUT_DIR, f"{stem}_meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, encoding="utf-8") as f:
+                        meta = json.load(f)
+                    display_name = meta.get("filename", display_name)
+                except Exception:
+                    pass
             result.append({
                 "job_id": stem,
-                "filename": stem[:8],
+                "filename": display_name,
                 "date": date_str,
                 "duration": 0,
                 "language": "",
@@ -423,29 +432,49 @@ class API:
         return True
 
     def rename_session(self, job_id: str, name: str) -> bool:
-        """Rename a transcript session (updates the filename field in its JSON)."""
-        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-        if not os.path.exists(path):
-            return False
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        data["filename"] = name
-        tmp_path = path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
-        return True
+        """Rename a transcript session.
+
+        For JSON-backed sessions: updates the filename field in the JSON.
+        For WAV-only realtime sessions: writes a sidecar {job_id}_meta.json.
+        """
+        json_path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        if os.path.exists(json_path):
+            with open(json_path, encoding="utf-8") as f:
+                data = json.load(f)
+            data["filename"] = name
+            tmp_path = json_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, json_path)
+            return True
+        wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
+        if os.path.exists(wav_path):
+            meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
+            tmp_path = meta_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump({"filename": name}, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, meta_path)
+            return True
+        return False
 
     def delete_session(self, job_id: str) -> bool:
-        """Delete a transcript session and its associated summary file."""
-        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-        if not os.path.exists(path):
-            return False
-        os.remove(path)
+        """Delete a transcript session and all associated files."""
+        json_path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
         summary_path = os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
+        meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
+        deleted = False
+        if os.path.exists(json_path):
+            os.remove(json_path)
+            deleted = True
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
+            deleted = True
         if os.path.exists(summary_path):
             os.remove(summary_path)
-        return True
+        if os.path.exists(meta_path):
+            os.remove(meta_path)
+        return deleted
 
     # ── Model management ───────────────────────────────────────────────────────
 
