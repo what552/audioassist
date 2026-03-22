@@ -32,11 +32,17 @@
 
 ## P2（r02-b 计划）
 
+### UI 体验修复（r02-b1，用户测试反馈）
+- [ ] Session 管理：历史侧栏每条 session 增加重命名和删除操作（hover 显示图标，点击重命名可行内编辑，删除需确认）
+- [ ] 切换 session 时停止当前播放：_onHistorySelect 时调用 Player.stop()，避免切换后音频继续播放
+- [ ] 纪要配置入口移至 header 右侧：将 API 配置 + 模板选择合并为"纪要配置"按钮，放在顶部 header 右侧，移除右栏顶部现有的设置入口
+- [ ] 纪要展开/收起按钮移至 header 最右侧：替换现有的中间长条 toggle，改为 header 右上角小按钮
+- [ ] 实时录音结束后自动全量转写：Finish 后对保存的 WAV 自动跑完整 pipeline（ASR + 说话人分离 + merge），结果同文件上传转写一致（有时间轴 + speaker），保存 JSON，历史侧栏显示
+
 ### 功能
 - [ ] 首次启动引导：App 启动时检测 ASR + Diarizer 是否已下载，未下载时显示引导页（必选：下载 ASR 模型、Diarizer 模型；可选：配置 LLM API），完成后进入主界面；主转写流程不再触发下载
 - [ ] 转写取消：转写进行中显示取消按钮，chunk 间检查 cancel flag 中止，推送 onTranscribeCancel 事件
 - [ ] 转写失败重试：onTranscribeError 时显示重试入口，记住上次文件路径和参数，点击直接重新发起 transcribe()
-- [ ] 实时转写说话人回填
 - [ ] 模型管理 UI（下载进度、选择、删除）
 - [ ] pyannote-community-1 repo_id 切换为 pyannote-community/speaker-diarization-community-1（无 HF token，CC-BY-4.0，~33MB）
 
