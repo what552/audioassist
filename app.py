@@ -26,6 +26,30 @@ OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
 
+_DEFAULT_TEMPLATES = [
+    {
+        "name": "General Summary",
+        "prompt": (
+            "Please summarize the following transcript concisely. "
+            "Highlight the main topics discussed and any key decisions or action items."
+        ),
+    },
+    {
+        "name": "Meeting Notes",
+        "prompt": (
+            "Convert the following meeting transcript into structured meeting notes. "
+            "Include: attendees (if mentioned), agenda items, decisions made, and action items with owners."
+        ),
+    },
+    {
+        "name": "Key Points",
+        "prompt": (
+            "Extract the key points from the following transcript as a bulleted list. "
+            "Be concise and focus on the most important information."
+        ),
+    },
+]
+
 # Per-job lock to prevent concurrent read-modify-write on transcript files
 # TODO: _transcript_locks grows unbounded (one entry per job for the lifetime of
 #   the process).  Fine for a single-session desktop app, but should be cleaned
@@ -527,9 +551,14 @@ class API:
 
     def get_summary_templates(self) -> list[dict]:
         if not os.path.exists(TEMPLATES_PATH):
-            return []
-        with open(TEMPLATES_PATH, encoding="utf-8") as f:
-            return json.load(f)
+            return list(_DEFAULT_TEMPLATES)
+        try:
+            with open(TEMPLATES_PATH, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            logger.warning("templates.json is corrupted; resetting to defaults")
+            self.save_summary_templates(list(_DEFAULT_TEMPLATES))
+            return list(_DEFAULT_TEMPLATES)
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
