@@ -105,6 +105,8 @@ def _push(js: str):
 class API:
     def __init__(self):
         self._realtime = None  # RealtimeTranscriber instance when active
+        # Pre-collected realtime segments keyed by wav_path — consumed by transcribe()
+        self._rt_segments: dict[str, list] = {}
 
     # ── File selection ─────────────────────────────────────────────────────────
 
@@ -125,37 +127,56 @@ class API:
         Start transcription in background thread.
         Pushes onTranscribeProgress(job_id, progress, message) events to JS.
 
+        If pre-collected realtime segments exist for this path (stored by
+        stop_realtime()), skips ASR and runs diarization only.
+
         Returns: {"job_id": str}
         """
         import uuid
         job_id = str(uuid.uuid4())
+
+        # Pop realtime segments if this is a just-finished realtime session.
+        # Must be popped here (before the thread starts) to avoid a TOCTOU race.
+        rt_segments = self._rt_segments.pop(path, None)
 
         def _run():
             cancel_ev = threading.Event()
             with _cancel_flags_mutex:
                 _cancel_flags[job_id] = cancel_ev
             try:
-                from src.pipeline import run as pipeline_run
-
                 def _progress(pct: float, msg: str):
                     if cancel_ev.is_set():
                         raise _TranscriptionCancelled()
                     js = f"onTranscribeProgress({json.dumps(job_id)}, {pct:.4f}, {json.dumps(msg)})"
                     _push(js)
 
-                hf_token = options.get("hf_token") or os.environ.get("HF_TOKEN")
-                engine = options.get("engine", "qwen")
+                hf_token    = options.get("hf_token") or os.environ.get("HF_TOKEN")
                 num_speakers = options.get("num_speakers")
 
-                json_path, md_path = pipeline_run(
-                    audio_path=path,
-                    output_dir=OUTPUT_DIR,
-                    hf_token=hf_token,
-                    engine=engine,
-                    num_speakers=num_speakers,
-                    job_id=job_id,
-                    progress_callback=_progress,
-                )
+                if rt_segments:
+                    # Diarize-only: skip ASR, use pre-collected realtime segments
+                    from src.pipeline import run_realtime_segments
+                    json_path, md_path = run_realtime_segments(
+                        segments=rt_segments,
+                        wav_path=path,
+                        output_dir=OUTPUT_DIR,
+                        hf_token=hf_token,
+                        num_speakers=num_speakers,
+                        job_id=job_id,
+                        progress_callback=_progress,
+                    )
+                else:
+                    from src.pipeline import run as pipeline_run
+                    engine = options.get("engine", "qwen")
+                    json_path, md_path = pipeline_run(
+                        audio_path=path,
+                        output_dir=OUTPUT_DIR,
+                        hf_token=hf_token,
+                        engine=engine,
+                        num_speakers=num_speakers,
+                        job_id=job_id,
+                        progress_callback=_progress,
+                    )
 
                 # Copy original audio into output dir for persistent playback.
                 # The copy is kept alongside the transcript so history playback
@@ -311,7 +332,7 @@ class API:
                 rt = RealtimeTranscriber(
                     engine=engine,
                     output_path=output_path,
-                    on_result=lambda text: _push(f"onRealtimeResult({json.dumps(text)})"),
+                    on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
                     on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                 )
                 rt.start()
@@ -377,6 +398,10 @@ class API:
         Stop realtime transcription.
         Pushes onRealtimeStopped() after the stream is closed.
 
+        After stop(), collects accumulated segments from the transcriber so that
+        the subsequent transcribe() call (triggered by JS) can skip ASR and run
+        diarization only.
+
         Returns: {"status": "stopped"} or {"status": "not_running"}
         """
         rt = self._realtime
@@ -388,6 +413,12 @@ class API:
             try:
                 if hasattr(rt, "stop"):
                     rt.stop()
+                # After stop(), the worker queue is fully drained — segments complete.
+                wav_path = getattr(rt, "_output_path", None)
+                if wav_path and hasattr(rt, "get_segments"):
+                    segs = rt.get_segments()
+                    if segs:
+                        self._rt_segments[wav_path] = segs
             except Exception:
                 logger.exception("Realtime stop failed")
             _push("onRealtimeStopped()")
@@ -618,6 +649,19 @@ class API:
         """Return model catalog with download status."""
         from src.model_manager import ModelManager
         return ModelManager().list_models()
+
+    def delete_model(self, model_id: str) -> dict:
+        """
+        Delete the app-managed copy of a model from disk (HF cache untouched).
+
+        Returns: {"status": "ok", "downloaded": bool} or {"status": "not_found"}
+        """
+        from src.model_manager import ModelManager
+        mm = ModelManager()
+        if mm.get_model(model_id) is None:
+            return {"status": "not_found"}
+        mm.delete(model_id)
+        return {"status": "ok", "downloaded": mm.is_downloaded(model_id)}
 
     def download_model(self, name: str) -> dict:
         """

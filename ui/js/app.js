@@ -399,6 +399,10 @@ const App = (() => {
       setupDiarizerBar:   document.getElementById('setup-diarizer-bar'),
       btnSetupAsr:        document.getElementById('btn-setup-asr'),
       btnSetupDiarizer:   document.getElementById('btn-setup-diarizer'),
+      btnModels:          document.getElementById('btn-models'),
+      modelsModal:        document.getElementById('models-modal'),
+      btnModelsClose:     document.getElementById('btn-models-close'),
+      modelsList:         document.getElementById('models-list'),
       emptyHint:          document.getElementById('empty-hint'),
       progressPanel:      document.getElementById('progress-panel'),
       progressFilename:   document.getElementById('progress-filename'),
@@ -449,6 +453,13 @@ const App = (() => {
     dom.rcBtnPause.addEventListener('click', _onPauseResume);
     dom.rcBtnPlay.addEventListener('click', _onPlayRecording);
     dom.rcBtnFinish.addEventListener('click', () => window.pywebview.api.stop_realtime());
+
+    // Models modal
+    dom.btnModels.addEventListener('click', _openModelsModal);
+    dom.btnModelsClose.addEventListener('click', _closeModelsModal);
+    dom.modelsModal.addEventListener('click', (e) => {
+      if (e.target === dom.modelsModal) _closeModelsModal();
+    });
 
     // Setup panel — download buttons
     dom.btnSetupAsr.addEventListener('click', () => _setupDownload('asr'));
@@ -549,6 +560,121 @@ const App = (() => {
     // Progress arrives via onModelDownloadProgress; completion via pct === 1.0
   }
 
+  // ── Models modal ────────────────────────────────────────────────────────────
+
+  function _openModelsModal() {
+    dom.modelsModal.hidden = false;
+    _loadModelsModal();
+  }
+
+  function _closeModelsModal() {
+    dom.modelsModal.hidden = true;
+  }
+
+  async function _loadModelsModal() {
+    dom.modelsList.innerHTML = '<p style="padding:12px;color:var(--text-muted)">Loading…</p>';
+    try {
+      const models = await window.pywebview.api.get_models();
+      _renderModels(models);
+    } catch (e) {
+      dom.modelsList.innerHTML =
+        `<p style="padding:12px;color:var(--text-muted)">Error: ${e}</p>`;
+    }
+  }
+
+  const _ROLE_ORDER = ['asr', 'aligner', 'diarizer'];
+  const _ROLE_LABEL = { asr: 'ASR Models', aligner: 'Aligner Models', diarizer: 'Diarizer Models' };
+
+  function _renderModels(models) {
+    const grouped = {};
+    for (const m of models) {
+      if (!grouped[m.role]) grouped[m.role] = [];
+      grouped[m.role].push(m);
+    }
+    dom.modelsList.innerHTML = '';
+    for (const role of _ROLE_ORDER) {
+      if (!grouped[role]) continue;
+      const header = document.createElement('div');
+      header.className = 'model-role-header';
+      header.textContent = _ROLE_LABEL[role] || role;
+      dom.modelsList.appendChild(header);
+      for (const m of grouped[role]) {
+        dom.modelsList.appendChild(_makeModelItem(m));
+      }
+    }
+  }
+
+  function _makeModelItem(m) {
+    const div = document.createElement('div');
+    div.className = 'model-item';
+    div.dataset.modelId = m.id;
+
+    const starMark = m.recommended ? ' <span class="model-recommended">★</span>' : '';
+    const badgeClass = m.downloaded ? 'model-badge-ok' : 'model-badge-pending';
+    const badgeText  = m.downloaded ? '✓ Downloaded' : 'Not downloaded';
+
+    div.innerHTML = `
+      <div class="model-item-info">
+        <span class="model-item-name">${m.name}${starMark}</span>
+        <span class="model-item-size">${m.size_gb} GB</span>
+        <span class="model-item-badge ${badgeClass}">${badgeText}</span>
+      </div>
+      <div class="model-item-desc">${m.description}</div>
+      <div class="model-item-progress" hidden>
+        <div class="model-item-bar" style="width:0%"></div>
+      </div>
+      <div class="model-item-actions">
+        <button class="btn-primary btn-sm model-btn-download"
+          ${m.downloaded ? 'disabled' : ''}>Download</button>
+        <button class="btn-link btn-sm model-btn-delete"
+          ${!m.downloaded ? 'disabled' : ''}>Delete</button>
+      </div>
+    `;
+
+    div.querySelector('.model-btn-download').addEventListener('click',
+      () => _downloadModelItem(m.id, div));
+    div.querySelector('.model-btn-delete').addEventListener('click',
+      () => _deleteModelItem(m.id, div));
+
+    return div;
+  }
+
+  async function _downloadModelItem(modelId, itemEl) {
+    const btn   = itemEl.querySelector('.model-btn-download');
+    const badge = itemEl.querySelector('.model-item-badge');
+    const prog  = itemEl.querySelector('.model-item-progress');
+    btn.disabled      = true;
+    badge.textContent = 'Downloading…';
+    badge.className   = 'model-item-badge model-badge-pending';
+    prog.hidden       = false;
+    try {
+      await window.pywebview.api.download_model(modelId);
+    } catch (e) {
+      badge.textContent = 'Error';
+      btn.disabled = false;
+    }
+    // Progress updates arrive via onModelDownloadProgress; completion at pct >= 1.0
+  }
+
+  async function _deleteModelItem(modelId, itemEl) {
+    if (!confirm(`Delete model "${modelId}"?\nThis frees disk space but requires re-download to use.`)) return;
+    const deleteBtn = itemEl.querySelector('.model-btn-delete');
+    deleteBtn.disabled = true;
+    try {
+      await window.pywebview.api.delete_model(modelId);
+      // Update UI to reflect deleted state
+      const badge       = itemEl.querySelector('.model-item-badge');
+      const downloadBtn = itemEl.querySelector('.model-btn-download');
+      badge.textContent = 'Not downloaded';
+      badge.className   = 'model-item-badge model-badge-pending';
+      downloadBtn.disabled = false;
+      deleteBtn.disabled   = true;
+    } catch (e) {
+      console.error('[Models] delete_model error:', e);
+      deleteBtn.disabled = false;
+    }
+  }
+
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
            onTranscribeCancel };
 })();
@@ -562,31 +688,51 @@ function onTranscribeCancel(jobId)                  { App.onTranscribeCancel(job
 
 function onModelDownloadProgress(name, percent) {
   console.log(`[model] ${name} ${(percent * 100).toFixed(0)}%`);
-  // Drive setup panel progress bars
-  const isAsr = name === 'qwen3-asr-1.7b';
-  const isDiar = name === 'pyannote-diarization-community-1';
-  if (!isAsr && !isDiar) return;
 
-  const bar  = isAsr
-    ? document.getElementById('setup-asr-bar')
-    : document.getElementById('setup-diarizer-bar');
-  if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
+  // ── Update setup panel bars (only for the two required models) ──────────────
+  const isSetupAsr  = name === 'qwen3-asr-1.7b';
+  const isSetupDiar = name === 'pyannote-diarization-community-1';
+  if (isSetupAsr || isSetupDiar) {
+    const bar = isSetupAsr
+      ? document.getElementById('setup-asr-bar')
+      : document.getElementById('setup-diarizer-bar');
+    if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
 
-  if (percent >= 1.0) {
-    // Re-check setup status; auto-proceed if both ready
-    if (window.pywebview?.api?.get_setup_status) {
-      window.pywebview.api.get_setup_status().then(status => {
-        const badge = isAsr
-          ? document.getElementById('setup-asr-badge')
-          : document.getElementById('setup-diarizer-badge');
-        if (badge) {
-          badge.textContent = '✓ Ready';
-          badge.className   = 'setup-badge setup-badge-ok';
-        }
-        if (status.asr_ready && status.diarizer_ready) {
-          App.init._checkSetup?.() || location.reload();
-        }
-      }).catch(() => {});
+    if (percent >= 1.0) {
+      if (window.pywebview?.api?.get_setup_status) {
+        window.pywebview.api.get_setup_status().then(status => {
+          const badge = isSetupAsr
+            ? document.getElementById('setup-asr-badge')
+            : document.getElementById('setup-diarizer-badge');
+          if (badge) {
+            badge.textContent = '✓ Ready';
+            badge.className   = 'setup-badge setup-badge-ok';
+          }
+          if (status.asr_ready && status.diarizer_ready) {
+            App.init._checkSetup?.() || location.reload();
+          }
+        }).catch(() => {});
+      }
+    }
+  }
+
+  // ── Update models modal item (if the modal is open) ─────────────────────────
+  const modalItem = document.querySelector(
+    `.model-item[data-model-id="${CSS.escape(name)}"]`
+  );
+  if (modalItem) {
+    const bar = modalItem.querySelector('.model-item-bar');
+    if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
+
+    if (percent >= 1.0) {
+      const badge       = modalItem.querySelector('.model-item-badge');
+      const downloadBtn = modalItem.querySelector('.model-btn-download');
+      const deleteBtn   = modalItem.querySelector('.model-btn-delete');
+      const prog        = modalItem.querySelector('.model-item-progress');
+      if (badge)       { badge.textContent = '✓ Downloaded'; badge.className = 'model-item-badge model-badge-ok'; }
+      if (prog)        prog.hidden = true;
+      if (downloadBtn) downloadBtn.disabled = true;
+      if (deleteBtn)   deleteBtn.disabled   = false;
     }
   }
 }

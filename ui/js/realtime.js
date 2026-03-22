@@ -79,7 +79,9 @@ const Realtime = (() => {
     if (_onStateChange) _onStateChange('stopped');
   }
 
-  function onResult(text) {
+  function onResult(seg) {
+    // seg may be a plain string (backward compat) or {text, start, end} dict
+    const text = (seg && typeof seg === 'object') ? (seg.text || '') : String(seg);
     const el = document.createElement('div');
     el.className = 'realtime-row';
     el.textContent = text;

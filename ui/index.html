@@ -17,6 +17,7 @@
         <option value="qwen">Qwen3-ASR</option>
         <option value="whisper">Whisper</option>
       </select>
+      <button id="btn-models" class="btn-toolbar" title="Model library">Models</button>
       <button id="btn-summary-config" class="btn-toolbar" title="API config &amp; templates">⚙</button>
       <button id="btn-summary-toggle" class="btn-toolbar" title="Toggle summary panel">Summary</button>
     </div>
@@ -168,6 +169,19 @@
     </aside>
 
   </main>
+</div>
+
+<!-- ── Models modal (opened via toolbar "Models" button) ──────────────────── -->
+<div id="models-modal" class="modal-overlay" hidden>
+  <div class="modal-dialog modal-dialog-wide">
+    <div class="modal-header">
+      <span class="modal-title">Model Library</span>
+      <button id="btn-models-close" class="btn-icon" title="Close">✕</button>
+    </div>
+    <div class="modal-body" id="models-list">
+      <!-- Populated by JS -->
+    </div>
+  </div>
 </div>
 
 <!-- ── Config modal (opened via toolbar ⚙ button) ─────────────────────────── -->

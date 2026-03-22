@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.9 — r02-b2)
+## Features (v0.10 — r02-b3)
 
 - **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
 - **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
@@ -20,10 +20,12 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
 - **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher (see [Summary panel](#summary-panel))
-- **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the WAV is automatically transcribed with the selected ASR engine + speaker diarization (see [Realtime transcription](#realtime-transcription))
-- **Auto-transcribe on finish** — stopping a realtime session immediately starts a full transcription pipeline on the saved WAV, producing a speaker-labelled JSON + MD transcript identical to a file upload
+- **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the pipeline runs speaker diarization only (ASR already done live) to produce the final transcript (see [Realtime transcription](#realtime-transcription))
+- **Realtime timestamps** — each live utterance records absolute `start`/`end` times (seconds from session start); displayed in the live panel and passed to the diarizer for accurate speaker labelling
+- **Finish → diarize only** — when a realtime session ends, the already-transcribed segments are retained in memory; the post-session pipeline skips ASR entirely and runs only speaker diarization, producing the final speaker-labelled transcript faster
 - **Session rename** — hover over any history item and click ✏ to rename inline (Enter to save, Esc to cancel)
 - **Session delete** — hover and click 🗑 to delete; removes transcript JSON and summary file after confirmation
+- **Model library modal** — toolbar "Models" button opens a modal listing all available models (ASR + Diarizer) with download status, Download button with live progress bar, and Delete button to free disk space
 - **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model) and template management; no longer embedded inside the summary panel
 - **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
 - **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
@@ -150,20 +152,20 @@ Click **🎙 Start Recording** in the history sidebar footer to start live micro
 ### How it works
 
 1. **Silero VAD** monitors the microphone stream in real time, detecting speech vs. silence at 16 kHz / 32 ms chunks.
-2. Each utterance (speech segment followed by ~480 ms of silence) is extracted and passed to the selected ASR engine.
+2. Each utterance (speech segment followed by ~480 ms of silence) is extracted and passed to the selected ASR engine. The absolute `start`/`end` timestamps (seconds from session start) are recorded alongside the text.
 3. Transcribed text appears in the realtime panel sentence by sentence as you speak.
 4. Use the **control bar** (bottom of the center panel) to manage the session:
    - **⏸ / ▶ (Pause / Resume)** — suspend and resume microphone capture mid-session; the timer pauses accordingly; the partial WAV is kept open and continues filling on resume.
    - **▶ (Play)** — available in paused state; plays back the audio recorded so far.
-   - **Finish** — stops recording, closes the WAV file, and transitions the session to `done` state with the player loaded.
+   - **Finish** — stops recording, closes the WAV file, and triggers a **diarize-only** pipeline on the saved WAV (ASR is skipped — text is already captured live). The result is a speaker-labelled JSON + MD transcript.
 
 ### Notes
 
 - The first click loads the VAD model and the ASR engine; this may take a few seconds.
 - The ASR engine is the same one selected in the toolbar dropdown (Qwen3-ASR or Whisper).
 - Utterances shorter than ~160 ms are discarded as noise.
+- Each utterance carries `{text, start, end}` with timestamps relative to the session start (seconds). These are used directly for speaker assignment during the post-session diarization pass.
 - The complete microphone recording is saved as `output/<session_id>.wav`; the path is passed to the frontend via `onRealtimeStarted(sessionId, wavPath)` and stored in `session.audioPath` so the player is wired automatically when the session finishes.
-- Realtime transcript text is not automatically saved — copy manually if needed.
 - **Concurrency rules:** Uploading a file is blocked while a recording is active; starting a new recording is blocked while a file transcription is running.
 - **MLX serial execution (Apple Silicon):** Each detected utterance is placed in a `queue.Queue` and processed by a single long-running worker thread. This guarantees that `mlx-whisper` (and any other Metal/GPU backend) is never called from two threads at the same time, preventing the `A command encoder is already encoding to this command buffer` Metal assertion failure that would otherwise crash the process when several short speech segments are flushed in quick succession (e.g. during pause/resume).
 
