@@ -92,9 +92,12 @@ def to_json(
     language: str,
     output_path: str,
 ):
+    import time as _time
     data = {
         "audio": os.path.basename(audio_path),
+        "filename": os.path.basename(audio_path),
         "language": language,
+        "created_at": _time.strftime("%Y-%m-%d %H:%M"),
         "segments": [
             {
                 "speaker": b.speaker,

@@ -1,9 +1,9 @@
 /**
- * Summary — API config, template management, and summary generation.
+ * Summary — API config, template management, summary generation, version history.
  *
  * Public API:
  *   Summary.init()               — wire up DOM; call once after DOMContentLoaded
- *   Summary.showForJob(jobId)    — reveal the summary section for a transcript
+ *   Summary.showForJob(jobId)    — reveal the summary panel and load versions for a job
  *
  * Python → JS callbacks (called via evaluate_js):
  *   onSummaryChunk(jobId, chunk)        — streaming token/chunk
@@ -19,23 +19,27 @@ const Summary = (() => {
 
   function init() {
     dom = {
-      section:       document.getElementById('summary-section'),
-      selTemplate:   document.getElementById('sel-template'),
-      btnSummarize:  document.getElementById('btn-summarize'),
-      btnSettings:   document.getElementById('btn-summary-settings'),
-      output:        document.getElementById('summary-output'),
-      placeholder:   document.getElementById('summary-placeholder'),
-      summaryText:   document.getElementById('summary-text'),
-      loading:       document.getElementById('summary-loading'),
-      config:        document.getElementById('summary-config'),
-      cfgBaseUrl:    document.getElementById('cfg-base-url'),
-      cfgApiKey:     document.getElementById('cfg-api-key'),
-      cfgModel:      document.getElementById('cfg-model'),
-      btnSaveConfig: document.getElementById('btn-save-config'),
-      btnAddTemplate:document.getElementById('btn-add-template'),
-      templateList:  document.getElementById('template-list'),
+      panel:          document.getElementById('summary-panel'),
+      btnToggle:      document.getElementById('btn-toggle-summary'),
+      inner:          document.getElementById('summary-inner'),
+      selTemplate:    document.getElementById('sel-template'),
+      btnSummarize:   document.getElementById('btn-summarize'),
+      btnSettings:    document.getElementById('btn-summary-settings'),
+      versions:       document.getElementById('summary-versions'),
+      output:         document.getElementById('summary-output'),
+      placeholder:    document.getElementById('summary-placeholder'),
+      summaryText:    document.getElementById('summary-text'),
+      loading:        document.getElementById('summary-loading'),
+      config:         document.getElementById('summary-config'),
+      cfgBaseUrl:     document.getElementById('cfg-base-url'),
+      cfgApiKey:      document.getElementById('cfg-api-key'),
+      cfgModel:       document.getElementById('cfg-model'),
+      btnSaveConfig:  document.getElementById('btn-save-config'),
+      btnAddTemplate: document.getElementById('btn-add-template'),
+      templateList:   document.getElementById('template-list'),
     };
 
+    dom.btnToggle.addEventListener('click', _onTogglePanel);
     dom.btnSettings.addEventListener('click', _toggleConfig);
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
@@ -45,12 +49,55 @@ const Summary = (() => {
     _loadTemplates();
   }
 
+  // ── Panel collapse ─────────────────────────────────────────────────────────
+
+  function _onTogglePanel() {
+    const collapsed = dom.panel.classList.toggle('collapsed');
+    dom.btnToggle.textContent = collapsed ? '›' : '‹';
+  }
+
   // ── Public: show for a job ─────────────────────────────────────────────────
 
-  function showForJob(jobId) {
+  async function showForJob(jobId) {
     _jobId = jobId;
+    dom.panel.hidden = false;
+    dom.panel.classList.remove('collapsed');
+    dom.btnToggle.textContent = '‹';
     _setOutput('placeholder');
-    dom.section.hidden = false;
+    await _loadVersions(jobId);
+  }
+
+  // ── Version management ─────────────────────────────────────────────────────
+
+  async function _loadVersions(jobId) {
+    try {
+      const versions = await window.pywebview.api.get_summary_versions(jobId);
+      _renderVersions(versions);
+    } catch (e) {
+      console.warn('[Summary] _loadVersions error:', e);
+    }
+  }
+
+  function _renderVersions(versions) {
+    dom.versions.innerHTML = '';
+    if (!versions.length) {
+      dom.versions.hidden = true;
+      return;
+    }
+    dom.versions.hidden = false;
+    versions.forEach((v, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'version-btn';
+      btn.textContent = `v${i + 1} · ${v.created_at}`;
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.version-btn.active')
+          .forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        dom.summaryText.textContent = v.text;
+        _setOutput('text');
+      });
+      dom.versions.appendChild(btn);
+    });
   }
 
   // ── Config ─────────────────────────────────────────────────────────────────
@@ -74,8 +121,8 @@ const Summary = (() => {
     };
     try {
       await window.pywebview.api.save_api_config(cfg);
-      dom.btnSettings.classList.remove('active');
       dom.config.hidden = true;
+      dom.btnSettings.classList.remove('active');
     } catch (e) {
       console.error('[Summary] _onSaveConfig error:', e);
     }
@@ -146,12 +193,12 @@ const Summary = (() => {
   async function _onAddTemplate() {
     const name = prompt('Template name:');
     if (!name || !name.trim()) return;
-    const prompt_ = prompt('Prompt (use the transcript text as context):');
+    const prompt_ = prompt('Prompt (the transcript will be appended as context):');
     if (prompt_ === null) return;
 
     const templates = await window.pywebview.api.get_summary_templates();
     if (templates.some(t => t.name === name.trim())) {
-      alert(`A template named "${name.trim()}" already exists. Please choose a different name.`);
+      alert(`A template named "${name.trim()}" already exists.`);
       return;
     }
     templates.push({ name: name.trim(), prompt: prompt_.trim() });
@@ -168,7 +215,7 @@ const Summary = (() => {
     if (prompt_ === null) return;
 
     if (name.trim() !== t.name && templates.some((u, i) => i !== index && u.name === name.trim())) {
-      alert(`A template named "${name.trim()}" already exists. Please choose a different name.`);
+      alert(`A template named "${name.trim()}" already exists.`);
       return;
     }
     const updated = [...templates];
@@ -201,7 +248,7 @@ const Summary = (() => {
     _setGenerating(true);
     try {
       await window.pywebview.api.summarize(_jobId, template);
-      // Result delivered via onSummaryChunk / onSummaryComplete / onSummaryError callbacks
+      // Result delivered via onSummaryChunk / onSummaryComplete / onSummaryError
     } catch (err) {
       _setGenerating(false);
       _setOutput('error', String(err));
@@ -213,17 +260,24 @@ const Summary = (() => {
   function onChunk(jobId, chunk) {
     if (jobId !== _jobId) return;
     if (dom.summaryText.hidden) {
-      _setOutput('text');
+      dom.summaryText.textContent = '';
+      dom.summaryText.hidden = false;
+      dom.placeholder.hidden = true;
     }
     dom.summaryText.textContent += chunk;
-    // Auto-scroll to bottom
     dom.output.scrollTop = dom.output.scrollHeight;
   }
 
-  function onComplete(jobId, fullText) {
+  async function onComplete(jobId, fullText) {
     if (jobId !== _jobId) return;
     _setGenerating(false);
-    dom.loading.hidden = true;
+    // Save version and refresh version switcher
+    try {
+      await window.pywebview.api.save_summary_version(jobId, fullText);
+      await _loadVersions(jobId);
+    } catch (e) {
+      console.warn('[Summary] save_summary_version error:', e);
+    }
   }
 
   function onError(jobId, message) {
@@ -248,20 +302,18 @@ const Summary = (() => {
   }
 
   function _setOutput(state, text = '') {
-    dom.placeholder.hidden  = state !== 'placeholder';
-    dom.summaryText.hidden  = state !== 'text' && state !== 'error';
-    dom.loading.hidden      = true;
-
+    dom.placeholder.hidden = state !== 'placeholder';
+    dom.summaryText.hidden = state !== 'text' && state !== 'error';
+    dom.loading.hidden = true;
     if (state === 'placeholder') {
       dom.summaryText.textContent = '';
+      dom.summaryText.style.color = '';
     } else if (state === 'text') {
       dom.summaryText.textContent = text;
+      dom.summaryText.style.color = '';
     } else if (state === 'error') {
       dom.summaryText.textContent = '⚠ ' + text;
       dom.summaryText.style.color = 'var(--warn)';
-    }
-    if (state !== 'error') {
-      dom.summaryText.style.color = '';
     }
   }
 

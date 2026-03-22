@@ -103,6 +103,26 @@ class RealtimeTranscriber:
             self._flush_speech()
         logger.info("Realtime transcription stopped")
 
+    def pause(self) -> None:
+        """Pause microphone capture; WAV writer stays open."""
+        self._running = False
+        if self._stream is not None:
+            self._stream.stop()   # blocks until callback finishes
+        if self._speech_buffer:
+            self._flush_speech()
+        logger.info("Realtime transcription paused")
+
+    def resume(self) -> None:
+        """Resume capture into the same WAV file."""
+        if self._stream is None:
+            return
+        self._running = True
+        self._speech_buffer.clear()
+        self._silence_count = 0
+        self._in_speech = False
+        self._stream.start()      # re-start stopped (not closed) stream
+        logger.info("Realtime transcription resumed")
+
     # ── Model loading ─────────────────────────────────────────────────────────
 
     def _load_models(self) -> None:
@@ -111,8 +131,8 @@ class RealtimeTranscriber:
         logger.info("Silero VAD loaded")
 
         if self._engine == "whisper":
-            from .asr_whisper import WhisperEngine
-            self._asr = WhisperEngine(with_timestamps=False)
+            from .asr_whisper import WhisperASREngine
+            self._asr = WhisperASREngine()
         else:
             from .asr import ASREngine
             self._asr = ASREngine(with_timestamps=False)

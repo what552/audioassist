@@ -2,29 +2,31 @@
  * Realtime — microphone transcription control and live results display.
  *
  * Public API:
- *   Realtime.init()       — wire up DOM; call once after DOMContentLoaded
+ *   Realtime.init(onStateChange)  — wire up DOM; onStateChange(state, sessionId?) on transitions
  *
  * Python → JS callbacks (called via evaluate_js):
- *   onRealtimeStarted(sessionId) — models loaded, mic open; sessionId = WAV filename stem
+ *   onRealtimeStarted(sessionId) — models loaded, mic open
  *   onRealtimeStopped()          — mic closed
  *   onRealtimeResult(text)       — one transcribed utterance
  *   onRealtimeError(message)     — error
  */
 const Realtime = (() => {
   let _recording = false;
+  let _onStateChange = null;
+  let _canStart = null;
   let dom = {};
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
-  function init() {
+  function init(onStateChange, canStart) {
+    _onStateChange = onStateChange;
+    _canStart = canStart || null;
     dom = {
-      btnToggle:    document.getElementById('btn-realtime'),
-      statusDot:    document.getElementById('realtime-dot'),
-      statusText:   document.getElementById('realtime-status'),
-      panel:        document.getElementById('realtime-panel'),
-      list:         document.getElementById('realtime-list'),
+      btnToggle:  document.getElementById('btn-start-recording'),
+      statusDot:  document.getElementById('realtime-dot'),
+      statusText: document.getElementById('realtime-status'),
+      list:       document.getElementById('realtime-list'),
     };
-
     dom.btnToggle.addEventListener('click', _onToggle);
   }
 
@@ -40,39 +42,41 @@ const Realtime = (() => {
         _setLoading(false);
       }
     } else {
+      if (_canStart && !_canStart()) return;
       const engine = document.getElementById('sel-engine').value;
       _setLoading(true);
-      _setStatus('loading…');
+      _setStatus('Loading…');
       try {
         await window.pywebview.api.start_realtime({ engine });
       } catch (e) {
         console.error('[Realtime] start error:', e);
         _setLoading(false);
-        _setStatus('error');
+        _setStatus('Error');
       }
     }
   }
 
   // ── Python → JS callbacks ─────────────────────────────────────────────────
 
-  function onStarted(sessionId) {
+  function onStarted(sessionId, wavPath) {
     _recording = true;
     _setLoading(false);
-    dom.btnToggle.textContent = '⏹ Stop';
+    dom.btnToggle.textContent = '⏹ Stop Recording';
     dom.btnToggle.classList.add('recording');
     dom.statusDot.classList.add('active');
     _setStatus('Recording…');
     dom.list.innerHTML = '';
-    dom.panel.hidden = false;
+    if (_onStateChange) _onStateChange('started', sessionId, wavPath);
   }
 
   function onStopped() {
     _recording = false;
     _setLoading(false);
-    dom.btnToggle.textContent = '🎙 Realtime';
+    dom.btnToggle.textContent = '🎙 Start Recording';
     dom.btnToggle.classList.remove('recording');
     dom.statusDot.classList.remove('active');
     _setStatus('Stopped');
+    if (_onStateChange) _onStateChange('stopped');
   }
 
   function onResult(text) {
@@ -86,10 +90,23 @@ const Realtime = (() => {
   function onError(message) {
     _recording = false;
     _setLoading(false);
-    dom.btnToggle.textContent = '🎙 Realtime';
+    dom.btnToggle.textContent = '🎙 Start Recording';
     dom.btnToggle.classList.remove('recording');
     dom.statusDot.classList.remove('active');
     _setStatus('⚠ ' + message);
+    if (_onStateChange) _onStateChange('error');
+  }
+
+  function onPaused() {
+    _setStatus('Paused');
+    dom.statusDot.classList.remove('active');
+    if (_onStateChange) _onStateChange('paused');
+  }
+
+  function onResumed() {
+    _setStatus('Recording…');
+    dom.statusDot.classList.add('active');
+    if (_onStateChange) _onStateChange('resumed');
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -102,12 +119,14 @@ const Realtime = (() => {
     dom.statusText.textContent = text;
   }
 
-  return { init, onStarted, onStopped, onResult, onError };
+  return { init, onStarted, onStopped, onResult, onError, onPaused, onResumed };
 })();
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
 
-function onRealtimeStarted(sessionId) { Realtime.onStarted(sessionId); }
-function onRealtimeStopped()        { Realtime.onStopped(); }
-function onRealtimeResult(text)     { Realtime.onResult(text); }
-function onRealtimeError(message)   { Realtime.onError(message); }
+function onRealtimeStarted(sessionId, wavPath) { Realtime.onStarted(sessionId, wavPath); }
+function onRealtimeStopped()          { Realtime.onStopped(); }
+function onRealtimeResult(text)       { Realtime.onResult(text); }
+function onRealtimeError(message)     { Realtime.onError(message); }
+function onRealtimePaused()           { Realtime.onPaused(); }
+function onRealtimeResumed()          { Realtime.onResumed(); }

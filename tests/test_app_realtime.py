@@ -54,8 +54,8 @@ class TestJSEvents:
             _wait(0.3)
         assert any("onRealtimeStarted" in c for c in js_calls)
 
-    def test_start_pushes_onRealtimeStarted_with_session_id(self):
-        """onRealtimeStarted must be called with a UUID session_id argument."""
+    def test_start_pushes_onRealtimeStarted_with_session_id_and_wav_path(self):
+        """onRealtimeStarted must be called with a UUID session_id AND a wav path."""
         import re
         api = API()
         js_calls = []
@@ -66,11 +66,13 @@ class TestJSEvents:
             _wait(0.3)
         started = [c for c in js_calls if "onRealtimeStarted" in c]
         assert len(started) == 1
-        # Must contain a UUID string, e.g. onRealtimeStarted("xxxxxxxx-xxxx-...")
+        # Must contain UUID session_id and a wav path ending in .wav
+        # e.g. onRealtimeStarted("uuid", "/path/to/uuid.wav")
         assert re.search(
-            r'onRealtimeStarted\("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\)',
+            r'onRealtimeStarted\("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"',
             started[0],
         )
+        assert '.wav"' in started[0]
 
     def test_start_exception_pushes_onRealtimeError(self):
         api = API()
@@ -174,6 +176,84 @@ class TestRaceCondition:
             _wait(0.3)
 
         assert rt_stopped, "rt.stop() must be called when stop_realtime() races with load"
+
+
+# ── pause_realtime / resume_realtime ─────────────────────────────────────────
+
+class TestPauseResumeAPI:
+    def test_pause_returns_not_running_when_no_session(self):
+        api = API()
+        result = api.pause_realtime()
+        assert result["status"] == "not_running"
+
+    def test_resume_returns_not_running_when_no_session(self):
+        api = API()
+        result = api.resume_realtime()
+        assert result["status"] == "not_running"
+
+    def test_pause_returns_pausing(self):
+        api = API()
+        api._realtime = MagicMock(spec=["pause", "resume"])
+        with patch.object(app_module, "_push"):
+            result = api.pause_realtime()
+        assert result["status"] == "pausing"
+
+    def test_resume_returns_resuming(self):
+        api = API()
+        api._realtime = MagicMock(spec=["pause", "resume"])
+        with patch.object(app_module, "_push"):
+            result = api.resume_realtime()
+        assert result["status"] == "resuming"
+
+    def test_pause_calls_rt_pause_and_pushes_onRealtimePaused(self):
+        api = API()
+        mock_rt = MagicMock(spec=["pause", "resume"])
+        api._realtime = mock_rt
+        js_calls = []
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            api.pause_realtime()
+            _wait(0.3)
+        mock_rt.pause.assert_called_once()
+        assert any("onRealtimePaused" in c for c in js_calls)
+
+    def test_resume_calls_rt_resume_and_pushes_onRealtimeResumed(self):
+        api = API()
+        mock_rt = MagicMock(spec=["pause", "resume"])
+        api._realtime = mock_rt
+        js_calls = []
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            api.resume_realtime()
+            _wait(0.3)
+        mock_rt.resume.assert_called_once()
+        assert any("onRealtimeResumed" in c for c in js_calls)
+
+    def test_pause_exception_still_pushes_onRealtimePaused(self):
+        api = API()
+        mock_rt = MagicMock(spec=["pause", "resume"])
+        mock_rt.pause.side_effect = RuntimeError("pause failed")
+        api._realtime = mock_rt
+        js_calls = []
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            api.pause_realtime()
+            _wait(0.3)
+        assert any("onRealtimePaused" in c for c in js_calls)
+
+    def test_resume_exception_still_pushes_onRealtimeResumed(self):
+        api = API()
+        mock_rt = MagicMock(spec=["pause", "resume"])
+        mock_rt.resume.side_effect = RuntimeError("resume failed")
+        api._realtime = mock_rt
+        js_calls = []
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            api.resume_realtime()
+            _wait(0.3)
+        assert any("onRealtimeResumed" in c for c in js_calls)
+
+    def test_pause_returns_not_running_when_rt_has_no_pause_method(self):
+        api = API()
+        api._realtime = object()  # no pause/resume methods
+        result = api.pause_realtime()
+        assert result["status"] == "not_running"
 
 
 # ── Engine option passed through ──────────────────────────────────────────────
