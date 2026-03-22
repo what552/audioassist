@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import tempfile
 import threading
 import wave
@@ -60,12 +61,24 @@ class RealtimeTranscriber:
         self._silence_count  = 0
         self._in_speech      = False
 
+        # Serial transcription worker — prevents concurrent Metal GPU usage
+        self._transcribe_queue: queue.Queue = queue.Queue()
+        self._worker_thread: Optional[threading.Thread] = None
+
     # ── Public ────────────────────────────────────────────────────────────────
 
     def start(self) -> None:
         """Load models then open the microphone stream."""
         self._load_models()
         self._running = True
+
+        # Start the serial worker that drains the transcription queue
+        self._worker_thread = threading.Thread(
+            target=self._transcription_worker,
+            daemon=True,
+            name="realtime-transcribe-worker",
+        )
+        self._worker_thread.start()
 
         # Open session WAV writer before the stream captures audio
         if self._output_path is not None:
@@ -101,6 +114,11 @@ class RealtimeTranscriber:
             self._wav_writer = None
         if self._speech_buffer:
             self._flush_speech()
+        # Signal worker to stop after it drains remaining items, then wait
+        if self._worker_thread is not None and self._worker_thread.is_alive():
+            self._transcribe_queue.put(None)  # sentinel
+            self._worker_thread.join()
+            self._worker_thread = None
         logger.info("Realtime transcription stopped")
 
     def pause(self) -> None:
@@ -180,11 +198,29 @@ class RealtimeTranscriber:
         self._in_speech = False
         if len(buf) < MIN_SPEECH_CHUNKS:
             return  # too short — likely noise, skip
-        threading.Thread(
-            target=self._transcribe_segment,
-            args=(buf,),
-            daemon=True,
-        ).start()
+        # Enqueue for serial processing — never spawn concurrent ASR threads
+        self._transcribe_queue.put(buf)
+
+    def _transcription_worker(self) -> None:
+        """Long-running worker that serially drains the transcription queue.
+
+        Using a single worker thread guarantees that mlx-whisper (and any other
+        Metal/GPU backend) is never called from two threads simultaneously,
+        preventing the ``A command encoder is already encoding to this command
+        buffer`` Metal assertion failure on Apple Silicon.
+
+        The worker exits when it dequeues the ``None`` sentinel value (sent by
+        ``stop()`` after the audio stream is closed).
+        """
+        while True:
+            item = self._transcribe_queue.get()
+            if item is None:  # sentinel — time to exit
+                self._transcribe_queue.task_done()
+                break
+            try:
+                self._transcribe_segment(item)
+            finally:
+                self._transcribe_queue.task_done()
 
     def _transcribe_segment(self, audio_chunks: list) -> None:
         """Concatenate audio chunks, write temp WAV, run ASR, fire on_result."""
