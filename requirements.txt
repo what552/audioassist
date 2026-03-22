@@ -31,3 +31,8 @@ openai>=1.0
 sounddevice>=0.4      # cross-platform microphone input
 silero-vad>=4.0       # voice activity detection (PyTorch-based)
 numpy>=1.24           # audio array processing (transitive dep of torch, listed explicitly)
+
+# Frontend testing (Playwright)
+# After pip install, also run: playwright install chromium
+playwright>=1.40
+pytest-playwright>=0.4

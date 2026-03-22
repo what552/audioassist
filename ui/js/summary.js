@@ -20,17 +20,18 @@ const Summary = (() => {
   function init() {
     dom = {
       panel:          document.getElementById('summary-panel'),
-      btnToggle:      document.getElementById('btn-toggle-summary'),
+      btnToggle:      document.getElementById('btn-summary-toggle'),
+      btnSettings:    document.getElementById('btn-summary-config'),
+      modal:          document.getElementById('config-modal'),
+      btnModalClose:  document.getElementById('btn-modal-close'),
       inner:          document.getElementById('summary-inner'),
       selTemplate:    document.getElementById('sel-template'),
       btnSummarize:   document.getElementById('btn-summarize'),
-      btnSettings:    document.getElementById('btn-summary-settings'),
       versions:       document.getElementById('summary-versions'),
       output:         document.getElementById('summary-output'),
       placeholder:    document.getElementById('summary-placeholder'),
       summaryText:    document.getElementById('summary-text'),
       loading:        document.getElementById('summary-loading'),
-      config:         document.getElementById('summary-config'),
       cfgBaseUrl:     document.getElementById('cfg-base-url'),
       cfgApiKey:      document.getElementById('cfg-api-key'),
       cfgModel:       document.getElementById('cfg-model'),
@@ -41,6 +42,9 @@ const Summary = (() => {
 
     dom.btnToggle.addEventListener('click', _onTogglePanel);
     dom.btnSettings.addEventListener('click', _toggleConfig);
+    dom.btnModalClose.addEventListener('click', _closeModal);
+    // Close modal on backdrop click
+    dom.modal.addEventListener('click', (e) => { if (e.target === dom.modal) _closeModal(); });
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
     dom.btnAddTemplate.addEventListener('click', _onAddTemplate);
@@ -49,11 +53,10 @@ const Summary = (() => {
     _loadTemplates();
   }
 
-  // ── Panel collapse ─────────────────────────────────────────────────────────
+  // ── Panel toggle ───────────────────────────────────────────────────────────
 
   function _onTogglePanel() {
-    const collapsed = dom.panel.classList.toggle('collapsed');
-    dom.btnToggle.textContent = collapsed ? '›' : '‹';
+    dom.panel.hidden = !dom.panel.hidden;
   }
 
   // ── Public: show for a job ─────────────────────────────────────────────────
@@ -61,8 +64,6 @@ const Summary = (() => {
   async function showForJob(jobId) {
     _jobId = jobId;
     dom.panel.hidden = false;
-    dom.panel.classList.remove('collapsed');
-    dom.btnToggle.textContent = '‹';
     _setOutput('placeholder');
     await _loadVersions(jobId);
   }
@@ -93,8 +94,7 @@ const Summary = (() => {
         document.querySelectorAll('.version-btn.active')
           .forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        dom.summaryText.textContent = v.text;
-        _setOutput('text');
+        _setOutput('text', v.text);
       });
       dom.versions.appendChild(btn);
     });
@@ -121,16 +121,20 @@ const Summary = (() => {
     };
     try {
       await window.pywebview.api.save_api_config(cfg);
-      dom.config.hidden = true;
-      dom.btnSettings.classList.remove('active');
+      _closeModal();
     } catch (e) {
       console.error('[Summary] _onSaveConfig error:', e);
     }
   }
 
+  function _closeModal() {
+    dom.modal.hidden = true;
+    dom.btnSettings.classList.remove('active');
+  }
+
   function _toggleConfig() {
-    const open = !dom.config.hidden;
-    dom.config.hidden = open;
+    const open = !dom.modal.hidden;
+    dom.modal.hidden = open;
     dom.btnSettings.classList.toggle('active', !open);
   }
 

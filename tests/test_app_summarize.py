@@ -138,4 +138,6 @@ class TestSummarizeTranscriptText:
 
         assert "Hello everyone." in captured.get("text", "")
         assert "Thanks for joining." in captured.get("text", "")
-        assert captured.get("prompt") == TEMPLATE["prompt"]
+        # Template prompt must be present; language instruction is prepended for "en"
+        assert TEMPLATE["prompt"] in captured.get("prompt", "")
+        assert "English" in captured.get("prompt", "")

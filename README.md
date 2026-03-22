@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.7 — r02-a)
+## Features (v0.9 — r02-b2)
 
 - **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
 - **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
@@ -10,16 +10,23 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Engine selector** — choose Qwen3-ASR or Whisper before transcribing
 - **Upload File button** — native file picker for audio/video files (sidebar footer); blocked while a recording is active
 - **Start Recording button** — launch live microphone transcription from the sidebar footer; blocked while a file transcription is in progress
-- **Drag-and-drop** — drop a file onto the center panel to start transcription
+- **Drag-and-drop** — drop a file onto the center panel to start transcription; blocked while a recording is active
 - **Transcription progress** — live progress bar + status message while pipeline runs
+- **Transcription cancel** — Cancel button in the progress panel aborts an in-flight transcription and returns the UI to idle
+- **Transcription retry** — if a transcription fails the error panel shows a Retry button that re-launches the same file with one click
 - **Transcript list** — speaker-labelled blocks with timestamps; click any row to seek the player
 - **Inline editing** — double-click a row's text to edit in-place (Enter/Blur saves, Escape cancels); unsaved rows highlighted in orange
 - **Save button** — flush all edits back to the JSON transcript; `.md` sidecar regenerated automatically
 - **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
 - **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher (see [Summary panel](#summary-panel))
-- **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved and wired to the player (see [Realtime transcription](#realtime-transcription))
-- **Model auto-download** — ASR and diarizer model weights are downloaded automatically on first use; progress is shown in the UI progress bar; no manual setup required
+- **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the WAV is automatically transcribed with the selected ASR engine + speaker diarization (see [Realtime transcription](#realtime-transcription))
+- **Auto-transcribe on finish** — stopping a realtime session immediately starts a full transcription pipeline on the saved WAV, producing a speaker-labelled JSON + MD transcript identical to a file upload
+- **Session rename** — hover over any history item and click ✏ to rename inline (Enter to save, Esc to cancel)
+- **Session delete** — hover and click 🗑 to delete; removes transcript JSON and summary file after confirmation
+- **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model) and template management; no longer embedded inside the summary panel
+- **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
+- **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
 
 ## Requirements
 
@@ -95,13 +102,13 @@ Files written inside the data directory:
 - **Qwen3-ASR** (`engine="qwen"`): best accuracy for Chinese + 30 languages; requires CPU (MPS causes SIGBUS); runs on macOS/Linux/Windows.
 - **Whisper** (`engine="whisper"`): Apple Silicon — uses `mlx-whisper` (Neural Engine); other platforms — uses `faster-whisper` (CPU/CUDA).
 
-> **First run:** If the selected ASR model (and optional ForcedAligner) is not yet downloaded, it is fetched automatically when you start a transcription. Download progress is shown in the UI progress bar. Subsequent runs use the cached weights with no network access.
+> **First run:** On launch, the app checks whether the required ASR model is present. If not, the setup panel is shown (see [First-run model setup](#first-run-model-setup)). Once downloaded, subsequent runs use the cached weights with no network access.
 
 ### Speaker diarization
 
 The default diarizer is **`pyannote-diarization-community-1`** — no HuggingFace token required.
 
-> **First run:** The diarizer model is downloaded automatically if not present when a transcription starts. No manual step needed.
+> **First run:** On launch, the app checks whether the diarizer model is present. If not, the setup panel prompts you to download it before starting any transcription (see [First-run model setup](#first-run-model-setup)).
 
 Two models are available:
 
@@ -116,6 +123,25 @@ To use `pyannote-diarization-3.1`, set `HF_TOKEN` before launching:
 export HF_TOKEN=hf_...   # macOS / Linux
 set HF_TOKEN=hf_...      # Windows cmd
 ```
+
+## First-run model setup
+
+On first launch, AudioAssist checks whether the two required model families are present:
+
+| Model family | Default model | Size |
+|---|---|---|
+| ASR | `qwen3-asr-1.7b` | ~3.5 GB |
+| Speaker diarizer | `pyannote-diarization-community-1` | ~34 MB |
+
+If either model is missing, a **setup panel** is shown in the center of the main window instead of the normal transcript view. The panel displays:
+
+- A status badge per model (Not downloaded / Downloading… / ✓ Ready)
+- A progress bar that fills as the download proceeds
+- A **Download** button for each model
+
+Click **Download** for each missing model. Downloads run in the background; you can start both simultaneously. Once both show ✓ Ready the setup panel closes automatically and the main UI becomes accessible.
+
+If both models are already present (subsequent launches), the setup panel is skipped entirely.
 
 ## Realtime transcription
 
@@ -155,19 +181,21 @@ Click **🎙 Start Recording** in the history sidebar footer to start live micro
 
 ## Summary panel
 
-After transcription completes, the collapsible **Summary** panel appears on the right. Click the **‹** / **›** strip to collapse or expand it.
+After transcription completes, the **Summary** panel is available on the right. Use the **Summary** button in the toolbar (top-right) to show or hide it. Click **⚙** in the toolbar to open the API config and template settings modal.
 
 ### Layout
 
 ```
-┌──────────────────────────────────────────┐
-│ ‹ │ [⚙] [Template ▼] [Generate]         │  ← controls
-│   │ [v1 · date] [v2 · date]              │  ← version switcher (when versions exist)
-│   │ ┌──────────────────────────────────┐ │
-│   │ │  (streaming output / versions)  │ │  ← #summary-output
-│   │ └──────────────────────────────────┘ │
-│   │  ── API config (hidden by default) ── │  ← ⚙ settings panel
-└──────────────────────────────────────────┘
+┌─ toolbar ─────────────────────────────────────────────┐
+│  AudioAssist   [Engine ▼]   [⚙]   [Summary]           │
+└───────────────────────────────────────────────────────┘
+┌─ summary panel (right column) ────────────────────────┐
+│  [Template ▼]  [Generate]                             │  ← controls
+│  [v1 · date]  [v2 · date]                             │  ← version switcher
+│  ┌─────────────────────────────────────────────────┐  │
+│  │  (streaming output / recalled version text)     │  │  ← #summary-output
+│  └─────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────┘
 ```
 
 ### Usage
@@ -175,7 +203,7 @@ After transcription completes, the collapsible **Summary** panel appears on the 
 1. **Select a template** from the drop-down list.
 2. Click **Generate** — the transcript is sent to the configured LLM and the response streams in.
 3. Each completed summary is saved automatically as a version (up to 3 per job). Click a version button to recall it.
-4. Click **⚙** to open the settings panel and configure:
+4. Click **⚙** in the toolbar to open the Settings modal and configure:
    - **Base URL** — OpenAI-compatible endpoint (e.g. `https://api.openai.com/v1`, DeepSeek, Qwen, local Ollama).
    - **API Key** — authentication key for the endpoint.
    - **Model** — model identifier (e.g. `gpt-4o-mini`, `deepseek-chat`).

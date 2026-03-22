@@ -5,17 +5,21 @@
  * App drives all data via render().
  *
  * Public API:
- *   History.init(onSelect)              — wire up DOM; onSelect(sessionId) on click
- *   History.render(sessions, selectedId) — redraw list from session array
+ *   History.init(onSelect, onRename, onDelete) — wire up DOM; callbacks on user actions
+ *   History.render(sessions, selectedId)        — redraw list from session array
  */
 const History = (() => {
   let dom = {};
   let _onSelect = null;
+  let _onRename = null;
+  let _onDelete = null;
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
-  function init(onSelect) {
+  function init(onSelect, onRename, onDelete) {
     _onSelect = onSelect;
+    _onRename = onRename;
+    _onDelete = onDelete;
     dom = {
       list: document.getElementById('history-list'),
     };
@@ -43,22 +47,97 @@ const History = (() => {
     const isLive = session.status === 'recording' || session.status === 'paused';
     if (isLive) el.classList.add('history-item-recording');
 
-    const name = document.createElement('div');
-    name.className = 'history-item-name';
-    name.textContent = (isLive ? '🔴 ' : '') + (session.filename || session.id);
-    name.title = session.filename || session.id;
+    // Clickable body (select)
+    const body = document.createElement('div');
+    body.className = 'history-item-body';
+
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'history-item-name';
+    nameWrap.textContent = (isLive ? '🔴 ' : '') + (session.filename || session.id);
+    nameWrap.title = session.filename || session.id;
 
     const meta = document.createElement('div');
     meta.className = 'history-item-meta';
-    const dateStr = session.created_at ? session.created_at.slice(0, 10) : '';
+    const dateStr = session.created_at ? session.created_at.slice(0, 16).replace('T', ' ') : '';
     const dur = session.duration ? _fmtDuration(session.duration) : '';
     meta.textContent = [dateStr, dur].filter(Boolean).join(' · ');
 
-    el.append(name, meta);
-    el.addEventListener('click', () => {
+    body.append(nameWrap, meta);
+    body.addEventListener('click', () => {
       if (_onSelect) _onSelect(session.id);
     });
+
+    el.appendChild(body);
+
+    // Action buttons (shown on hover; hidden for live sessions)
+    if (!isLive) {
+      const actions = document.createElement('div');
+      actions.className = 'history-item-actions';
+
+      const btnRename = document.createElement('button');
+      btnRename.className = 'btn-history-action';
+      btnRename.title = 'Rename';
+      btnRename.textContent = '✏';
+      btnRename.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _startInlineRename(session, nameWrap);
+      });
+
+      const btnDelete = document.createElement('button');
+      btnDelete.className = 'btn-history-action btn-history-delete';
+      btnDelete.title = 'Delete';
+      btnDelete.textContent = '🗑';
+      btnDelete.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (_onDelete) _onDelete(session.id);
+      });
+
+      actions.append(btnRename, btnDelete);
+      el.appendChild(actions);
+    }
+
     return el;
+  }
+
+  // ── Inline rename ──────────────────────────────────────────────────────────
+
+  function _startInlineRename(session, nameEl) {
+    const original = session.filename || session.id;
+    const input = document.createElement('input');
+    input.className = 'history-item-rename-input';
+    input.value = original;
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function _commit() {
+      input.removeEventListener('blur', _commit);
+      const newName = input.value.trim();
+      // Restore the name element
+      const restored = document.createElement('div');
+      restored.className = 'history-item-name';
+      restored.textContent = newName || original;
+      restored.title = newName || original;
+      input.replaceWith(restored);
+      if (newName && newName !== original && _onRename) {
+        _onRename(session.id, newName);
+      }
+    }
+
+    function _cancel() {
+      input.removeEventListener('blur', _commit);
+      const restored = document.createElement('div');
+      restored.className = 'history-item-name';
+      restored.textContent = original;
+      restored.title = original;
+      input.replaceWith(restored);
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); _commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); _cancel(); }
+    });
+    input.addEventListener('blur', _commit);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

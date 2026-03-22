@@ -94,6 +94,90 @@ class TestGetHistory:
         result = api.get_history()
         assert result[0]["filename"] == "fallback.mp3"
 
+    def test_json_entry_returns_type_file(self, env):
+        api, tmp = env
+        _write_job(tmp, "j3", {
+            "filename": "f.mp3", "audio": "/abs/path/f.mp3",
+            "language": "en", "created_at": "2026-03-22 10:00",
+            "segments": [],
+        })
+        result = api.get_history()
+        assert result[0]["type"] == "file"
+
+    def test_json_entry_returns_audio_path(self, env):
+        api, tmp = env
+        _write_job(tmp, "j4", {
+            "filename": "f.mp3", "audio": "/abs/path/j4_audio.mp3",
+            "language": "en", "created_at": "2026-03-22 10:00",
+            "segments": [],
+        })
+        result = api.get_history()
+        assert result[0]["audio_path"] == "/abs/path/j4_audio.mp3"
+
+
+class TestGetHistoryWavEntries:
+    def test_wav_without_json_appears_as_realtime(self, env):
+        api, tmp = env
+        (tmp / "abcd1234-0000-0000-0000-000000000000.wav").write_bytes(b"RIFF")
+        result = api.get_history()
+        assert len(result) == 1
+        assert result[0]["type"] == "realtime"
+        assert result[0]["filename"] == "abcd1234"  # first 8 chars of stem
+
+    def test_wav_entry_audio_path_is_absolute(self, env):
+        api, tmp = env
+        (tmp / "deadbeef-0000-0000-0000-000000000000.wav").write_bytes(b"RIFF")
+        result = api.get_history()
+        assert os.path.isabs(result[0]["audio_path"])
+        assert result[0]["audio_path"].endswith(".wav")
+
+    def test_wav_with_existing_json_not_doubled(self, env):
+        api, tmp = env
+        job_id = "12345678-1234-1234-1234-123456789012"
+        _write_job(tmp, job_id, {
+            "filename": "rec.mp3", "language": "zh",
+            "created_at": "2026-03-22 10:00",
+            "segments": [{"start": 0.0, "end": 5.0, "text": "hi", "words": []}],
+        })
+        (tmp / f"{job_id}.wav").write_bytes(b"RIFF")
+        result = api.get_history()
+        assert len(result) == 1  # JSON entry only; WAV not double-counted
+        assert result[0]["type"] == "file"
+
+    def test_audio_copy_wavs_excluded(self, env):
+        api, tmp = env
+        (tmp / "somejob_audio.wav").write_bytes(b"RIFF")
+        result = api.get_history()
+        assert len(result) == 0  # _audio suffix → internal copy, skipped
+
+    def test_wav_with_transcribed_job_id_excluded(self, env):
+        """WAV with transcribed_job_id in _meta.json must not appear in history."""
+        api, tmp = env
+        stem = "realtime-0000-0000-0000-000000000000"
+        (tmp / f"{stem}.wav").write_bytes(b"RIFF")
+        (tmp / f"{stem}_meta.json").write_text(
+            json.dumps({"filename": "My Rec", "transcribed_job_id": "some-new-uuid"}),
+            encoding="utf-8",
+        )
+        result = api.get_history()
+        assert len(result) == 0, "WAV with transcribed_job_id should be hidden"
+
+    def test_wav_and_json_entries_combined_and_sorted(self, env):
+        api, tmp = env
+        # JSON job with an older date
+        _write_job(tmp, "job-old", {
+            "filename": "old.mp3", "audio": "/p/old.mp3",
+            "language": "en", "created_at": "2026-03-01T08:00:00",
+            "segments": [],
+        })
+        # Realtime WAV — mtime will be "now" (newer)
+        (tmp / "wav-new-0-0000-0000-0000-000000000000.wav").write_bytes(b"RIFF")
+        result = api.get_history()
+        assert len(result) == 2
+        # Newer (WAV) should come first
+        assert result[0]["type"] == "realtime"
+        assert result[1]["type"] == "file"
+
 
 # ── get_summary_versions ───────────────────────────────────────────────────────
 

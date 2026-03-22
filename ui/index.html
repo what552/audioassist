@@ -17,6 +17,8 @@
         <option value="qwen">Qwen3-ASR</option>
         <option value="whisper">Whisper</option>
       </select>
+      <button id="btn-summary-config" class="btn-toolbar" title="API config &amp; templates">⚙</button>
+      <button id="btn-summary-toggle" class="btn-toolbar" title="Toggle summary panel">Summary</button>
     </div>
   </header>
 
@@ -42,6 +44,37 @@
         <div id="player-time">00:00 / 00:00</div>
       </div>
 
+      <!-- Setup panel (first-run: models not downloaded) -->
+      <div id="setup-panel" hidden>
+        <div class="setup-title">Welcome to AudioAssist</div>
+        <p class="setup-subtitle">Download the required models to get started.<br>No account or token needed.</p>
+        <div class="setup-items">
+
+          <div class="setup-item">
+            <div class="setup-item-header">
+              <span class="setup-item-name">ASR Model <span class="setup-item-size">(3.5 GB)</span></span>
+              <span id="setup-asr-badge" class="setup-badge setup-badge-pending">Not downloaded</span>
+            </div>
+            <div id="setup-asr-progress" class="setup-progress" hidden>
+              <div id="setup-asr-bar" class="setup-progress-fill"></div>
+            </div>
+            <button id="btn-setup-asr" class="btn-primary btn-sm">Download</button>
+          </div>
+
+          <div class="setup-item">
+            <div class="setup-item-header">
+              <span class="setup-item-name">Diarizer Model <span class="setup-item-size">(34 MB)</span></span>
+              <span id="setup-diarizer-badge" class="setup-badge setup-badge-pending">Not downloaded</span>
+            </div>
+            <div id="setup-diarizer-progress" class="setup-progress" hidden>
+              <div id="setup-diarizer-bar" class="setup-progress-fill"></div>
+            </div>
+            <button id="btn-setup-diarizer" class="btn-primary btn-sm">Download</button>
+          </div>
+
+        </div>
+      </div>
+
       <!-- Empty hint (idle state) -->
       <div id="empty-hint">
         <div class="empty-hint-icon">
@@ -62,6 +95,15 @@
           <div id="progress-bar"></div>
         </div>
         <p id="progress-msg">Preparing…</p>
+        <button id="btn-cancel-transcribe" class="btn-link btn-sm">Cancel</button>
+      </div>
+
+      <!-- Error panel (transcription failed) -->
+      <div id="error-panel" hidden>
+        <div class="error-icon">⚠</div>
+        <p id="error-filename" class="error-filename"></p>
+        <p id="error-msg" class="error-msg"></p>
+        <button id="btn-retry" class="btn-primary btn-sm">Retry</button>
       </div>
 
       <!-- Transcript (done state) -->
@@ -98,18 +140,12 @@
 
     </section>
 
-    <!-- ── Right: Summary panel (collapsible) ─────────────────────────────── -->
+    <!-- ── Right: Summary panel (collapsible via toolbar toggle) ──────────── -->
     <aside id="summary-panel" hidden>
-
-      <!-- Toggle strip (always visible, 28px wide when collapsed) -->
-      <button id="btn-toggle-summary" class="summary-toggle" title="Toggle summary panel">‹</button>
-
-      <!-- Summary content (hidden when collapsed) -->
       <div id="summary-inner">
 
         <!-- Controls row -->
         <div id="summary-controls">
-          <button id="btn-summary-settings" class="btn-icon" title="API settings">⚙</button>
           <select id="sel-template" title="Summary template"></select>
           <button id="btn-summarize" class="btn-primary btn-sm">Generate</button>
         </div>
@@ -128,35 +164,43 @@
           </div>
         </div>
 
-        <!-- API config form (collapsible) -->
-        <div id="summary-config" hidden>
-          <div class="config-row">
-            <label for="cfg-base-url">Base URL</label>
-            <input id="cfg-base-url" type="text" placeholder="https://api.openai.com/v1" />
-          </div>
-          <div class="config-row">
-            <label for="cfg-api-key">API Key</label>
-            <input id="cfg-api-key" type="password" placeholder="sk-…" />
-          </div>
-          <div class="config-row">
-            <label for="cfg-model">Model</label>
-            <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
-          </div>
-          <div class="config-actions">
-            <button id="btn-save-config" class="btn-primary btn-sm">Save</button>
-          </div>
-
-          <div class="config-section-title">Templates
-            <button id="btn-add-template" class="btn-link btn-sm">+ Add</button>
-          </div>
-          <div id="template-list"></div>
-        </div>
-
       </div><!-- /#summary-inner -->
-
     </aside>
 
   </main>
+</div>
+
+<!-- ── Config modal (opened via toolbar ⚙ button) ─────────────────────────── -->
+<div id="config-modal" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <span class="modal-title">Settings</span>
+      <button id="btn-modal-close" class="btn-icon" title="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="config-section-title">API Configuration</div>
+      <div class="config-row">
+        <label for="cfg-base-url">Base URL</label>
+        <input id="cfg-base-url" type="text" placeholder="https://api.openai.com/v1" />
+      </div>
+      <div class="config-row">
+        <label for="cfg-api-key">API Key</label>
+        <input id="cfg-api-key" type="password" placeholder="sk-…" />
+      </div>
+      <div class="config-row">
+        <label for="cfg-model">Model</label>
+        <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
+      </div>
+      <div class="config-actions">
+        <button id="btn-save-config" class="btn-primary btn-sm">Save</button>
+      </div>
+
+      <div class="config-section-title">Templates
+        <button id="btn-add-template" class="btn-link btn-sm">+ Add</button>
+      </div>
+      <div id="template-list"></div>
+    </div>
+  </div>
 </div>
 
 <script src="js/player.js"></script>

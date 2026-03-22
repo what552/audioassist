@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import threading
 from typing import Optional
 
@@ -24,6 +25,67 @@ APP_DATA_DIR = user_data_dir("TranscribeApp", appauthor=False)
 OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
+
+_LANG_INSTRUCTIONS: dict[str, str] = {
+    "zh":    "请用中文生成纪要。",
+    "yue":   "請用粵語（繁體中文）生成紀要。",
+    "ja":    "日本語で要約してください。",
+    "ko":    "한국어로 요약해 주세요。",
+    "fr":    "Veuillez répondre en français.",
+    "de":    "Bitte auf Deutsch antworten.",
+    "es":    "Por favor, responde en español.",
+    "pt":    "Por favor, responda em português.",
+    "ru":    "Пожалуйста, отвечайте на русском языке.",
+    "ar":    "يرجى الرد باللغة العربية.",
+    "en":    "Please respond in English.",
+}
+
+
+def _lang_instruction(language: str, text: str) -> str:
+    """Return a language instruction to prepend to the LLM prompt."""
+    lang = (language or "").strip().lower()
+    if lang in _LANG_INSTRUCTIONS:
+        return _LANG_INSTRUCTIONS[lang]
+    # Auto-detect: if >10 % of chars are CJK, assume Chinese
+    if text:
+        cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+        if cjk / len(text) > 0.10:
+            return _LANG_INSTRUCTIONS["zh"]
+    return ""
+
+
+_DEFAULT_TEMPLATES = [
+    {
+        "name": "General Summary",
+        "prompt": (
+            "Please summarize the following transcript concisely. "
+            "Highlight the main topics discussed and any key decisions or action items."
+        ),
+    },
+    {
+        "name": "Meeting Notes",
+        "prompt": (
+            "Convert the following meeting transcript into structured meeting notes. "
+            "Include: attendees (if mentioned), agenda items, decisions made, and action items with owners."
+        ),
+    },
+    {
+        "name": "Key Points",
+        "prompt": (
+            "Extract the key points from the following transcript as a bulleted list. "
+            "Be concise and focus on the most important information."
+        ),
+    },
+]
+
+# Per-job cancel events for in-flight transcriptions
+_cancel_flags: dict[str, threading.Event] = {}
+_cancel_flags_mutex = threading.Lock()
+
+
+class _TranscriptionCancelled(Exception):
+    """Raised inside transcribe() thread when the job is cancelled."""
+
 
 # Per-job lock to prevent concurrent read-modify-write on transcript files
 # TODO: _transcript_locks grows unbounded (one entry per job for the lifetime of
@@ -69,10 +131,15 @@ class API:
         job_id = str(uuid.uuid4())
 
         def _run():
+            cancel_ev = threading.Event()
+            with _cancel_flags_mutex:
+                _cancel_flags[job_id] = cancel_ev
             try:
                 from src.pipeline import run as pipeline_run
 
                 def _progress(pct: float, msg: str):
+                    if cancel_ev.is_set():
+                        raise _TranscriptionCancelled()
                     js = f"onTranscribeProgress({json.dumps(job_id)}, {pct:.4f}, {json.dumps(msg)})"
                     _push(js)
 
@@ -89,15 +156,82 @@ class API:
                     job_id=job_id,
                     progress_callback=_progress,
                 )
+
+                # Copy original audio into output dir for persistent playback.
+                # The copy is kept alongside the transcript so history playback
+                # works regardless of whether the source file has moved or been
+                # deleted.  If the copy fails we log a warning and continue.
+                try:
+                    _, ext = os.path.splitext(path)
+                    audio_copy = os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}")
+                    shutil.copy2(path, audio_copy)
+                    # Patch the JSON: replace the basename "audio" field with
+                    # the absolute path of the internal copy so Player.load()
+                    # can resolve it via file:// URL.
+                    with open(json_path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    data["audio"] = audio_copy
+                    tmp_json = json_path + ".tmp"
+                    with open(tmp_json, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    os.replace(tmp_json, json_path)
+                except Exception:
+                    logger.warning("transcribe: failed to copy audio file", exc_info=True)
+
+                # If source was a realtime WAV from our output dir, record
+                # transcribed_job_id in its _meta.json so get_history() can
+                # skip the orphaned WAV entry on next launch.
+                try:
+                    if path.lower().endswith(".wav"):
+                        src_abs = os.path.abspath(path)
+                        out_abs = os.path.abspath(OUTPUT_DIR)
+                        if os.path.dirname(src_abs) == out_abs:
+                            wav_stem = os.path.splitext(os.path.basename(path))[0]
+                            meta_path_rt = os.path.join(OUTPUT_DIR, f"{wav_stem}_meta.json")
+                            rt_meta: dict = {}
+                            if os.path.exists(meta_path_rt):
+                                try:
+                                    with open(meta_path_rt, encoding="utf-8") as f:
+                                        rt_meta = json.load(f)
+                                except Exception:
+                                    pass
+                            rt_meta["transcribed_job_id"] = job_id
+                            tmp_rt = meta_path_rt + ".tmp"
+                            with open(tmp_rt, "w", encoding="utf-8") as f:
+                                json.dump(rt_meta, f, ensure_ascii=False, indent=2)
+                            os.replace(tmp_rt, meta_path_rt)
+                except Exception:
+                    logger.warning("transcribe: failed to write WAV meta", exc_info=True)
+
                 js = f"onTranscribeComplete({json.dumps(job_id)}, {json.dumps(json_path)})"
                 _push(js)
+            except _TranscriptionCancelled:
+                logger.info("Transcription cancelled: %s", job_id)
+                _push(f"onTranscribeCancel({json.dumps(job_id)})")
             except Exception as e:
                 logger.exception("Transcription failed")
                 js = f"onTranscribeError({json.dumps(job_id)}, {json.dumps(str(e))})"
                 _push(js)
+            finally:
+                with _cancel_flags_mutex:
+                    _cancel_flags.pop(job_id, None)
 
         threading.Thread(target=_run, daemon=True).start()
         return {"job_id": job_id}
+
+    def cancel_transcription(self, job_id: str) -> bool:
+        """
+        Request cancellation of an in-flight transcription job.
+
+        Returns True if the job was found and flagged for cancellation,
+        False if no matching job is running.
+        """
+        with _cancel_flags_mutex:
+            ev = _cancel_flags.get(job_id)
+        if ev is None:
+            return False
+        ev.set()
+        return True
 
     def get_transcript(self, job_id: str) -> Optional[dict]:
         """Load transcript JSON for a given job_id."""
@@ -291,6 +425,9 @@ class API:
                 api_key  = cfg.get("api_key", "")
                 model    = cfg.get("model", "")
                 prompt   = template.get("prompt", "Summarize the following transcript.")
+                lang_inst = _lang_instruction(data.get("language", ""), text)
+                if lang_inst:
+                    prompt = lang_inst + "\n\n" + prompt
 
                 from src.summary import summarize as _summarize
                 chunks = _summarize(text, prompt, base_url, api_key, model, stream=True)
@@ -313,35 +450,76 @@ class API:
 
     def get_history(self) -> list[dict]:
         """
-        Return past transcription jobs, newest first.
-        Each entry: {job_id, filename, date, duration, language}.
+        Return past transcription jobs and realtime recordings, newest first.
+
+        Each entry: {job_id, filename, date, duration, language, audio_path, type}
+          type = "file"     — transcription job (has a JSON transcript)
+          type = "realtime" — realtime WAV recording without a transcript JSON
         """
         import glob
-        result = []
+        import datetime as _dt
+
+        result: list[dict] = []
         if not os.path.isdir(OUTPUT_DIR):
             return result
-        for path in sorted(
-            glob.glob(os.path.join(OUTPUT_DIR, "*.json")),
-            key=os.path.getmtime,
-            reverse=True,
-        ):
-            if os.path.basename(path).endswith("_summary.json"):
+
+        json_stems: set[str] = set()
+
+        # ── Transcription jobs (*.json) ────────────────────────────────────────
+        for path in glob.glob(os.path.join(OUTPUT_DIR, "*.json")):
+            basename = os.path.basename(path)
+            if basename.endswith("_summary.json") or basename.endswith("_meta.json"):
                 continue
             try:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
-                job_id = os.path.splitext(os.path.basename(path))[0]
+                stem = os.path.splitext(os.path.basename(path))[0]
+                json_stems.add(stem)
                 segs = data.get("segments", [])
                 duration = round(segs[-1]["end"]) if segs else 0
                 result.append({
-                    "job_id": job_id,
-                    "filename": data.get("filename") or data.get("audio") or job_id,
+                    "job_id": stem,
+                    "filename": data.get("filename") or data.get("audio") or stem,
                     "date": data.get("created_at", ""),
                     "duration": duration,
                     "language": data.get("language", ""),
+                    "audio_path": data.get("audio", ""),
+                    "type": "file",
                 })
             except Exception:
                 pass
+
+        # ── WAV-only realtime recordings (no transcript JSON) ──────────────────
+        for wav_path in glob.glob(os.path.join(OUTPUT_DIR, "*.wav")):
+            stem = os.path.splitext(os.path.basename(wav_path))[0]
+            if stem.endswith("_audio"):
+                continue  # internal audio copy from transcribe(); not a recording
+            if stem in json_stems:
+                continue  # already covered by a JSON entry
+            mtime = os.path.getmtime(wav_path)
+            date_str = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H:%M:%S")
+            display_name = stem[:8]
+            meta_path = os.path.join(OUTPUT_DIR, f"{stem}_meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, encoding="utf-8") as f:
+                        meta = json.load(f)
+                    if meta.get("transcribed_job_id"):
+                        continue  # already transcribed; shown as a file entry
+                    display_name = meta.get("filename", display_name)
+                except Exception:
+                    pass
+            result.append({
+                "job_id": stem,
+                "filename": display_name,
+                "date": date_str,
+                "duration": 0,
+                "language": "",
+                "audio_path": os.path.abspath(wav_path),
+                "type": "realtime",
+            })
+
+        result.sort(key=lambda x: x["date"], reverse=True)
         return result
 
     def get_summary_versions(self, job_id: str) -> list[dict]:
@@ -370,7 +548,71 @@ class API:
             json.dump(versions, f, ensure_ascii=False, indent=2)
         return True
 
+    def rename_session(self, job_id: str, name: str) -> bool:
+        """Rename a transcript session.
+
+        For JSON-backed sessions: updates the filename field in the JSON.
+        For WAV-only realtime sessions: writes a sidecar {job_id}_meta.json.
+        """
+        json_path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        if os.path.exists(json_path):
+            with open(json_path, encoding="utf-8") as f:
+                data = json.load(f)
+            data["filename"] = name
+            tmp_path = json_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, json_path)
+            return True
+        wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
+        if os.path.exists(wav_path):
+            meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
+            tmp_path = meta_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump({"filename": name}, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, meta_path)
+            return True
+        return False
+
+    def delete_session(self, job_id: str) -> bool:
+        """Delete a transcript session and all associated files."""
+        json_path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
+        summary_path = os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
+        meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
+        deleted = False
+        if os.path.exists(json_path):
+            os.remove(json_path)
+            deleted = True
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
+            deleted = True
+        if os.path.exists(summary_path):
+            os.remove(summary_path)
+        if os.path.exists(meta_path):
+            os.remove(meta_path)
+        return deleted
+
     # ── Model management ───────────────────────────────────────────────────────
+
+    def get_setup_status(self) -> dict:
+        """
+        Return download readiness for the two required model families.
+
+        Returns: {
+            "asr_ready":      bool,  # any recommended ASR model downloaded
+            "diarizer_ready": bool,  # any recommended diarizer downloaded
+        }
+        """
+        from src.model_manager import ModelManager, CATALOG
+        mm = ModelManager()
+        asr_ready = any(
+            mm.is_downloaded(m.id) for m in CATALOG if m.role == "asr" and m.recommended
+        )
+        diarizer_ready = any(
+            mm.is_downloaded(m.id) for m in CATALOG if m.role == "diarizer" and m.recommended
+        )
+        return {"asr_ready": asr_ready, "diarizer_ready": diarizer_ready}
 
     def get_models(self) -> list[dict]:
         """Return model catalog with download status."""
@@ -421,9 +663,14 @@ class API:
 
     def get_summary_templates(self) -> list[dict]:
         if not os.path.exists(TEMPLATES_PATH):
-            return []
-        with open(TEMPLATES_PATH, encoding="utf-8") as f:
-            return json.load(f)
+            return list(_DEFAULT_TEMPLATES)
+        try:
+            with open(TEMPLATES_PATH, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            logger.warning("templates.json is corrupted; resetting to defaults")
+            self.save_summary_templates(list(_DEFAULT_TEMPLATES))
+            return list(_DEFAULT_TEMPLATES)
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
