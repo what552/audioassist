@@ -215,18 +215,18 @@ class TestWorkerQueue:
         rt, m = _make_rt()
         processed = []
 
-        def fake_transcribe(buf):
+        def fake_transcribe(buf, start_sec, end_sec):
             processed.append(len(buf))
 
         rt._transcribe_segment = fake_transcribe
 
-        # Enqueue three segments manually (bypassing the min-length guard)
+        # Enqueue three segments as (buf, start_sec, end_sec) tuples
         chunks_a = [np.zeros(512, dtype=np.float32)] * 5
         chunks_b = [np.zeros(512, dtype=np.float32)] * 7
         chunks_c = [np.zeros(512, dtype=np.float32)] * 6
-        rt._transcribe_queue.put(chunks_a)
-        rt._transcribe_queue.put(chunks_b)
-        rt._transcribe_queue.put(chunks_c)
+        rt._transcribe_queue.put((chunks_a, 0.0, 0.16))
+        rt._transcribe_queue.put((chunks_b, 0.16, 0.38))
+        rt._transcribe_queue.put((chunks_c, 0.38, 0.58))
         rt._transcribe_queue.put(None)  # sentinel
 
         # Run the worker in a thread and wait for it to finish
@@ -246,7 +246,7 @@ class TestWorkerQueue:
         barrier = threading.Event()
         call_count = [0]
 
-        def slow_transcribe(buf):
+        def slow_transcribe(buf, start_sec, end_sec):
             # Record if another call is already "inside"
             if getattr(active, "inside", False):
                 concurrency_violations.append(True)
@@ -257,9 +257,9 @@ class TestWorkerQueue:
 
         rt._transcribe_segment = slow_transcribe
 
-        # Enqueue several segments at once
-        for _ in range(4):
-            rt._transcribe_queue.put([np.zeros(512, dtype=np.float32)] * 5)
+        # Enqueue several segments as (buf, start_sec, end_sec) tuples
+        for i in range(4):
+            rt._transcribe_queue.put(([np.zeros(512, dtype=np.float32)] * 5, float(i), float(i + 1)))
         rt._transcribe_queue.put(None)  # sentinel
 
         worker = threading.Thread(target=rt._transcription_worker)
@@ -308,19 +308,32 @@ class TestWorkerQueue:
 # ── Transcribe segment ────────────────────────────────────────────────────────
 
 class TestTranscribeSegment:
-    def _run(self, rt, chunks, asr_text):
+    def _run(self, rt, chunks, asr_text, start_sec=0.0, end_sec=1.0):
         from src.types import TranscriptResult
         rt._asr.transcribe.return_value = TranscriptResult(
             text=asr_text, language="en"
         )
-        rt._transcribe_segment(chunks)
+        rt._transcribe_segment(chunks, start_sec, end_sec)
 
-    def test_calls_on_result_with_text(self):
+    def test_calls_on_result_with_segment_dict(self):
+        """on_result receives {text, start, end} dict, not a plain string."""
         results = []
         rt, _ = _make_rt(on_result=results.append)
         chunks = [np.zeros(512, dtype=np.float32)] * 5
-        self._run(rt, chunks, "Hello world")
-        assert results == ["Hello world"]
+        self._run(rt, chunks, "Hello world", start_sec=1.2, end_sec=3.4)
+        assert len(results) == 1
+        seg = results[0]
+        assert seg["text"] == "Hello world"
+        assert seg["start"] == pytest.approx(1.2, abs=0.001)
+        assert seg["end"]   == pytest.approx(3.4, abs=0.001)
+
+    def test_segment_stored_in_segments_list(self):
+        """Successful transcription appends segment to self._segments."""
+        rt, _ = _make_rt()
+        chunks = [np.zeros(512, dtype=np.float32)] * 5
+        self._run(rt, chunks, "Hello", start_sec=0.5, end_sec=1.5)
+        assert len(rt._segments) == 1
+        assert rt._segments[0]["text"] == "Hello"
 
     def test_empty_text_not_delivered(self):
         results = []
@@ -329,12 +342,18 @@ class TestTranscribeSegment:
         self._run(rt, chunks, "   ")  # whitespace-only
         assert results == []
 
+    def test_empty_text_not_stored(self):
+        rt, _ = _make_rt()
+        chunks = [np.zeros(512, dtype=np.float32)] * 5
+        self._run(rt, chunks, "  ")
+        assert rt._segments == []
+
     def test_asr_exception_calls_on_error(self):
         errors = []
         rt, _ = _make_rt(on_error=errors.append)
         rt._asr.transcribe.side_effect = RuntimeError("asr failed")
         chunks = [np.zeros(512, dtype=np.float32)] * 5
-        rt._transcribe_segment(chunks)
+        rt._transcribe_segment(chunks, 0.0, 1.0)
         assert len(errors) == 1
         assert "asr failed" in errors[0]
 
@@ -351,7 +370,7 @@ class TestTranscribeSegment:
             return fd, path
 
         with patch("tempfile.mkstemp", side_effect=tracking_mkstemp):
-            rt._transcribe_segment([np.zeros(512, dtype=np.float32)] * 5)
+            rt._transcribe_segment([np.zeros(512, dtype=np.float32)] * 5, 0.0, 1.0)
 
         for p in created_paths:
             assert not os.path.exists(p), f"temp file not cleaned up: {p}"
@@ -606,3 +625,84 @@ class TestOutputWav:
             assert wf.getsampwidth() == 2
             assert wf.getframerate() == m.SAMPLE_RATE
             assert wf.getnframes() == 512 * 2  # two chunks
+
+
+# ── Timestamps ────────────────────────────────────────────────────────────────
+
+class TestTimestamps:
+    def test_total_samples_incremented_each_callback(self):
+        rt, m = _make_rt()
+        _set_vad_prob(rt, 0.1)  # silence
+        assert rt._total_samples == 0
+        with patch.dict(sys.modules, {"torch": _fake_torch()}):
+            rt._audio_callback(_chunk(), 512, None, None)
+            rt._audio_callback(_chunk(), 512, None, None)
+        assert rt._total_samples == m.CHUNK_SIZE * 2
+
+    def test_segment_start_recorded_at_first_speech_frame(self):
+        """_segment_start_samples set on transition silence → speech."""
+        rt, m = _make_rt()
+        # One silence chunk first
+        _set_vad_prob(rt, 0.1)
+        with patch.dict(sys.modules, {"torch": _fake_torch()}):
+            rt._audio_callback(_chunk(), 512, None, None)
+        assert rt._total_samples == m.CHUNK_SIZE
+
+        # Now a speech chunk — start_samples should be total BEFORE this chunk
+        _set_vad_prob(rt, 0.9)
+        with patch.dict(sys.modules, {"torch": _fake_torch()}):
+            rt._audio_callback(_chunk(), 512, None, None)
+
+        # total_samples is now 2*CHUNK_SIZE; start recorded as 2*CHUNK_SIZE - CHUNK_SIZE
+        assert rt._segment_start_samples == m.CHUNK_SIZE
+
+    def test_flush_enqueues_tuple_with_times(self):
+        """_flush_speech puts (buf, start_sec, end_sec) tuple in queue."""
+        rt, m = _make_rt()
+        rt._total_samples = m.SAMPLE_RATE  # pretend 1 s elapsed
+        rt._segment_start_samples = m.SAMPLE_RATE // 2  # speech started at 0.5 s
+
+        buf_len = m.MIN_SPEECH_CHUNKS
+        rt._speech_buffer = [np.zeros(m.CHUNK_SIZE, dtype=np.float32)] * buf_len
+        rt._flush_speech()
+
+        assert rt._transcribe_queue.qsize() == 1
+        item = rt._transcribe_queue.get_nowait()
+        buf, start_sec, end_sec = item
+        assert start_sec == pytest.approx(0.5, abs=0.001)
+        expected_end = 0.5 + buf_len * m.CHUNK_SIZE / m.SAMPLE_RATE
+        assert end_sec == pytest.approx(expected_end, abs=0.001)
+
+
+# ── get_segments ──────────────────────────────────────────────────────────────
+
+class TestGetSegments:
+    def test_get_segments_returns_empty_initially(self):
+        rt, _ = _make_rt()
+        assert rt.get_segments() == []
+
+    def test_get_segments_returns_copy(self):
+        """Mutating the returned list must not affect internal state."""
+        rt, _ = _make_rt()
+        rt._segments.append({"text": "hi", "start": 0.0, "end": 1.0})
+        segs = rt.get_segments()
+        segs.clear()
+        assert len(rt._segments) == 1
+
+    def test_get_segments_accumulates_across_calls(self):
+        from src.types import TranscriptResult
+        results = []
+        rt, _ = _make_rt(on_result=results.append)
+        chunks = [np.zeros(512, dtype=np.float32)] * 5
+
+        rt._asr.transcribe.return_value = TranscriptResult(text="First", language="en")
+        rt._transcribe_segment(chunks, 0.0, 1.0)
+
+        rt._asr.transcribe.return_value = TranscriptResult(text="Second", language="en")
+        rt._transcribe_segment(chunks, 1.5, 2.5)
+
+        segs = rt.get_segments()
+        assert len(segs) == 2
+        assert segs[0]["text"] == "First"
+        assert segs[1]["text"] == "Second"
+        assert segs[1]["start"] == pytest.approx(1.5, abs=0.001)

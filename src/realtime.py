@@ -61,6 +61,13 @@ class RealtimeTranscriber:
         self._silence_count  = 0
         self._in_speech      = False
 
+        # Timestamp tracking — samples elapsed since stream start
+        self._total_samples: int = 0
+        self._segment_start_samples: int = 0
+
+        # Accumulated realtime segments [{text, start, end}] — for P3 skip-ASR
+        self._segments: list = []
+
         # Serial transcription worker — prevents concurrent Metal GPU usage
         self._transcribe_queue: queue.Queue = queue.Queue()
         self._worker_thread: Optional[threading.Thread] = None
@@ -165,6 +172,7 @@ class RealtimeTranscriber:
         import torch
 
         chunk = indata[:, 0].copy()  # mono, shape (CHUNK_SIZE,)
+        self._total_samples += CHUNK_SIZE   # track elapsed samples for timestamps
         chunk_t = torch.from_numpy(chunk).float()
         try:
             speech_prob = self._vad(chunk_t, SAMPLE_RATE).item()
@@ -180,6 +188,9 @@ class RealtimeTranscriber:
         is_speech = speech_prob >= VAD_THRESHOLD
 
         if is_speech:
+            if not self._in_speech:
+                # Record the start of this utterance (beginning of current chunk)
+                self._segment_start_samples = self._total_samples - CHUNK_SIZE
             self._silence_count = 0
             self._in_speech = True
             self._speech_buffer.append(chunk)
@@ -193,13 +204,15 @@ class RealtimeTranscriber:
 
     def _flush_speech(self) -> None:
         buf = self._speech_buffer.copy()
+        start_sec = self._segment_start_samples / SAMPLE_RATE
+        end_sec   = start_sec + len(buf) * CHUNK_SIZE / SAMPLE_RATE
         self._speech_buffer.clear()
         self._silence_count = 0
         self._in_speech = False
         if len(buf) < MIN_SPEECH_CHUNKS:
             return  # too short — likely noise, skip
         # Enqueue for serial processing — never spawn concurrent ASR threads
-        self._transcribe_queue.put(buf)
+        self._transcribe_queue.put((buf, start_sec, end_sec))
 
     def _transcription_worker(self) -> None:
         """Long-running worker that serially drains the transcription queue.
@@ -218,11 +231,14 @@ class RealtimeTranscriber:
                 self._transcribe_queue.task_done()
                 break
             try:
-                self._transcribe_segment(item)
+                buf, start_sec, end_sec = item
+                self._transcribe_segment(buf, start_sec, end_sec)
             finally:
                 self._transcribe_queue.task_done()
 
-    def _transcribe_segment(self, audio_chunks: list) -> None:
+    def _transcribe_segment(
+        self, audio_chunks: list, start_sec: float = 0.0, end_sec: float = 0.0
+    ) -> None:
         """Concatenate audio chunks, write temp WAV, run ASR, fire on_result."""
         import numpy as np
         audio = np.concatenate(audio_chunks)
@@ -234,7 +250,13 @@ class RealtimeTranscriber:
             result = self._asr.transcribe(tmp_path)
             text = result.text.strip()
             if text:
-                self._on_result(text)
+                seg = {
+                    "text":  text,
+                    "start": round(start_sec, 3),
+                    "end":   round(end_sec,   3),
+                }
+                self._segments.append(seg)
+                self._on_result(seg)
         except Exception as e:
             logger.exception("Realtime: transcribe segment failed")
             self._on_error(str(e))
@@ -244,6 +266,10 @@ class RealtimeTranscriber:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
+
+    def get_segments(self) -> list:
+        """Return accumulated realtime segments [{text, start, end}]."""
+        return list(self._segments)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

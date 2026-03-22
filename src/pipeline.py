@@ -12,11 +12,18 @@ from .types import WordSegment, TranscriptResult
 from .asr import ASREngine
 from .asr_whisper import WhisperASREngine
 from .diarize import DiarizationEngine, SpeakerSegment, DEFAULT_DIARIZER_MODEL
-from .merge import merge, to_json, to_markdown
+from .merge import SpeakerBlock, merge, to_json, to_markdown
 from .audio_utils import to_wav, split_to_chunks
 from .model_manager import ModelManager
 
 logger = logging.getLogger(__name__)
+
+
+_WHISPER_SIZE_MAP: dict[str, str] = {
+    "whisper-large-v3-turbo": "turbo",
+    "whisper-large-v3":       "large",
+    "whisper-medium":         "medium",
+}
 
 
 def run(
@@ -26,6 +33,7 @@ def run(
     with_timestamps: bool = True,
     num_speakers: Optional[int] = None,
     engine: str = "qwen",
+    asr_model_id: Optional[str] = None,
     diarizer_model_id: Optional[str] = None,
     job_id: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
@@ -80,9 +88,10 @@ def run(
         mm = ModelManager()
         if engine == "whisper":
             _progress(0.05, "Loading Whisper ASR model...")
-            asr: ASREngine | WhisperASREngine = WhisperASREngine()
+            size = _WHISPER_SIZE_MAP.get(asr_model_id or "", "turbo")
+            asr: ASREngine | WhisperASREngine = WhisperASREngine(size=size)
         else:
-            asr_id     = "qwen3-asr-1.7b"
+            asr_id     = asr_model_id or "qwen3-asr-1.7b"
             aligner_id = "qwen3-forced-aligner"
             if not mm.is_downloaded(asr_id):
                 _progress(0.03, f"Downloading ASR model ({asr_id})…")
@@ -176,3 +185,108 @@ def run(
                 pass
 
     return json_path, md_path
+
+
+def run_realtime_segments(
+    segments: list[dict],
+    wav_path: str,
+    output_dir: str,
+    hf_token: Optional[str] = None,
+    num_speakers: Optional[int] = None,
+    diarizer_model_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+) -> tuple[str, str]:
+    """
+    Diarize-only pipeline for realtime sessions.
+
+    Takes pre-transcribed segments (from RealtimeTranscriber) and runs only
+    speaker diarization on the WAV, skipping the ASR step entirely.
+
+    Args:
+        segments: List of {text, start, end} dicts from RealtimeTranscriber.
+        wav_path: Path to the full session WAV file.
+        output_dir: Directory for JSON and MD output.
+        hf_token: HuggingFace token (only for pyannote-diarization-3.1).
+        num_speakers: Hint for diarizer.
+        diarizer_model_id: Diarizer catalog ID; defaults to community-1.
+        job_id: Unique job identifier; auto-generated if None.
+        progress_callback: Called with (percent 0.0-1.0, message) at each step.
+
+    Returns:
+        (json_path, md_path)
+    """
+    if not os.path.isfile(wav_path):
+        raise FileNotFoundError(f"WAV file not found: {wav_path!r}")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    if job_id is None:
+        job_id = str(uuid.uuid4())
+
+    json_path = os.path.join(output_dir, f"{job_id}.json")
+    md_path   = os.path.join(output_dir, f"{job_id}.md")
+
+    def _progress(pct: float, msg: str):
+        logger.info(f"[{pct:.0%}] {msg}")
+        if progress_callback:
+            progress_callback(pct, msg)
+
+    # 1. Diarize
+    mm = ModelManager()
+    actual_diarizer_id = diarizer_model_id or DEFAULT_DIARIZER_MODEL
+    if not mm.is_downloaded(actual_diarizer_id):
+        _progress(0.1, f"Downloading diarizer model ({actual_diarizer_id})…")
+        mm.download(
+            actual_diarizer_id,
+            progress_callback=lambda p, m: _progress(0.1 + p * 0.4, m),
+        )
+    _progress(0.5, "Running speaker diarization…")
+    diarizer = DiarizationEngine(
+        model_id=diarizer_model_id,
+        hf_token=hf_token,
+        num_speakers=num_speakers,
+        progress_callback=lambda p, m: _progress(0.5 + p * 0.3, m),
+    )
+    speaker_segs = diarizer.diarize(wav_path)
+    logger.info(
+        f"Found {len(set(s.speaker for s in speaker_segs))} speaker(s)"
+    )
+
+    # 2. Assign speakers to realtime segments
+    _progress(0.8, "Assigning speakers…")
+    blocks = [
+        SpeakerBlock(
+            speaker=_dominant_speaker(seg["start"], seg["end"], speaker_segs),
+            start=seg["start"],
+            end=seg["end"],
+            text=seg["text"],
+            words=[],
+        )
+        for seg in segments
+    ]
+
+    # 3. Output
+    _progress(0.9, "Writing output…")
+    to_json(blocks, wav_path, "", json_path)
+    to_markdown(blocks, wav_path, "", md_path)
+
+    _progress(1.0, "Done.")
+    logger.info(f"JSON → {json_path}")
+    logger.info(f"MD   → {md_path}")
+
+    return json_path, md_path
+
+
+def _dominant_speaker(
+    start: float, end: float, speaker_segs: list[SpeakerSegment]
+) -> str:
+    """Return the speaker label with the most overlap in [start, end]."""
+    overlaps: dict[str, float] = {}
+    for ss in speaker_segs:
+        overlap = max(0.0, min(end, ss.end) - max(start, ss.start))
+        if overlap > 0:
+            overlaps[ss.speaker] = overlaps.get(ss.speaker, 0.0) + overlap
+    if not overlaps:
+        return "UNKNOWN"
+    return max(overlaps, key=lambda k: overlaps[k])

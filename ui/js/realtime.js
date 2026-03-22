@@ -43,11 +43,11 @@ const Realtime = (() => {
       }
     } else {
       if (_canStart && !_canStart()) return;
-      const engine = document.getElementById('sel-engine').value;
+      const model_id = document.getElementById('sel-engine').value;
       _setLoading(true);
       _setStatus('Loading…');
       try {
-        await window.pywebview.api.start_realtime({ engine });
+        await window.pywebview.api.start_realtime({ model_id });
       } catch (e) {
         console.error('[Realtime] start error:', e);
         _setLoading(false);
@@ -79,10 +79,22 @@ const Realtime = (() => {
     if (_onStateChange) _onStateChange('stopped');
   }
 
-  function onResult(text) {
+  function onResult(seg) {
+    // seg may be a plain string (backward compat) or {text, start, end} dict
+    const isObj = seg && typeof seg === 'object';
+    const text  = isObj ? (seg.text || '') : String(seg);
     const el = document.createElement('div');
     el.className = 'realtime-row';
-    el.textContent = text;
+    if (isObj && typeof seg.start === 'number') {
+      const ts = document.createElement('span');
+      ts.className = 'realtime-ts';
+      const m = Math.floor(seg.start / 60), s = Math.floor(seg.start % 60);
+      ts.textContent = `[${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}]`;
+      el.appendChild(ts);
+      el.appendChild(document.createTextNode(' ' + text));
+    } else {
+      el.textContent = text;
+    }
     dom.list.appendChild(el);
     dom.list.scrollTop = dom.list.scrollHeight;
   }

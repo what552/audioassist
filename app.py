@@ -105,6 +105,8 @@ def _push(js: str):
 class API:
     def __init__(self):
         self._realtime = None  # RealtimeTranscriber instance when active
+        # Pre-collected realtime segments keyed by wav_path — consumed by transcribe()
+        self._rt_segments: dict[str, list] = {}
 
     # ── File selection ─────────────────────────────────────────────────────────
 
@@ -125,42 +127,72 @@ class API:
         Start transcription in background thread.
         Pushes onTranscribeProgress(job_id, progress, message) events to JS.
 
+        If pre-collected realtime segments exist for this path (stored by
+        stop_realtime()), skips ASR and runs diarization only.
+
         Returns: {"job_id": str}
         """
         import uuid
         job_id = str(uuid.uuid4())
+
+        # Pop realtime segments if this is a just-finished realtime session.
+        # Must be popped here (before the thread starts) to avoid a TOCTOU race.
+        rt_segments = self._rt_segments.pop(path, None)
+
+        # Resolve ASR engine/model before spawning thread so both the main
+        # transcription and the optional background refine use the same choice.
+        model_id = options.get("model_id")
+        engine   = options.get("engine", "qwen")
+        if model_id:
+            from src.model_manager import CATALOG as _CATALOG
+            _info = next((m for m in _CATALOG if m.id == model_id), None)
+            if _info:
+                engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
         def _run():
             cancel_ev = threading.Event()
             with _cancel_flags_mutex:
                 _cancel_flags[job_id] = cancel_ev
             try:
-                from src.pipeline import run as pipeline_run
-
                 def _progress(pct: float, msg: str):
                     if cancel_ev.is_set():
                         raise _TranscriptionCancelled()
                     js = f"onTranscribeProgress({json.dumps(job_id)}, {pct:.4f}, {json.dumps(msg)})"
                     _push(js)
 
-                hf_token = options.get("hf_token") or os.environ.get("HF_TOKEN")
-                engine = options.get("engine", "qwen")
+                hf_token     = options.get("hf_token") or os.environ.get("HF_TOKEN")
                 num_speakers = options.get("num_speakers")
 
-                json_path, md_path = pipeline_run(
-                    audio_path=path,
-                    output_dir=OUTPUT_DIR,
-                    hf_token=hf_token,
-                    engine=engine,
-                    num_speakers=num_speakers,
-                    job_id=job_id,
-                    progress_callback=_progress,
-                )
+                if rt_segments:
+                    # Phase 1 — diarize-only: fast initial draft from live chunks
+                    from src.pipeline import run_realtime_segments
+                    json_path, md_path = run_realtime_segments(
+                        segments=rt_segments,
+                        wav_path=path,
+                        output_dir=OUTPUT_DIR,
+                        hf_token=hf_token,
+                        num_speakers=num_speakers,
+                        job_id=job_id,
+                        progress_callback=_progress,
+                    )
+                else:
+                    from src.pipeline import run as pipeline_run
+                    json_path, md_path = pipeline_run(
+                        audio_path=path,
+                        output_dir=OUTPUT_DIR,
+                        hf_token=hf_token,
+                        engine=engine,
+                        asr_model_id=model_id,
+                        num_speakers=num_speakers,
+                        job_id=job_id,
+                        progress_callback=_progress,
+                    )
 
                 # Copy original audio into output dir for persistent playback.
                 # The copy is kept alongside the transcript so history playback
                 # works regardless of whether the source file has moved or been
                 # deleted.  If the copy fails we log a warning and continue.
+                audio_copy: Optional[str] = None
                 try:
                     _, ext = os.path.splitext(path)
                     audio_copy = os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}")
@@ -203,8 +235,64 @@ class API:
                 except Exception:
                     logger.warning("transcribe: failed to write WAV meta", exc_info=True)
 
-                js = f"onTranscribeComplete({json.dumps(job_id)}, {json.dumps(json_path)})"
-                _push(js)
+                # Notify frontend — include hasRefine flag so JS can enter
+                # the 'refining' status while the background re-transcription runs.
+                has_refine = bool(rt_segments)
+                _push(
+                    f"onTranscribeComplete({json.dumps(job_id)}, "
+                    f"{json.dumps(json_path)}, {json.dumps(has_refine)})"
+                )
+
+                # Phase 2 (realtime only) — full ASR re-transcription in background.
+                # Runs silently; on success overwrites JSON and notifies JS.
+                if rt_segments:
+                    _ac = audio_copy  # capture for closure
+
+                    def _refine():
+                        try:
+                            from src.pipeline import run as pipeline_run
+                            logger.info("Refine ASR started for job %s", job_id)
+                            refined_json, _ = pipeline_run(
+                                audio_path=path,
+                                output_dir=OUTPUT_DIR,
+                                hf_token=hf_token,
+                                engine=engine,
+                                asr_model_id=model_id,
+                                num_speakers=num_speakers,
+                                job_id=job_id,  # same id → overwrites draft
+                                progress_callback=lambda p, m: logger.debug(
+                                    "[refine %d%%] %s", int(p * 100), m
+                                ),
+                            )
+                            # Re-patch audio field and atomically overwrite JSON.
+                            # Acquire the same per-job lock used by save_transcript()
+                            # so a concurrent user save cannot interleave with this write.
+                            with _transcript_locks_mutex:
+                                if job_id not in _transcript_locks:
+                                    _transcript_locks[job_id] = threading.Lock()
+                                _refine_lock = _transcript_locks[job_id]
+
+                            with _refine_lock:
+                                try:
+                                    with open(refined_json, encoding="utf-8") as f:
+                                        rdata = json.load(f)
+                                    if _ac:
+                                        rdata["audio"] = _ac
+                                    tmp = refined_json + ".tmp"
+                                    with open(tmp, "w", encoding="utf-8") as f:
+                                        json.dump(rdata, f, ensure_ascii=False, indent=2)
+                                    os.replace(tmp, refined_json)
+                                except Exception:
+                                    logger.warning(
+                                        "refine: failed to patch audio/write JSON", exc_info=True
+                                    )
+                            _push(f"onTranscribeRefined({json.dumps(job_id)})")
+                            logger.info("Refine ASR complete for job %s", job_id)
+                        except Exception:
+                            logger.exception("Refine ASR failed for job %s", job_id)
+
+                    threading.Thread(target=_refine, daemon=True).start()
+
             except _TranscriptionCancelled:
                 logger.info("Transcription cancelled: %s", job_id)
                 _push(f"onTranscribeCancel({json.dumps(job_id)})")
@@ -298,7 +386,13 @@ class API:
         self._realtime = object()
 
         options = options or {}
-        engine = options.get("engine", "qwen")
+        model_id = options.get("model_id")
+        engine   = options.get("engine", "qwen")
+        if model_id:
+            from src.model_manager import CATALOG
+            _info = next((m for m in CATALOG if m.id == model_id), None)
+            if _info:
+                engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
         def _run():
             try:
@@ -311,7 +405,7 @@ class API:
                 rt = RealtimeTranscriber(
                     engine=engine,
                     output_path=output_path,
-                    on_result=lambda text: _push(f"onRealtimeResult({json.dumps(text)})"),
+                    on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
                     on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                 )
                 rt.start()
@@ -377,6 +471,10 @@ class API:
         Stop realtime transcription.
         Pushes onRealtimeStopped() after the stream is closed.
 
+        After stop(), collects accumulated segments from the transcriber so that
+        the subsequent transcribe() call (triggered by JS) can skip ASR and run
+        diarization only.
+
         Returns: {"status": "stopped"} or {"status": "not_running"}
         """
         rt = self._realtime
@@ -388,6 +486,12 @@ class API:
             try:
                 if hasattr(rt, "stop"):
                     rt.stop()
+                # After stop(), the worker queue is fully drained — segments complete.
+                wav_path = getattr(rt, "_output_path", None)
+                if wav_path and hasattr(rt, "get_segments"):
+                    segs = rt.get_segments()
+                    if segs:
+                        self._rt_segments[wav_path] = segs
             except Exception:
                 logger.exception("Realtime stop failed")
             _push("onRealtimeStopped()")
@@ -618,6 +722,19 @@ class API:
         """Return model catalog with download status."""
         from src.model_manager import ModelManager
         return ModelManager().list_models()
+
+    def delete_model(self, model_id: str) -> dict:
+        """
+        Delete the app-managed copy of a model from disk (HF cache untouched).
+
+        Returns: {"status": "ok", "downloaded": bool} or {"status": "not_found"}
+        """
+        from src.model_manager import ModelManager
+        mm = ModelManager()
+        if mm.get_model(model_id) is None:
+            return {"status": "not_found"}
+        mm.delete(model_id)
+        return {"status": "ok", "downloaded": mm.is_downloaded(model_id)}
 
     def download_model(self, name: str) -> dict:
         """

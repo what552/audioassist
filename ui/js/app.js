@@ -96,6 +96,15 @@ const App = (() => {
         _setView('error');
         dom.errorFilename.textContent = session.filename;
         dom.errorMsg.textContent = session.errorMsg || 'Unknown error';
+      } else if (session.status === 'refining') {
+        _setView('file-done');
+        dom.refineHint.hidden = false;
+        dom.refineHint.textContent = '正在进行高精度转写…';
+        if (session._data) {
+          _showFileDone(session);
+        } else {
+          _loadTranscriptData(session);
+        }
       } else { // done
         _setView('file-done');
         if (session._data) {
@@ -149,6 +158,7 @@ const App = (() => {
     dom.progressPanel.hidden      = state !== 'transcribing';
     dom.errorPanel.hidden         = state !== 'error';
     dom.transcriptHeader.hidden   = state !== 'file-done';
+    dom.refineHint.hidden         = true;  // controlled separately per render
     dom.transcriptList.hidden     = state !== 'file-done';
     dom.realtimePanel.hidden      =
       !['realtime-rec','realtime-paused','realtime-done'].includes(state);
@@ -314,7 +324,7 @@ const App = (() => {
     const filename = displayName || filePath.split('/').pop().split('\\').pop();
     try {
       const { job_id } = await window.pywebview.api.transcribe(filePath, {
-        engine:       dom.selEngine.value,
+        model_id:     dom.selEngine.value || null,
         hf_token:     null,
         num_speakers: null,
       });
@@ -364,8 +374,15 @@ const App = (() => {
     _setProgress(pct, message);
   }
 
-  function onTranscribeComplete(jobId) {
+  function onTranscribeComplete(jobId, _jsonPath, hasRefine) {
     if (!_sessions.has(jobId)) return;
+    _updateSession(jobId, { status: hasRefine ? 'refining' : 'done' });
+  }
+
+  function onTranscribeRefined(jobId) {
+    if (!_sessions.has(jobId)) return;
+    const s = _sessions.get(jobId);
+    s._data = null;  // force JSON reload
     _updateSession(jobId, { status: 'done' });
   }
 
@@ -399,6 +416,10 @@ const App = (() => {
       setupDiarizerBar:   document.getElementById('setup-diarizer-bar'),
       btnSetupAsr:        document.getElementById('btn-setup-asr'),
       btnSetupDiarizer:   document.getElementById('btn-setup-diarizer'),
+      btnModels:          document.getElementById('btn-models'),
+      modelsModal:        document.getElementById('models-modal'),
+      btnModelsClose:     document.getElementById('btn-models-close'),
+      modelsList:         document.getElementById('models-list'),
       emptyHint:          document.getElementById('empty-hint'),
       progressPanel:      document.getElementById('progress-panel'),
       progressFilename:   document.getElementById('progress-filename'),
@@ -411,6 +432,7 @@ const App = (() => {
       btnRetry:           document.getElementById('btn-retry'),
       transcriptHeader:   document.getElementById('transcript-header'),
       transcriptMeta:     document.getElementById('transcript-meta'),
+      refineHint:         document.getElementById('refine-hint'),
       transcriptList:     document.getElementById('transcript-list'),
       realtimePanel:      document.getElementById('realtime-panel'),
       realtimeControlBar: document.getElementById('realtime-control-bar'),
@@ -449,6 +471,13 @@ const App = (() => {
     dom.rcBtnPause.addEventListener('click', _onPauseResume);
     dom.rcBtnPlay.addEventListener('click', _onPlayRecording);
     dom.rcBtnFinish.addEventListener('click', () => window.pywebview.api.stop_realtime());
+
+    // Models modal
+    dom.btnModels.addEventListener('click', _openModelsModal);
+    dom.btnModelsClose.addEventListener('click', _closeModelsModal);
+    dom.modelsModal.addEventListener('click', (e) => {
+      if (e.target === dom.modelsModal) _closeModelsModal();
+    });
 
     // Setup panel — download buttons
     dom.btnSetupAsr.addEventListener('click', () => _setupDownload('asr'));
@@ -497,6 +526,7 @@ const App = (() => {
       _applySetupStatus(status);
       if (status.asr_ready && status.diarizer_ready) {
         _setView('idle');
+        _populateEngineSelector();
         _loadHistory();
       } else {
         _setView('setup');
@@ -537,7 +567,7 @@ const App = (() => {
     badge.textContent = 'Downloading…';
     badge.className   = 'setup-badge setup-badge-pending';
     prog.hidden       = false;
-    bar.style.width   = '0%';
+    prog.classList.add('indeterminate');
 
     try {
       await window.pywebview.api.download_model(modelId);
@@ -549,44 +579,231 @@ const App = (() => {
     // Progress arrives via onModelDownloadProgress; completion via pct === 1.0
   }
 
+  // ── Models modal ────────────────────────────────────────────────────────────
+
+  function _openModelsModal() {
+    dom.modelsModal.hidden = false;
+    _loadModelsModal();
+  }
+
+  function _closeModelsModal() {
+    dom.modelsModal.hidden = true;
+  }
+
+  async function _loadModelsModal() {
+    dom.modelsList.innerHTML = '<p style="padding:12px;color:var(--text-muted)">Loading…</p>';
+    try {
+      const models = await window.pywebview.api.get_models();
+      _renderModels(models);
+    } catch (e) {
+      dom.modelsList.innerHTML =
+        `<p style="padding:12px;color:var(--text-muted)">Error: ${e}</p>`;
+    }
+  }
+
+  const _ROLE_ORDER = ['asr', 'aligner', 'diarizer'];
+  const _ROLE_LABEL = { asr: 'ASR Models', aligner: 'Aligner Models', diarizer: 'Diarizer Models' };
+
+  function _renderModels(models) {
+    const grouped = {};
+    for (const m of models) {
+      if (!grouped[m.role]) grouped[m.role] = [];
+      grouped[m.role].push(m);
+    }
+    dom.modelsList.innerHTML = '';
+    for (const role of _ROLE_ORDER) {
+      if (!grouped[role]) continue;
+      const header = document.createElement('div');
+      header.className = 'model-role-header';
+      header.textContent = _ROLE_LABEL[role] || role;
+      dom.modelsList.appendChild(header);
+      for (const m of grouped[role]) {
+        dom.modelsList.appendChild(_makeModelItem(m));
+      }
+    }
+  }
+
+  function _makeModelItem(m) {
+    const div = document.createElement('div');
+    div.className = 'model-item';
+    div.dataset.modelId = m.id;
+
+    const starMark = m.recommended ? ' <span class="model-recommended">★</span>' : '';
+    const badgeClass = m.downloaded ? 'model-badge-ok'
+                     : m.incomplete ? 'model-badge-incomplete'
+                     : 'model-badge-pending';
+    const badgeText  = m.downloaded ? '✓ Downloaded'
+                     : m.incomplete ? '⚠ Incomplete'
+                     : 'Not downloaded';
+
+    div.innerHTML = `
+      <div class="model-item-info">
+        <span class="model-item-name">${m.name}${starMark}</span>
+        <span class="model-item-size">${m.size_gb} GB</span>
+        <span class="model-item-badge ${badgeClass}">${badgeText}</span>
+      </div>
+      <div class="model-item-desc">${m.description}</div>
+      <div class="model-item-progress" hidden>
+        <div class="model-item-bar" style="width:0%"></div>
+      </div>
+      <div class="model-item-actions">
+        <button class="btn-primary btn-sm model-btn-download"
+          ${m.downloaded ? 'disabled' : ''}>Download</button>
+        <button class="btn-link btn-sm model-btn-delete"
+          ${!m.downloaded ? 'disabled' : ''}>Delete</button>
+      </div>
+    `;
+
+    div.querySelector('.model-btn-download').addEventListener('click',
+      () => _downloadModelItem(m.id, div));
+    div.querySelector('.model-btn-delete').addEventListener('click',
+      () => _deleteModelItem(m.id, div));
+
+    return div;
+  }
+
+  async function _downloadModelItem(modelId, itemEl) {
+    const btn   = itemEl.querySelector('.model-btn-download');
+    const badge = itemEl.querySelector('.model-item-badge');
+    const prog  = itemEl.querySelector('.model-item-progress');
+    btn.disabled      = true;
+    badge.textContent = 'Downloading…';
+    badge.className   = 'model-item-badge model-badge-pending';
+    prog.hidden       = false;
+    prog.classList.add('indeterminate');
+    try {
+      await window.pywebview.api.download_model(modelId);
+    } catch (e) {
+      badge.textContent = 'Error';
+      btn.disabled = false;
+    }
+    // Progress updates arrive via onModelDownloadProgress; completion at pct >= 1.0
+  }
+
+  // ── Engine selector ─────────────────────────────────────────────────────────
+
+  async function _populateEngineSelector() {
+    try {
+      const models = await window.pywebview.api.get_models();
+      const asrModels = models.filter(m => m.role === 'asr' && m.downloaded);
+      const prev = dom.selEngine.value;
+      dom.selEngine.innerHTML = '';
+      if (asrModels.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '— No ASR model downloaded —';
+        opt.disabled = true;
+        opt.selected = true;
+        dom.selEngine.appendChild(opt);
+      } else {
+        for (const m of asrModels) {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name + (m.recommended ? ' ★' : '');
+          if (m.id === prev) opt.selected = true;
+          dom.selEngine.appendChild(opt);
+        }
+        // If previous selection is no longer available, first option is selected by default
+      }
+    } catch (e) {
+      console.warn('[App] _populateEngineSelector error:', e);
+    }
+  }
+
+  async function _deleteModelItem(modelId, itemEl) {
+    if (!confirm(`Delete model "${modelId}"?\nThis frees disk space but requires re-download to use.`)) return;
+    const deleteBtn = itemEl.querySelector('.model-btn-delete');
+    deleteBtn.disabled = true;
+    try {
+      const result      = await window.pywebview.api.delete_model(modelId);
+      const badge       = itemEl.querySelector('.model-item-badge');
+      const downloadBtn = itemEl.querySelector('.model-btn-download');
+      // result.downloaded may be true when HF cache still has the model
+      if (result && result.downloaded) {
+        badge.textContent = '✓ Downloaded';
+        badge.className   = 'model-item-badge model-badge-ok';
+        downloadBtn.disabled = true;
+        deleteBtn.disabled   = false;
+      } else {
+        badge.textContent = 'Not downloaded';
+        badge.className   = 'model-item-badge model-badge-pending';
+        downloadBtn.disabled = false;
+        deleteBtn.disabled   = true;
+      }
+    } catch (e) {
+      console.error('[Models] delete_model error:', e);
+      deleteBtn.disabled = false;
+    }
+    _populateEngineSelector();
+  }
+
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
-           onTranscribeCancel };
+           onTranscribeCancel, onTranscribeRefined,
+           refreshEngineSelector: _populateEngineSelector };
 })();
 
 // ── Global event handlers (called by Python via evaluate_js) ──────────────────
 
 function onTranscribeProgress(jobId, pct, message) { App.onTranscribeProgress(jobId, pct, message); }
-function onTranscribeComplete(jobId, jsonPath)      { App.onTranscribeComplete(jobId, jsonPath); }
+function onTranscribeComplete(jobId, jsonPath, hasRefine) { App.onTranscribeComplete(jobId, jsonPath, hasRefine); }
 function onTranscribeError(jobId, message)          { App.onTranscribeError(jobId, message); }
 function onTranscribeCancel(jobId)                  { App.onTranscribeCancel(jobId); }
+function onTranscribeRefined(jobId)                 { App.onTranscribeRefined(jobId); }
 
 function onModelDownloadProgress(name, percent) {
   console.log(`[model] ${name} ${(percent * 100).toFixed(0)}%`);
-  // Drive setup panel progress bars
-  const isAsr = name === 'qwen3-asr-1.7b';
-  const isDiar = name === 'pyannote-diarization-community-1';
-  if (!isAsr && !isDiar) return;
 
-  const bar  = isAsr
-    ? document.getElementById('setup-asr-bar')
-    : document.getElementById('setup-diarizer-bar');
-  if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
+  // ── Update setup panel bars (only for the two required models) ──────────────
+  const isSetupAsr  = name === 'qwen3-asr-1.7b';
+  const isSetupDiar = name === 'pyannote-diarization-community-1';
+  if (isSetupAsr || isSetupDiar) {
+    const prog = isSetupAsr
+      ? document.getElementById('setup-asr-progress')
+      : document.getElementById('setup-diarizer-progress');
+    const bar = isSetupAsr
+      ? document.getElementById('setup-asr-bar')
+      : document.getElementById('setup-diarizer-bar');
+    if (prog) prog.classList.remove('indeterminate');
+    if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
 
-  if (percent >= 1.0) {
-    // Re-check setup status; auto-proceed if both ready
-    if (window.pywebview?.api?.get_setup_status) {
-      window.pywebview.api.get_setup_status().then(status => {
-        const badge = isAsr
-          ? document.getElementById('setup-asr-badge')
-          : document.getElementById('setup-diarizer-badge');
-        if (badge) {
-          badge.textContent = '✓ Ready';
-          badge.className   = 'setup-badge setup-badge-ok';
-        }
-        if (status.asr_ready && status.diarizer_ready) {
-          App.init._checkSetup?.() || location.reload();
-        }
-      }).catch(() => {});
+    if (percent >= 1.0) {
+      if (window.pywebview?.api?.get_setup_status) {
+        window.pywebview.api.get_setup_status().then(status => {
+          const badge = isSetupAsr
+            ? document.getElementById('setup-asr-badge')
+            : document.getElementById('setup-diarizer-badge');
+          if (badge) {
+            badge.textContent = '✓ Ready';
+            badge.className   = 'setup-badge setup-badge-ok';
+          }
+          if (status.asr_ready && status.diarizer_ready) {
+            App.init._checkSetup?.() || location.reload();
+          }
+        }).catch(() => {});
+      }
+    }
+  }
+
+  // ── Update models modal item (if the modal is open) ─────────────────────────
+  const modalItem = document.querySelector(
+    `.model-item[data-model-id="${CSS.escape(name)}"]`
+  );
+  if (modalItem) {
+    const prog = modalItem.querySelector('.model-item-progress');
+    const bar  = modalItem.querySelector('.model-item-bar');
+    if (prog) prog.classList.remove('indeterminate');
+    if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
+
+    if (percent >= 1.0) {
+      const badge       = modalItem.querySelector('.model-item-badge');
+      const downloadBtn = modalItem.querySelector('.model-btn-download');
+      const deleteBtn   = modalItem.querySelector('.model-btn-delete');
+      if (badge)       { badge.textContent = '✓ Downloaded'; badge.className = 'model-item-badge model-badge-ok'; }
+      if (prog)        prog.hidden = true;
+      if (downloadBtn) downloadBtn.disabled = true;
+      if (deleteBtn)   deleteBtn.disabled   = false;
+      // Refresh engine selector in case an ASR model just became available
+      App.refreshEngineSelector();
     }
   }
 }

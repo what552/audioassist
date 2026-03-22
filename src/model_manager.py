@@ -146,6 +146,7 @@ class ModelManager:
                 "recommended": m.recommended,
                 "requires_token": m.requires_token,
                 "downloaded": self.is_downloaded(m.id),
+                "incomplete": self._has_incomplete_files(m.id),
                 "local_path": self.local_path(m.id),
             }
             for m in CATALOG
@@ -229,9 +230,26 @@ class ModelManager:
             return hf
         return app
 
+    def _has_incomplete_files(self, model_id: str) -> bool:
+        """
+        Return True if there are *.incomplete files left by a failed
+        snapshot_download for this model.
+
+        snapshot_download stores incomplete blobs under:
+          {app_path}/.cache/huggingface/download/*.incomplete
+        If any exist, the download did not finish cleanly.
+        """
+        app = self._app_path(model_id)
+        dl_cache = os.path.join(app, ".cache", "huggingface", "download")
+        if not os.path.isdir(dl_cache):
+            return False
+        return any(f.endswith(".incomplete") for f in os.listdir(dl_cache))
+
     def is_downloaded(self, model_id: str) -> bool:
         """True if the model exists with key files in the App dir or HF cache."""
         app = self._app_path(model_id)
+        if self._has_incomplete_files(model_id):
+            return False
         if os.path.isdir(app) and os.listdir(app) and self._has_key_files(model_id, app):
             return True
         hf = self._hf_cache_path(model_id)

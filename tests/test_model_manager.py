@@ -62,7 +62,7 @@ class TestListModels:
         for entry in mm.list_models():
             for field in ("id", "name", "description", "size_gb", "engine",
                           "role", "languages", "recommended", "requires_token",
-                          "downloaded", "local_path"):
+                          "downloaded", "incomplete", "local_path"):
                 assert field in entry, f"Missing field: {field}"
 
     def test_not_downloaded_when_dir_empty(self, isolated_data_dir):
@@ -622,3 +622,64 @@ class TestHFCacheDetection:
 
         mm = self._real_manager(isolated_data_dir, monkeypatch, hf_root)
         assert mm._hf_cache_path("pyannote-diarization-community-1") is None
+
+# ── incomplete file detection (P5) ────────────────────────────────────────────
+
+class TestIncompleteFiles:
+    """Tests for _has_incomplete_files and is_downloaded's .incomplete guard."""
+
+    def _make_incomplete(self, isolated_data_dir, model_id: str) -> str:
+        """Create a .incomplete file in the model's HF download cache dir."""
+        dl_cache = os.path.join(
+            isolated_data_dir["models_dir"], model_id,
+            ".cache", "huggingface", "download",
+        )
+        os.makedirs(dl_cache, exist_ok=True)
+        inc_path = os.path.join(dl_cache, "some_blob.incomplete")
+        open(inc_path, "w").close()
+        return inc_path
+
+    def test_no_incomplete_returns_false(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        assert mm._has_incomplete_files("qwen3-asr-1.7b") is False
+
+    def test_incomplete_file_detected(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        self._make_incomplete(isolated_data_dir, "qwen3-asr-1.7b")
+        assert mm._has_incomplete_files("qwen3-asr-1.7b") is True
+
+    def test_is_downloaded_false_when_incomplete(self, isolated_data_dir):
+        """is_downloaded() returns False when .incomplete files are present,
+        even if config.json exists (partial download scenario)."""
+        mm = _make_manager(isolated_data_dir)
+        model_id = "qwen3-asr-1.7b"
+        model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(model_dir)
+        open(os.path.join(model_dir, "config.json"), "w").close()
+        self._make_incomplete(isolated_data_dir, model_id)
+        assert mm.is_downloaded(model_id) is False
+
+    def test_list_models_incomplete_field_true(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        self._make_incomplete(isolated_data_dir, "qwen3-asr-1.7b")
+        entries = {e["id"]: e for e in mm.list_models()}
+        assert entries["qwen3-asr-1.7b"]["incomplete"] is True
+        assert entries["qwen3-asr-1.7b"]["downloaded"] is False
+
+    def test_list_models_incomplete_false_when_clean(self, isolated_data_dir):
+        mm = _make_manager(isolated_data_dir)
+        model_id = "qwen3-asr-1.7b"
+        model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(model_dir)
+        open(os.path.join(model_dir, "config.json"), "w").close()
+        entries = {e["id"]: e for e in mm.list_models()}
+        assert entries[model_id]["incomplete"] is False
+        assert entries[model_id]["downloaded"] is True
+
+    def test_no_dl_cache_dir_returns_false(self, isolated_data_dir):
+        """If the .cache/huggingface/download dir doesn't exist, no incomplete."""
+        mm = _make_manager(isolated_data_dir)
+        model_id = "qwen3-asr-1.7b"
+        model_dir = os.path.join(isolated_data_dir["models_dir"], model_id)
+        os.makedirs(model_dir)
+        assert mm._has_incomplete_files(model_id) is False

@@ -1,4 +1,5 @@
-"""Tests for app.API.start_realtime / stop_realtime."""
+"""Tests for app.API.start_realtime / stop_realtime / delete_model."""
+import os
 import time
 import pytest
 from unittest.mock import MagicMock, patch
@@ -292,3 +293,103 @@ class TestEngineOption:
             _wait(0.3)
 
         assert captured.get("engine") == "qwen"
+
+
+# ── delete_model ──────────────────────────────────────────────────────────────
+
+class TestDeleteModel:
+    def test_delete_unknown_model_returns_not_found(self):
+        api = API()
+        result = api.delete_model("nonexistent-model-xyz")
+        assert result["status"] == "not_found"
+
+    def test_delete_known_model_calls_mm_delete(self):
+        api = API()
+        mock_mm = MagicMock()
+        mock_mm.get_model.return_value = MagicMock()  # model exists
+        mock_mm.is_downloaded.return_value = False
+        with patch("src.model_manager.ModelManager", return_value=mock_mm):
+            result = api.delete_model("qwen3-asr-1.7b")
+        mock_mm.delete.assert_called_once_with("qwen3-asr-1.7b")
+        assert result["status"] == "ok"
+
+    def test_delete_returns_downloaded_false_after_delete(self):
+        api = API()
+        mock_mm = MagicMock()
+        mock_mm.get_model.return_value = MagicMock()
+        mock_mm.is_downloaded.return_value = False
+        with patch("src.model_manager.ModelManager", return_value=mock_mm):
+            result = api.delete_model("qwen3-asr-1.7b")
+        assert result["downloaded"] is False
+
+
+# ── Realtime segments collection on stop ──────────────────────────────────────
+
+class TestRtSegmentsCollection:
+    def test_stop_collects_segments_from_rt(self):
+        """stop_realtime() stores segments from rt.get_segments() in _rt_segments."""
+        api = API()
+        sample_segs = [
+            {"text": "Hello", "start": 0.0, "end": 1.0},
+            {"text": "World", "start": 1.5, "end": 2.5},
+        ]
+
+        mock_rt = MagicMock()
+        mock_rt._output_path = "/tmp/session.wav"
+        mock_rt.get_segments.return_value = sample_segs
+
+        api._realtime = mock_rt
+        with patch.object(app_module, "_push"):
+            api.stop_realtime()
+            _wait(0.4)
+
+        assert "/tmp/session.wav" in api._rt_segments
+        assert api._rt_segments["/tmp/session.wav"] == sample_segs
+
+    def test_stop_no_segments_does_not_add_entry(self):
+        """If rt.get_segments() is empty, nothing is added to _rt_segments."""
+        api = API()
+        mock_rt = MagicMock()
+        mock_rt._output_path = "/tmp/session2.wav"
+        mock_rt.get_segments.return_value = []
+        api._realtime = mock_rt
+        with patch.object(app_module, "_push"):
+            api.stop_realtime()
+            _wait(0.4)
+        assert "/tmp/session2.wav" not in api._rt_segments
+
+    def test_transcribe_pops_rt_segments_and_uses_run_realtime_segments(self):
+        """transcribe() uses run_realtime_segments when _rt_segments has path."""
+        import tempfile
+        api = API()
+        sample_segs = [{"text": "Hi", "start": 0.0, "end": 1.0}]
+        wav_path = os.path.join(tempfile.gettempdir(), "rt_test.wav")
+        # Pre-seed rt_segments
+        api._rt_segments[wav_path] = sample_segs
+
+        called_with = {}
+
+        def fake_run_realtime_segments(segments, wav_path, output_dir, **kw):
+            called_with["segments"] = segments
+            called_with["wav_path"] = wav_path
+            json_path = os.path.join(output_dir, f"{kw['job_id']}.json")
+            md_path   = os.path.join(output_dir, f"{kw['job_id']}.md")
+            import json
+            os.makedirs(output_dir, exist_ok=True)
+            with open(json_path, "w") as f:
+                json.dump({"audio": wav_path, "filename": "rt_test.wav",
+                           "language": "", "created_at": "", "segments": []}, f)
+            open(md_path, "w").close()
+            return json_path, md_path
+
+        with patch("src.pipeline.run_realtime_segments",
+                   side_effect=fake_run_realtime_segments), \
+             patch.object(app_module, "_push"), \
+             patch.object(app_module, "OUTPUT_DIR", tempfile.gettempdir()):
+            api.transcribe(wav_path, {})
+            _wait(0.5)
+
+        assert called_with.get("segments") == sample_segs
+        assert called_with.get("wav_path") == wav_path
+        # Segments should be consumed (popped)
+        assert wav_path not in api._rt_segments
