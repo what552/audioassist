@@ -166,13 +166,20 @@ class API:
                         progress_callback=_progress,
                     )
                 else:
-                    from src.pipeline import run as pipeline_run
-                    engine = options.get("engine", "qwen")
+                    from src.pipeline import run as pipeline_run, _WHISPER_SIZE_MAP
+                    model_id = options.get("model_id")
+                    engine   = options.get("engine", "qwen")
+                    if model_id:
+                        from src.model_manager import CATALOG
+                        info = next((m for m in CATALOG if m.id == model_id), None)
+                        if info:
+                            engine = "whisper" if info.engine == "mlx-whisper" else info.engine
                     json_path, md_path = pipeline_run(
                         audio_path=path,
                         output_dir=OUTPUT_DIR,
                         hf_token=hf_token,
                         engine=engine,
+                        asr_model_id=model_id,
                         num_speakers=num_speakers,
                         job_id=job_id,
                         progress_callback=_progress,
@@ -319,7 +326,13 @@ class API:
         self._realtime = object()
 
         options = options or {}
-        engine = options.get("engine", "qwen")
+        model_id = options.get("model_id")
+        engine   = options.get("engine", "qwen")
+        if model_id:
+            from src.model_manager import CATALOG
+            _info = next((m for m in CATALOG if m.id == model_id), None)
+            if _info:
+                engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
         def _run():
             try:

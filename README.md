@@ -2,12 +2,12 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.10 — r02-b3)
+## Features (v0.10 — r02-b4)
 
 - **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
 - **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
 - **History sidebar** — lists all sessions (active first, then newest-first); click any entry to switch the center panel; live sessions show a 🔴 indicator
-- **Engine selector** — choose Qwen3-ASR or Whisper before transcribing
+- **Engine selector** — dynamically lists all downloaded ASR model variants; each option is a specific model (e.g. `Qwen3-ASR 1.7B`, `Whisper Large v3 Turbo`); refreshes after download or delete
 - **Upload File button** — native file picker for audio/video files (sidebar footer); blocked while a recording is active
 - **Start Recording button** — launch live microphone transcription from the sidebar footer; blocked while a file transcription is in progress
 - **Drag-and-drop** — drop a file onto the center panel to start transcription; blocked while a recording is active
@@ -21,11 +21,11 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
 - **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher (see [Summary panel](#summary-panel))
 - **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the pipeline runs speaker diarization only (ASR already done live) to produce the final transcript (see [Realtime transcription](#realtime-transcription))
-- **Realtime timestamps** — each live utterance records absolute `start`/`end` times (seconds from session start); displayed in the live panel and passed to the diarizer for accurate speaker labelling
+- **Realtime timestamps** — each live utterance records absolute `start`/`end` times (seconds from session start); displayed as `[MM:SS]` prefix in the live panel and passed to the diarizer for accurate speaker labelling
 - **Finish → diarize only** — when a realtime session ends, the already-transcribed segments are retained in memory; the post-session pipeline skips ASR entirely and runs only speaker diarization, producing the final speaker-labelled transcript faster
 - **Session rename** — hover over any history item and click ✏ to rename inline (Enter to save, Esc to cancel)
 - **Session delete** — hover and click 🗑 to delete; removes transcript JSON and summary file after confirmation
-- **Model library modal** — toolbar "Models" button opens a modal listing all available models (ASR + Diarizer) with download status, Download button with live progress bar, and Delete button to free disk space
+- **Model library modal** — toolbar "Models" button opens a modal listing all available models (ASR + Diarizer) with download status, Download button with animated indeterminate progress bar, and Delete button to free disk space; badge reflects actual post-delete state (remains "✓ Downloaded" if HF cache still intact); shows "⚠ Incomplete" when a partial download is detected
 - **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model) and template management; no longer embedded inside the summary panel
 - **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
 - **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))

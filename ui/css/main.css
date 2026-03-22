@@ -757,6 +757,12 @@ select { font-family: inherit; }
   transition: background 0.1s;
 }
 .realtime-row:last-child { border-left-color: var(--accent); }
+.realtime-ts {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
 
 /* ── Realtime control bar ────────────────────────────────────────────────── */
 #realtime-control-bar {
@@ -842,6 +848,15 @@ select { font-family: inherit; }
   border-radius: 2px;
   overflow: hidden;
 }
+.setup-progress.indeterminate {
+  position: relative;
+  overflow: hidden;
+}
+.setup-progress.indeterminate .setup-progress-fill {
+  position: absolute;
+  animation: bar-indeterminate 1.4s ease infinite;
+  width: 35%;
+}
 .setup-progress-fill {
   height: 100%;
   background: var(--accent);
@@ -918,8 +933,9 @@ select { font-family: inherit; }
   white-space: nowrap;
   flex-shrink: 0;
 }
-.model-badge-ok      { background: #1a3a1a; color: #6dbf6d; }
-.model-badge-pending { background: var(--bg-input); color: var(--text-muted); }
+.model-badge-ok         { background: #1a3a1a; color: #6dbf6d; }
+.model-badge-pending    { background: var(--bg-input); color: var(--text-muted); }
+.model-badge-incomplete { background: #3a2a1a; color: #e0a060; }
 
 .model-item-desc {
   font-size: 12px;
@@ -940,6 +956,20 @@ select { font-family: inherit; }
   border-radius: 2px;
   width: 0%;
   transition: width 0.2s ease;
+}
+@keyframes bar-indeterminate {
+  0%   { left: -35%; width: 35%; }
+  60%  { left: 100%; width: 100%; }
+  100% { left: 100%; width: 0%; }
+}
+.model-item-progress.indeterminate {
+  position: relative;
+  overflow: hidden;
+}
+.model-item-progress.indeterminate .model-item-bar {
+  position: absolute;
+  animation: bar-indeterminate 1.4s ease infinite;
+  width: 35%;
 }
 .model-item-actions {
   display: flex;

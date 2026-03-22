@@ -319,3 +319,102 @@ class TestAlignerAutoDownload:
         mm.download.side_effect = _download
         # Must not raise
         run("/audio/test.mp3", str(tmp_path), engine="qwen")
+
+
+# ── asr_model_id / _WHISPER_SIZE_MAP (P3) ─────────────────────────────────────
+
+class TestAsrModelId:
+    def test_whisper_size_map_contains_expected_keys(self):
+        from src.pipeline import _WHISPER_SIZE_MAP
+        assert _WHISPER_SIZE_MAP["whisper-large-v3-turbo"] == "turbo"
+        assert _WHISPER_SIZE_MAP["whisper-large-v3"] == "large"
+        assert _WHISPER_SIZE_MAP["whisper-medium"] == "medium"
+
+    def test_asr_model_id_overrides_qwen_default(self, tmp_path, mock_pipeline_deps):
+        """asr_model_id replaces the hardcoded 'qwen3-asr-1.7b' for qwen engine."""
+        from src.pipeline import run
+        mm = mock_pipeline_deps["mm_instance"]
+        run("/audio/test.mp3", str(tmp_path), engine="qwen",
+            asr_model_id="qwen3-asr-1.7b")
+        # ASREngine should be called with model_path from mm.local_path("qwen3-asr-1.7b")
+        mock_pipeline_deps["asr_cls"].assert_called_once()
+
+    def test_asr_model_id_whisper_selects_turbo(self, tmp_path):
+        """asr_model_id='whisper-large-v3-turbo' → WhisperASREngine(size='turbo')."""
+        wav = str(tmp_path / "audio.wav")
+        mock_asr_instance = MagicMock()
+        mock_asr_instance.transcribe.return_value = _make_asr_result()
+        mock_whisper_cls = MagicMock(return_value=mock_asr_instance)
+        mock_diarize_instance = MagicMock()
+        mock_diarize_instance.diarize.return_value = _make_speaker_segments()
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.is_downloaded.return_value = True
+
+        with patch("os.path.isfile", return_value=True), \
+             patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
+             patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
+             patch(f"{PIPELINE}.ASREngine", MagicMock()), \
+             patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
+             patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
+             patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
+             patch(f"{PIPELINE}.merge", return_value=_make_blocks()), \
+             patch(f"{PIPELINE}.to_json"), \
+             patch(f"{PIPELINE}.to_markdown"):
+            from src.pipeline import run
+            run("/audio/test.mp3", str(tmp_path), engine="whisper",
+                asr_model_id="whisper-large-v3-turbo")
+
+        mock_whisper_cls.assert_called_once_with(size="turbo")
+
+    def test_asr_model_id_whisper_large(self, tmp_path):
+        """asr_model_id='whisper-large-v3' → WhisperASREngine(size='large')."""
+        wav = str(tmp_path / "audio.wav")
+        mock_asr_instance = MagicMock()
+        mock_asr_instance.transcribe.return_value = _make_asr_result()
+        mock_whisper_cls = MagicMock(return_value=mock_asr_instance)
+        mock_diarize_instance = MagicMock()
+        mock_diarize_instance.diarize.return_value = _make_speaker_segments()
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.is_downloaded.return_value = True
+
+        with patch("os.path.isfile", return_value=True), \
+             patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
+             patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
+             patch(f"{PIPELINE}.ASREngine", MagicMock()), \
+             patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
+             patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
+             patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
+             patch(f"{PIPELINE}.merge", return_value=_make_blocks()), \
+             patch(f"{PIPELINE}.to_json"), \
+             patch(f"{PIPELINE}.to_markdown"):
+            from src.pipeline import run
+            run("/audio/test.mp3", str(tmp_path), engine="whisper",
+                asr_model_id="whisper-large-v3")
+
+        mock_whisper_cls.assert_called_once_with(size="large")
+
+    def test_no_asr_model_id_whisper_defaults_to_turbo(self, tmp_path):
+        """When asr_model_id=None, WhisperASREngine defaults to size='turbo'."""
+        wav = str(tmp_path / "audio.wav")
+        mock_asr_instance = MagicMock()
+        mock_asr_instance.transcribe.return_value = _make_asr_result()
+        mock_whisper_cls = MagicMock(return_value=mock_asr_instance)
+        mock_diarize_instance = MagicMock()
+        mock_diarize_instance.diarize.return_value = _make_speaker_segments()
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.is_downloaded.return_value = True
+
+        with patch("os.path.isfile", return_value=True), \
+             patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
+             patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
+             patch(f"{PIPELINE}.ASREngine", MagicMock()), \
+             patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
+             patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
+             patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
+             patch(f"{PIPELINE}.merge", return_value=_make_blocks()), \
+             patch(f"{PIPELINE}.to_json"), \
+             patch(f"{PIPELINE}.to_markdown"):
+            from src.pipeline import run
+            run("/audio/test.mp3", str(tmp_path), engine="whisper")
+
+        mock_whisper_cls.assert_called_once_with(size="turbo")

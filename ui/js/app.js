@@ -314,7 +314,7 @@ const App = (() => {
     const filename = displayName || filePath.split('/').pop().split('\\').pop();
     try {
       const { job_id } = await window.pywebview.api.transcribe(filePath, {
-        engine:       dom.selEngine.value,
+        model_id:     dom.selEngine.value || null,
         hf_token:     null,
         num_speakers: null,
       });
@@ -508,6 +508,7 @@ const App = (() => {
       _applySetupStatus(status);
       if (status.asr_ready && status.diarizer_ready) {
         _setView('idle');
+        _populateEngineSelector();
         _loadHistory();
       } else {
         _setView('setup');
@@ -548,7 +549,7 @@ const App = (() => {
     badge.textContent = 'Downloading…';
     badge.className   = 'setup-badge setup-badge-pending';
     prog.hidden       = false;
-    bar.style.width   = '0%';
+    prog.classList.add('indeterminate');
 
     try {
       await window.pywebview.api.download_model(modelId);
@@ -610,8 +611,12 @@ const App = (() => {
     div.dataset.modelId = m.id;
 
     const starMark = m.recommended ? ' <span class="model-recommended">★</span>' : '';
-    const badgeClass = m.downloaded ? 'model-badge-ok' : 'model-badge-pending';
-    const badgeText  = m.downloaded ? '✓ Downloaded' : 'Not downloaded';
+    const badgeClass = m.downloaded ? 'model-badge-ok'
+                     : m.incomplete ? 'model-badge-incomplete'
+                     : 'model-badge-pending';
+    const badgeText  = m.downloaded ? '✓ Downloaded'
+                     : m.incomplete ? '⚠ Incomplete'
+                     : 'Not downloaded';
 
     div.innerHTML = `
       <div class="model-item-info">
@@ -647,6 +652,7 @@ const App = (() => {
     badge.textContent = 'Downloading…';
     badge.className   = 'model-item-badge model-badge-pending';
     prog.hidden       = false;
+    prog.classList.add('indeterminate');
     try {
       await window.pywebview.api.download_model(modelId);
     } catch (e) {
@@ -656,27 +662,65 @@ const App = (() => {
     // Progress updates arrive via onModelDownloadProgress; completion at pct >= 1.0
   }
 
+  // ── Engine selector ─────────────────────────────────────────────────────────
+
+  async function _populateEngineSelector() {
+    try {
+      const models = await window.pywebview.api.get_models();
+      const asrModels = models.filter(m => m.role === 'asr' && m.downloaded);
+      const prev = dom.selEngine.value;
+      dom.selEngine.innerHTML = '';
+      if (asrModels.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '— No ASR model downloaded —';
+        opt.disabled = true;
+        opt.selected = true;
+        dom.selEngine.appendChild(opt);
+      } else {
+        for (const m of asrModels) {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name + (m.recommended ? ' ★' : '');
+          if (m.id === prev) opt.selected = true;
+          dom.selEngine.appendChild(opt);
+        }
+        // If previous selection is no longer available, first option is selected by default
+      }
+    } catch (e) {
+      console.warn('[App] _populateEngineSelector error:', e);
+    }
+  }
+
   async function _deleteModelItem(modelId, itemEl) {
     if (!confirm(`Delete model "${modelId}"?\nThis frees disk space but requires re-download to use.`)) return;
     const deleteBtn = itemEl.querySelector('.model-btn-delete');
     deleteBtn.disabled = true;
     try {
-      await window.pywebview.api.delete_model(modelId);
-      // Update UI to reflect deleted state
+      const result      = await window.pywebview.api.delete_model(modelId);
       const badge       = itemEl.querySelector('.model-item-badge');
       const downloadBtn = itemEl.querySelector('.model-btn-download');
-      badge.textContent = 'Not downloaded';
-      badge.className   = 'model-item-badge model-badge-pending';
-      downloadBtn.disabled = false;
-      deleteBtn.disabled   = true;
+      // result.downloaded may be true when HF cache still has the model
+      if (result && result.downloaded) {
+        badge.textContent = '✓ Downloaded';
+        badge.className   = 'model-item-badge model-badge-ok';
+        downloadBtn.disabled = true;
+        deleteBtn.disabled   = false;
+      } else {
+        badge.textContent = 'Not downloaded';
+        badge.className   = 'model-item-badge model-badge-pending';
+        downloadBtn.disabled = false;
+        deleteBtn.disabled   = true;
+      }
     } catch (e) {
       console.error('[Models] delete_model error:', e);
       deleteBtn.disabled = false;
     }
+    _populateEngineSelector();
   }
 
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
-           onTranscribeCancel };
+           onTranscribeCancel, refreshEngineSelector: _populateEngineSelector };
 })();
 
 // ── Global event handlers (called by Python via evaluate_js) ──────────────────
@@ -693,9 +737,13 @@ function onModelDownloadProgress(name, percent) {
   const isSetupAsr  = name === 'qwen3-asr-1.7b';
   const isSetupDiar = name === 'pyannote-diarization-community-1';
   if (isSetupAsr || isSetupDiar) {
+    const prog = isSetupAsr
+      ? document.getElementById('setup-asr-progress')
+      : document.getElementById('setup-diarizer-progress');
     const bar = isSetupAsr
       ? document.getElementById('setup-asr-bar')
       : document.getElementById('setup-diarizer-bar');
+    if (prog) prog.classList.remove('indeterminate');
     if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
 
     if (percent >= 1.0) {
@@ -721,18 +769,21 @@ function onModelDownloadProgress(name, percent) {
     `.model-item[data-model-id="${CSS.escape(name)}"]`
   );
   if (modalItem) {
-    const bar = modalItem.querySelector('.model-item-bar');
+    const prog = modalItem.querySelector('.model-item-progress');
+    const bar  = modalItem.querySelector('.model-item-bar');
+    if (prog) prog.classList.remove('indeterminate');
     if (bar) bar.style.width = (percent * 100).toFixed(1) + '%';
 
     if (percent >= 1.0) {
       const badge       = modalItem.querySelector('.model-item-badge');
       const downloadBtn = modalItem.querySelector('.model-btn-download');
       const deleteBtn   = modalItem.querySelector('.model-btn-delete');
-      const prog        = modalItem.querySelector('.model-item-progress');
       if (badge)       { badge.textContent = '✓ Downloaded'; badge.className = 'model-item-badge model-badge-ok'; }
       if (prog)        prog.hidden = true;
       if (downloadBtn) downloadBtn.disabled = true;
       if (deleteBtn)   deleteBtn.disabled   = false;
+      // Refresh engine selector in case an ASR model just became available
+      App.refreshEngineSelector();
     }
   }
 }

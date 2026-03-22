@@ -19,6 +19,13 @@ from .model_manager import ModelManager
 logger = logging.getLogger(__name__)
 
 
+_WHISPER_SIZE_MAP: dict[str, str] = {
+    "whisper-large-v3-turbo": "turbo",
+    "whisper-large-v3":       "large",
+    "whisper-medium":         "medium",
+}
+
+
 def run(
     audio_path: str,
     output_dir: str,
@@ -26,6 +33,7 @@ def run(
     with_timestamps: bool = True,
     num_speakers: Optional[int] = None,
     engine: str = "qwen",
+    asr_model_id: Optional[str] = None,
     diarizer_model_id: Optional[str] = None,
     job_id: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
@@ -80,9 +88,10 @@ def run(
         mm = ModelManager()
         if engine == "whisper":
             _progress(0.05, "Loading Whisper ASR model...")
-            asr: ASREngine | WhisperASREngine = WhisperASREngine()
+            size = _WHISPER_SIZE_MAP.get(asr_model_id or "", "turbo")
+            asr: ASREngine | WhisperASREngine = WhisperASREngine(size=size)
         else:
-            asr_id     = "qwen3-asr-1.7b"
+            asr_id     = asr_model_id or "qwen3-asr-1.7b"
             aligner_id = "qwen3-forced-aligner"
             if not mm.is_downloaded(asr_id):
                 _progress(0.03, f"Downloading ASR model ({asr_id})…")
