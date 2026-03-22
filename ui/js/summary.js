@@ -1,5 +1,6 @@
 /**
- * Summary — API config, template management, summary generation, version history.
+ * Summary — API config, template management, summary generation, version history,
+ * and interactive Summary Agent chat.
  *
  * Public API:
  *   Summary.init()               — wire up DOM; call once after DOMContentLoaded
@@ -9,11 +10,20 @@
  *   onSummaryChunk(jobId, chunk)        — streaming token/chunk
  *   onSummaryComplete(jobId, fullText)  — generation finished
  *   onSummaryError(jobId, message)      — error
+ *   onAgentChunk(jobId, chunk)          — agent streaming text delta
+ *   onAgentToolStart(jobId, toolName)   — agent tool call beginning
+ *   onAgentToolEnd(jobId, toolName)     — agent tool call finished
+ *   onAgentDraftUpdated(jobId, newText) — agent saved a new summary version
+ *   onAgentComplete(jobId, fullText)    — agent turn finished
+ *   onAgentError(jobId, message)        — agent error
  */
 const Summary = (() => {
   let _jobId = null;
   let _generating = false;
+  let _agentBusy = false;
+  let _agentCurrentBubble = null;
   let dom = {};
+  let agentDom = {};
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +50,15 @@ const Summary = (() => {
       templateList:   document.getElementById('template-list'),
     };
 
+    agentDom = {
+      chat:       document.getElementById('agent-chat'),
+      messages:   document.getElementById('agent-messages'),
+      toolStatus: document.getElementById('agent-tool-status'),
+      input:      document.getElementById('agent-input'),
+      btnSend:    document.getElementById('btn-agent-send'),
+      btnClear:   document.getElementById('btn-agent-clear'),
+    };
+
     dom.btnToggle.addEventListener('click', _onTogglePanel);
     dom.btnSettings.addEventListener('click', _toggleConfig);
     dom.btnModalClose.addEventListener('click', _closeModal);
@@ -48,6 +67,12 @@ const Summary = (() => {
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
     dom.btnAddTemplate.addEventListener('click', _onAddTemplate);
+
+    agentDom.btnSend.addEventListener('click', _sendAgentTurn);
+    agentDom.btnClear.addEventListener('click', _clearAgentChat);
+    agentDom.input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendAgentTurn(); }
+    });
 
     _loadConfig();
     _loadTemplates();
@@ -66,6 +91,7 @@ const Summary = (() => {
     dom.panel.hidden = false;
     _setOutput('placeholder');
     await _loadVersions(jobId);
+    await _initChat(jobId);
   }
 
   // ── Version management ─────────────────────────────────────────────────────
@@ -290,6 +316,128 @@ const Summary = (() => {
     _setOutput('error', message);
   }
 
+  // ── Agent chat ─────────────────────────────────────────────────────────────
+
+  async function _initChat(jobId) {
+    agentDom.messages.innerHTML = '';
+    _agentCurrentBubble = null;
+    try {
+      const session = await window.pywebview.api.get_agent_session(jobId);
+      const turns = session.turns || [];
+      for (const t of turns) {
+        if (t.role === 'user' || t.role === 'assistant') {
+          _appendChatBubble(t.role, t.content);
+        }
+      }
+    } catch (e) {
+      console.warn('[Summary] _initChat error:', e);
+    }
+  }
+
+  function _appendChatBubble(role, text) {
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble chat-bubble-${role}`;
+    bubble.textContent = text;
+    agentDom.messages.appendChild(bubble);
+    agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
+    return bubble;
+  }
+
+  async function _sendAgentTurn() {
+    if (!_jobId || _agentBusy) return;
+    const text = agentDom.input.value.trim();
+    if (!text) return;
+
+    agentDom.input.value = '';
+    agentDom.btnSend.disabled = true;
+    _agentBusy = true;
+
+    _appendChatBubble('user', text);
+    _agentCurrentBubble = _appendChatBubble('assistant', '');
+    _agentCurrentBubble.classList.add('chat-bubble-loading');
+
+    try {
+      await window.pywebview.api.start_agent_turn(_jobId, text);
+      // Result delivered via onAgentChunk / onAgentComplete / onAgentError
+    } catch (err) {
+      _agentBusy = false;
+      agentDom.btnSend.disabled = false;
+      if (_agentCurrentBubble) {
+        _agentCurrentBubble.textContent = '⚠ ' + String(err);
+        _agentCurrentBubble.classList.remove('chat-bubble-loading');
+        _agentCurrentBubble.classList.add('chat-bubble-error');
+        _agentCurrentBubble = null;
+      }
+    }
+  }
+
+  async function _clearAgentChat() {
+    if (!_jobId) return;
+    agentDom.messages.innerHTML = '';
+    _agentCurrentBubble = null;
+    try {
+      await window.pywebview.api.clear_agent_session(_jobId);
+    } catch (e) {
+      console.warn('[Summary] _clearAgentChat error:', e);
+    }
+  }
+
+  // ── Agent Python → JS callbacks ────────────────────────────────────────────
+
+  function onAgentChunk(jobId, chunk) {
+    if (jobId !== _jobId) return;
+    if (_agentCurrentBubble) {
+      _agentCurrentBubble.classList.remove('chat-bubble-loading');
+      _agentCurrentBubble.textContent += chunk;
+    }
+    agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
+  }
+
+  function onAgentToolStart(jobId, toolName) {
+    if (jobId !== _jobId) return;
+    agentDom.toolStatus.textContent = `⚙ ${toolName}…`;
+    agentDom.toolStatus.hidden = false;
+  }
+
+  function onAgentToolEnd(jobId, toolName) {
+    if (jobId !== _jobId) return;
+    agentDom.toolStatus.hidden = true;
+  }
+
+  function onAgentDraftUpdated(jobId, newText) {
+    if (jobId !== _jobId) return;
+    _setOutput('text', newText);
+    _loadVersions(jobId);
+  }
+
+  function onAgentComplete(jobId, fullText) {
+    if (jobId !== _jobId) return;
+    _agentBusy = false;
+    agentDom.btnSend.disabled = false;
+    agentDom.toolStatus.hidden = true;
+    if (_agentCurrentBubble) {
+      _agentCurrentBubble.classList.remove('chat-bubble-loading');
+      if (!_agentCurrentBubble.textContent && fullText) {
+        _agentCurrentBubble.textContent = fullText;
+      }
+      _agentCurrentBubble = null;
+    }
+    agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
+  }
+
+  function onAgentError(jobId, message) {
+    if (jobId !== _jobId) return;
+    _agentBusy = false;
+    agentDom.btnSend.disabled = false;
+    agentDom.toolStatus.hidden = true;
+    if (_agentCurrentBubble) {
+      _agentCurrentBubble.textContent = '⚠ ' + message;
+      _agentCurrentBubble.classList.remove('chat-bubble-loading');
+      _agentCurrentBubble.classList.add('chat-bubble-error');
+      _agentCurrentBubble = null;
+    }
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function _setGenerating(active) {
@@ -321,11 +469,23 @@ const Summary = (() => {
     }
   }
 
-  return { init, showForJob, onChunk, onComplete, onError };
+  return {
+    init, showForJob,
+    onChunk, onComplete, onError,
+    onAgentChunk, onAgentToolStart, onAgentToolEnd,
+    onAgentDraftUpdated, onAgentComplete, onAgentError,
+  };
 })();
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
 
-function onSummaryChunk(jobId, chunk)       { Summary.onChunk(jobId, chunk); }
-function onSummaryComplete(jobId, fullText) { Summary.onComplete(jobId, fullText); }
-function onSummaryError(jobId, message)     { Summary.onError(jobId, message); }
+function onSummaryChunk(jobId, chunk)         { Summary.onChunk(jobId, chunk); }
+function onSummaryComplete(jobId, fullText)   { Summary.onComplete(jobId, fullText); }
+function onSummaryError(jobId, message)       { Summary.onError(jobId, message); }
+
+function onAgentChunk(jobId, chunk)           { Summary.onAgentChunk(jobId, chunk); }
+function onAgentToolStart(jobId, toolName)    { Summary.onAgentToolStart(jobId, toolName); }
+function onAgentToolEnd(jobId, toolName)      { Summary.onAgentToolEnd(jobId, toolName); }
+function onAgentDraftUpdated(jobId, newText)  { Summary.onAgentDraftUpdated(jobId, newText); }
+function onAgentComplete(jobId, fullText)     { Summary.onAgentComplete(jobId, fullText); }
+function onAgentError(jobId, message)         { Summary.onAgentError(jobId, message); }

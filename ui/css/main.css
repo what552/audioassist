@@ -719,6 +719,101 @@ select { font-family: inherit; }
 .btn-template-action:hover { color: var(--text); background: var(--bg-hover); }
 .btn-template-action.danger:hover { color: #e06c6c; }
 
+/* ── Agent chat ──────────────────────────────────────────────────────────────── */
+#agent-chat {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+
+#agent-messages {
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 32px;
+  max-height: 180px;
+}
+#agent-messages::-webkit-scrollbar { width: 4px; }
+#agent-messages::-webkit-scrollbar-track { background: transparent; }
+#agent-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.chat-bubble {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 92%;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.chat-bubble-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px 8px 2px 8px;
+}
+.chat-bubble-assistant {
+  align-self: flex-start;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 2px 8px 8px 8px;
+}
+.chat-bubble-assistant.chat-bubble-loading::after {
+  content: '▌';
+  animation: blink 0.8s step-start infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+.chat-bubble-error {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+#agent-tool-status {
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#agent-input-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#agent-input {
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--font);
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+}
+#agent-input:focus { border-color: var(--border-focus); }
+
+#agent-input-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 /* ── Realtime panel ──────────────────────────────────────────────────────── */
 #realtime-panel {
   flex: 1;

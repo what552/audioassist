@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.10 — r02-b4)
+## Features (v0.11 — r02-b4)
 
 - **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
 - **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
@@ -19,7 +19,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Save button** — flush all edits back to the JSON transcript; `.md` sidecar regenerated automatically
 - **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
-- **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher (see [Summary panel](#summary-panel))
+- **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher; interactive Summary Agent chat for multi-turn editing and Q&A (see [Summary panel](#summary-panel))
 - **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the pipeline runs speaker diarization only (ASR already done live) to produce the final transcript (see [Realtime transcription](#realtime-transcription))
 - **Realtime timestamps** — each live utterance records absolute `start`/`end` times (seconds from session start); displayed as `[MM:SS]` prefix in the live panel and passed to the diarizer for accurate speaker labelling
 - **Finish → diarize only + background refine** — when a realtime session ends, the already-transcribed segments are used for instant diarize-only output; simultaneously a full high-accuracy ASR pipeline runs in the background; when it completes the transcript is silently replaced and a "正在进行高精度转写…" banner at the top of the transcript area notifies the user while the background job is in flight
@@ -205,7 +205,8 @@ After transcription completes, the **Summary** panel is available on the right. 
 1. **Select a template** from the drop-down list.
 2. Click **Generate** — the transcript is sent to the configured LLM and the response streams in.
 3. Each completed summary is saved automatically as a version (up to 3 per job). Click a version button to recall it.
-4. Click **⚙** in the toolbar to open the Settings modal and configure:
+4. Use the **Summary Agent** chat area at the bottom of the panel to interactively edit the summary or ask questions about the meeting (see [Summary Agent](#summary-agent)).
+5. Click **⚙** in the toolbar to open the Settings modal and configure:
    - **Base URL** — OpenAI-compatible endpoint (e.g. `https://api.openai.com/v1`, DeepSeek, Qwen, local Ollama).
    - **API Key** — authentication key for the endpoint.
    - **Model** — model identifier (e.g. `gpt-4o-mini`, `deepseek-chat`).
@@ -222,6 +223,37 @@ Any endpoint that follows the OpenAI Chat Completions API can be used:
 | DeepSeek | `https://api.deepseek.com/v1` |
 | Qwen (Alibaba Cloud) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | Ollama (local) | `http://localhost:11434/v1` |
+
+## Summary Agent
+
+The **Summary Agent** is an interactive LLM assistant embedded in the summary panel. It gives you a multi-turn chat interface to edit summaries and ask questions about the meeting — without leaving the app.
+
+### How it works
+
+The agent uses the same OpenAI-compatible API configured in Settings. It has access to four tools:
+
+| Tool | What it does |
+|------|-------------|
+| `get_transcript` | Reads the meeting transcript (truncated to 6 000 chars) |
+| `get_current_summary` | Reads the latest saved summary version |
+| `get_summary_versions` | Lists all saved versions with previews |
+| `update_summary` | Saves a new summary version and immediately updates the panel |
+
+The agent runs a tool-calling loop (up to 5 iterations): it calls tools as needed, then streams the final answer. If the provider does not support `tool_choice` (e.g. some local models), it falls back automatically to a no-tool one-shot mode where the transcript and summary are injected directly into the system prompt.
+
+### Usage
+
+1. After opening the summary panel for a job, type in the chat input at the bottom.
+2. Press **Send** or **Enter** (Shift+Enter for a new line).
+3. The agent may call tools (shown as `⚙ tool_name…` while running), then stream a reply.
+4. If the agent rewrites the summary, `update_summary` is called automatically — the summary output area and version switcher update immediately.
+5. Conversation history is saved to `{job_id}_agent_chat.json` (last 20 turns retained) and reloaded when you re-open the same job.
+6. Click **Clear** to delete the session history.
+
+### Provider compatibility
+
+- **Tool calling supported** (OpenAI, DeepSeek, Qwen, etc.): full tool loop with per-tool status indicator.
+- **Tool calling not supported** (some local models): automatic fallback to one-shot mode; the agent still answers correctly but cannot call `update_summary`.
 
 ## Known fixes
 

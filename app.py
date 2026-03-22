@@ -550,6 +550,82 @@ class API:
         threading.Thread(target=_run, daemon=True).start()
         return {"job_id": job_id, "status": "started"}
 
+    # ── Summary Agent ──────────────────────────────────────────────────────────
+
+    def start_agent_turn(self, job_id: str, user_input: str) -> dict:
+        """
+        Start one agent turn in a background thread.
+
+        Pushes JS events:
+          onAgentChunk(jobId, chunk)           — streaming text delta
+          onAgentToolStart(jobId, toolName)    — tool call beginning
+          onAgentToolEnd(jobId, toolName)      — tool call finished
+          onAgentDraftUpdated(jobId, newText)  — update_summary tool saved a new version
+          onAgentComplete(jobId, fullText)     — turn finished
+          onAgentError(jobId, message)         — error
+
+        Returns: {"job_id": str, "status": "started"}
+        """
+        def _run():
+            try:
+                cfg = self._load_config().get("api", {})
+                from src.agent_store import (
+                    build_context_messages,
+                    load_session,
+                    save_turn,
+                )
+
+                session = load_session(OUTPUT_DIR, job_id)
+                history = build_context_messages(session)
+
+                tool_events: list[dict] = []
+
+                def _push_event(event_name: str, payload: dict):
+                    if event_name == "onAgentChunk":
+                        _push(f"onAgentChunk({json.dumps(job_id)}, {json.dumps(payload['chunk'])})")
+                    elif event_name == "onAgentToolStart":
+                        _push(f"onAgentToolStart({json.dumps(job_id)}, {json.dumps(payload['tool'])})")
+                        tool_events.append({"tool": payload["tool"], "status": "started"})
+                    elif event_name == "onAgentToolEnd":
+                        _push(f"onAgentToolEnd({json.dumps(job_id)}, {json.dumps(payload['tool'])})")
+                        # Update last matching started entry to ok
+                        for ev in reversed(tool_events):
+                            if ev["tool"] == payload["tool"] and ev["status"] == "started":
+                                ev["status"] = "ok"
+                                break
+                    elif event_name == "onAgentDraftUpdated":
+                        _push(f"onAgentDraftUpdated({json.dumps(job_id)}, {json.dumps(payload['text'])})")
+
+                from src.agent import MeetingAgent
+
+                agent = MeetingAgent(
+                    output_dir=OUTPUT_DIR,
+                    base_url=cfg.get("base_url", ""),
+                    api_key=cfg.get("api_key", ""),
+                    model=cfg.get("model", ""),
+                    push_event=_push_event,
+                )
+                full_text = agent.run(job_id, user_input, history)
+                _push(f"onAgentComplete({json.dumps(job_id)}, {json.dumps(full_text)})")
+                completed_tool_events = [e for e in tool_events if e["status"] == "ok"]
+                save_turn(OUTPUT_DIR, job_id, user_input, full_text, completed_tool_events or None)
+            except Exception as e:
+                logger.exception("Agent turn failed for job %s", job_id)
+                _push(f"onAgentError({json.dumps(job_id)}, {json.dumps(str(e))})")
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"job_id": job_id, "status": "started"}
+
+    def get_agent_session(self, job_id: str) -> dict:
+        """Return agent chat session history. Returns {"job_id": ..., "turns": []} if none."""
+        from src.agent_store import load_session
+        return load_session(OUTPUT_DIR, job_id)
+
+    def clear_agent_session(self, job_id: str) -> bool:
+        """Delete agent chat session file. Returns True if deleted."""
+        from src.agent_store import clear_session
+        return clear_session(OUTPUT_DIR, job_id)
+
     # ── History ────────────────────────────────────────────────────────────────
 
     def get_history(self) -> list[dict]:
