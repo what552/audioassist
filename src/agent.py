@@ -157,8 +157,12 @@ class MeetingAgent:
 
         client = _OpenAI(base_url=self._base_url, api_key=self._api_key)
 
+        system_content = (
+            _SYSTEM_PROMPT
+            + f"\n\n当前会议 job_id：{job_id}\n直接用这个 job_id 调用工具，不要询问用户。"
+        )
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_content},
             *history_messages,
             {"role": "user", "content": user_input},
         ]
