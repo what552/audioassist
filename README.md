@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.8 — r02-b1)
+## Features (v0.9 — r02-b2)
 
 - **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
 - **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
@@ -10,8 +10,10 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Engine selector** — choose Qwen3-ASR or Whisper before transcribing
 - **Upload File button** — native file picker for audio/video files (sidebar footer); blocked while a recording is active
 - **Start Recording button** — launch live microphone transcription from the sidebar footer; blocked while a file transcription is in progress
-- **Drag-and-drop** — drop a file onto the center panel to start transcription
+- **Drag-and-drop** — drop a file onto the center panel to start transcription; blocked while a recording is active
 - **Transcription progress** — live progress bar + status message while pipeline runs
+- **Transcription cancel** — Cancel button in the progress panel aborts an in-flight transcription and returns the UI to idle
+- **Transcription retry** — if a transcription fails the error panel shows a Retry button that re-launches the same file with one click
 - **Transcript list** — speaker-labelled blocks with timestamps; click any row to seek the player
 - **Inline editing** — double-click a row's text to edit in-place (Enter/Blur saves, Escape cancels); unsaved rows highlighted in orange
 - **Save button** — flush all edits back to the JSON transcript; `.md` sidecar regenerated automatically
@@ -24,7 +26,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Session delete** — hover and click 🗑 to delete; removes transcript JSON and summary file after confirmation
 - **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model) and template management; no longer embedded inside the summary panel
 - **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
-- **Model auto-download** — ASR and diarizer model weights are downloaded automatically on first use; progress is shown in the UI progress bar; no manual setup required
+- **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
 
 ## Requirements
 
@@ -100,13 +102,13 @@ Files written inside the data directory:
 - **Qwen3-ASR** (`engine="qwen"`): best accuracy for Chinese + 30 languages; requires CPU (MPS causes SIGBUS); runs on macOS/Linux/Windows.
 - **Whisper** (`engine="whisper"`): Apple Silicon — uses `mlx-whisper` (Neural Engine); other platforms — uses `faster-whisper` (CPU/CUDA).
 
-> **First run:** If the selected ASR model (and optional ForcedAligner) is not yet downloaded, it is fetched automatically when you start a transcription. Download progress is shown in the UI progress bar. Subsequent runs use the cached weights with no network access.
+> **First run:** On launch, the app checks whether the required ASR model is present. If not, the setup panel is shown (see [First-run model setup](#first-run-model-setup)). Once downloaded, subsequent runs use the cached weights with no network access.
 
 ### Speaker diarization
 
 The default diarizer is **`pyannote-diarization-community-1`** — no HuggingFace token required.
 
-> **First run:** The diarizer model is downloaded automatically if not present when a transcription starts. No manual step needed.
+> **First run:** On launch, the app checks whether the diarizer model is present. If not, the setup panel prompts you to download it before starting any transcription (see [First-run model setup](#first-run-model-setup)).
 
 Two models are available:
 
@@ -121,6 +123,25 @@ To use `pyannote-diarization-3.1`, set `HF_TOKEN` before launching:
 export HF_TOKEN=hf_...   # macOS / Linux
 set HF_TOKEN=hf_...      # Windows cmd
 ```
+
+## First-run model setup
+
+On first launch, AudioAssist checks whether the two required model families are present:
+
+| Model family | Default model | Size |
+|---|---|---|
+| ASR | `qwen3-asr-1.7b` | ~3.5 GB |
+| Speaker diarizer | `pyannote-diarization-community-1` | ~34 MB |
+
+If either model is missing, a **setup panel** is shown in the center of the main window instead of the normal transcript view. The panel displays:
+
+- A status badge per model (Not downloaded / Downloading… / ✓ Ready)
+- A progress bar that fills as the download proceeds
+- A **Download** button for each model
+
+Click **Download** for each missing model. Downloads run in the background; you can start both simultaneously. Once both show ✓ Ready the setup panel closes automatically and the main UI becomes accessible.
+
+If both models are already present (subsequent launches), the setup panel is skipped entirely.
 
 ## Realtime transcription
 
