@@ -160,19 +160,21 @@ Click **🎙 Start Recording** in the history sidebar footer to start live micro
 
 ## Summary panel
 
-After transcription completes, the collapsible **Summary** panel appears on the right. Click the **‹** / **›** strip to collapse or expand it.
+After transcription completes, the **Summary** panel is available on the right. Use the **Summary** button in the toolbar (top-right) to show or hide it. Click **⚙** in the toolbar to open the API config and template settings modal.
 
 ### Layout
 
 ```
-┌──────────────────────────────────────────┐
-│ ‹ │ [⚙] [Template ▼] [Generate]         │  ← controls
-│   │ [v1 · date] [v2 · date]              │  ← version switcher (when versions exist)
-│   │ ┌──────────────────────────────────┐ │
-│   │ │  (streaming output / versions)  │ │  ← #summary-output
-│   │ └──────────────────────────────────┘ │
-│   │  ── API config (hidden by default) ── │  ← ⚙ settings panel
-└──────────────────────────────────────────┘
+┌─ toolbar ─────────────────────────────────────────────┐
+│  AudioAssist   [Engine ▼]   [⚙]   [Summary]           │
+└───────────────────────────────────────────────────────┘
+┌─ summary panel (right column) ────────────────────────┐
+│  [Template ▼]  [Generate]                             │  ← controls
+│  [v1 · date]  [v2 · date]                             │  ← version switcher
+│  ┌─────────────────────────────────────────────────┐  │
+│  │  (streaming output / recalled version text)     │  │  ← #summary-output
+│  └─────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────┘
 ```
 
 ### Usage
@@ -180,7 +182,7 @@ After transcription completes, the collapsible **Summary** panel appears on the 
 1. **Select a template** from the drop-down list.
 2. Click **Generate** — the transcript is sent to the configured LLM and the response streams in.
 3. Each completed summary is saved automatically as a version (up to 3 per job). Click a version button to recall it.
-4. Click **⚙** to open the settings panel and configure:
+4. Click **⚙** in the toolbar to open the Settings modal and configure:
    - **Base URL** — OpenAI-compatible endpoint (e.g. `https://api.openai.com/v1`, DeepSeek, Qwen, local Ollama).
    - **API Key** — authentication key for the endpoint.
    - **Model** — model identifier (e.g. `gpt-4o-mini`, `deepseek-chat`).

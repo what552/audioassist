@@ -307,6 +307,10 @@ const App = (() => {
   }
 
   async function _startTranscription(filePath, displayName) {
+    if (_activeRealtimeId !== null) {
+      alert('A recording is in progress. Please finish it before uploading a file.');
+      return;
+    }
     const filename = displayName || filePath.split('/').pop().split('\\').pop();
     try {
       const { job_id } = await window.pywebview.api.transcribe(filePath, {
