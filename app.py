@@ -139,6 +139,16 @@ class API:
         # Must be popped here (before the thread starts) to avoid a TOCTOU race.
         rt_segments = self._rt_segments.pop(path, None)
 
+        # Resolve ASR engine/model before spawning thread so both the main
+        # transcription and the optional background refine use the same choice.
+        model_id = options.get("model_id")
+        engine   = options.get("engine", "qwen")
+        if model_id:
+            from src.model_manager import CATALOG as _CATALOG
+            _info = next((m for m in _CATALOG if m.id == model_id), None)
+            if _info:
+                engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
+
         def _run():
             cancel_ev = threading.Event()
             with _cancel_flags_mutex:
@@ -150,11 +160,11 @@ class API:
                     js = f"onTranscribeProgress({json.dumps(job_id)}, {pct:.4f}, {json.dumps(msg)})"
                     _push(js)
 
-                hf_token    = options.get("hf_token") or os.environ.get("HF_TOKEN")
+                hf_token     = options.get("hf_token") or os.environ.get("HF_TOKEN")
                 num_speakers = options.get("num_speakers")
 
                 if rt_segments:
-                    # Diarize-only: skip ASR, use pre-collected realtime segments
+                    # Phase 1 — diarize-only: fast initial draft from live chunks
                     from src.pipeline import run_realtime_segments
                     json_path, md_path = run_realtime_segments(
                         segments=rt_segments,
@@ -166,14 +176,7 @@ class API:
                         progress_callback=_progress,
                     )
                 else:
-                    from src.pipeline import run as pipeline_run, _WHISPER_SIZE_MAP
-                    model_id = options.get("model_id")
-                    engine   = options.get("engine", "qwen")
-                    if model_id:
-                        from src.model_manager import CATALOG
-                        info = next((m for m in CATALOG if m.id == model_id), None)
-                        if info:
-                            engine = "whisper" if info.engine == "mlx-whisper" else info.engine
+                    from src.pipeline import run as pipeline_run
                     json_path, md_path = pipeline_run(
                         audio_path=path,
                         output_dir=OUTPUT_DIR,
@@ -189,6 +192,7 @@ class API:
                 # The copy is kept alongside the transcript so history playback
                 # works regardless of whether the source file has moved or been
                 # deleted.  If the copy fails we log a warning and continue.
+                audio_copy: Optional[str] = None
                 try:
                     _, ext = os.path.splitext(path)
                     audio_copy = os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}")
@@ -231,8 +235,56 @@ class API:
                 except Exception:
                     logger.warning("transcribe: failed to write WAV meta", exc_info=True)
 
-                js = f"onTranscribeComplete({json.dumps(job_id)}, {json.dumps(json_path)})"
-                _push(js)
+                # Notify frontend — include hasRefine flag so JS can enter
+                # the 'refining' status while the background re-transcription runs.
+                has_refine = bool(rt_segments)
+                _push(
+                    f"onTranscribeComplete({json.dumps(job_id)}, "
+                    f"{json.dumps(json_path)}, {json.dumps(has_refine)})"
+                )
+
+                # Phase 2 (realtime only) — full ASR re-transcription in background.
+                # Runs silently; on success overwrites JSON and notifies JS.
+                if rt_segments:
+                    _ac = audio_copy  # capture for closure
+
+                    def _refine():
+                        try:
+                            from src.pipeline import run as pipeline_run
+                            logger.info("Refine ASR started for job %s", job_id)
+                            refined_json, _ = pipeline_run(
+                                audio_path=path,
+                                output_dir=OUTPUT_DIR,
+                                hf_token=hf_token,
+                                engine=engine,
+                                asr_model_id=model_id,
+                                num_speakers=num_speakers,
+                                job_id=job_id,  # same id → overwrites draft
+                                progress_callback=lambda p, m: logger.debug(
+                                    "[refine %d%%] %s", int(p * 100), m
+                                ),
+                            )
+                            # Re-patch audio field (pipeline writes original path).
+                            if _ac:
+                                try:
+                                    with open(refined_json, encoding="utf-8") as f:
+                                        rdata = json.load(f)
+                                    rdata["audio"] = _ac
+                                    tmp = refined_json + ".tmp"
+                                    with open(tmp, "w", encoding="utf-8") as f:
+                                        json.dump(rdata, f, ensure_ascii=False, indent=2)
+                                    os.replace(tmp, refined_json)
+                                except Exception:
+                                    logger.warning(
+                                        "refine: failed to patch audio field", exc_info=True
+                                    )
+                            _push(f"onTranscribeRefined({json.dumps(job_id)})")
+                            logger.info("Refine ASR complete for job %s", job_id)
+                        except Exception:
+                            logger.exception("Refine ASR failed for job %s", job_id)
+
+                    threading.Thread(target=_refine, daemon=True).start()
+
             except _TranscriptionCancelled:
                 logger.info("Transcription cancelled: %s", job_id)
                 _push(f"onTranscribeCancel({json.dumps(job_id)})")

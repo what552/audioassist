@@ -96,6 +96,15 @@ const App = (() => {
         _setView('error');
         dom.errorFilename.textContent = session.filename;
         dom.errorMsg.textContent = session.errorMsg || 'Unknown error';
+      } else if (session.status === 'refining') {
+        _setView('file-done');
+        dom.refineHint.hidden = false;
+        dom.refineHint.textContent = '正在进行高精度转写…';
+        if (session._data) {
+          _showFileDone(session);
+        } else {
+          _loadTranscriptData(session);
+        }
       } else { // done
         _setView('file-done');
         if (session._data) {
@@ -149,6 +158,7 @@ const App = (() => {
     dom.progressPanel.hidden      = state !== 'transcribing';
     dom.errorPanel.hidden         = state !== 'error';
     dom.transcriptHeader.hidden   = state !== 'file-done';
+    dom.refineHint.hidden         = true;  // controlled separately per render
     dom.transcriptList.hidden     = state !== 'file-done';
     dom.realtimePanel.hidden      =
       !['realtime-rec','realtime-paused','realtime-done'].includes(state);
@@ -364,8 +374,15 @@ const App = (() => {
     _setProgress(pct, message);
   }
 
-  function onTranscribeComplete(jobId) {
+  function onTranscribeComplete(jobId, _jsonPath, hasRefine) {
     if (!_sessions.has(jobId)) return;
+    _updateSession(jobId, { status: hasRefine ? 'refining' : 'done' });
+  }
+
+  function onTranscribeRefined(jobId) {
+    if (!_sessions.has(jobId)) return;
+    const s = _sessions.get(jobId);
+    s._data = null;  // force JSON reload
     _updateSession(jobId, { status: 'done' });
   }
 
@@ -415,6 +432,7 @@ const App = (() => {
       btnRetry:           document.getElementById('btn-retry'),
       transcriptHeader:   document.getElementById('transcript-header'),
       transcriptMeta:     document.getElementById('transcript-meta'),
+      refineHint:         document.getElementById('refine-hint'),
       transcriptList:     document.getElementById('transcript-list'),
       realtimePanel:      document.getElementById('realtime-panel'),
       realtimeControlBar: document.getElementById('realtime-control-bar'),
@@ -720,15 +738,17 @@ const App = (() => {
   }
 
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
-           onTranscribeCancel, refreshEngineSelector: _populateEngineSelector };
+           onTranscribeCancel, onTranscribeRefined,
+           refreshEngineSelector: _populateEngineSelector };
 })();
 
 // ── Global event handlers (called by Python via evaluate_js) ──────────────────
 
 function onTranscribeProgress(jobId, pct, message) { App.onTranscribeProgress(jobId, pct, message); }
-function onTranscribeComplete(jobId, jsonPath)      { App.onTranscribeComplete(jobId, jsonPath); }
+function onTranscribeComplete(jobId, jsonPath, hasRefine) { App.onTranscribeComplete(jobId, jsonPath, hasRefine); }
 function onTranscribeError(jobId, message)          { App.onTranscribeError(jobId, message); }
 function onTranscribeCancel(jobId)                  { App.onTranscribeCancel(jobId); }
+function onTranscribeRefined(jobId)                 { App.onTranscribeRefined(jobId); }
 
 function onModelDownloadProgress(name, percent) {
   console.log(`[model] ${name} ${(percent * 100).toFixed(0)}%`);

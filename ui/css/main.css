@@ -345,6 +345,21 @@ select { font-family: inherit; }
   color: var(--text-muted);
 }
 
+/* Refine hint banner */
+.refine-hint {
+  flex-shrink: 0;
+  padding: 5px 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+.refine-hint::before {
+  content: "⏳ ";
+}
+
 /* Transcript header */
 #transcript-header {
   display: flex;
