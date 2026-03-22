@@ -264,19 +264,27 @@ class API:
                                     "[refine %d%%] %s", int(p * 100), m
                                 ),
                             )
-                            # Re-patch audio field (pipeline writes original path).
-                            if _ac:
+                            # Re-patch audio field and atomically overwrite JSON.
+                            # Acquire the same per-job lock used by save_transcript()
+                            # so a concurrent user save cannot interleave with this write.
+                            with _transcript_locks_mutex:
+                                if job_id not in _transcript_locks:
+                                    _transcript_locks[job_id] = threading.Lock()
+                                _refine_lock = _transcript_locks[job_id]
+
+                            with _refine_lock:
                                 try:
                                     with open(refined_json, encoding="utf-8") as f:
                                         rdata = json.load(f)
-                                    rdata["audio"] = _ac
+                                    if _ac:
+                                        rdata["audio"] = _ac
                                     tmp = refined_json + ".tmp"
                                     with open(tmp, "w", encoding="utf-8") as f:
                                         json.dump(rdata, f, ensure_ascii=False, indent=2)
                                     os.replace(tmp, refined_json)
                                 except Exception:
                                     logger.warning(
-                                        "refine: failed to patch audio field", exc_info=True
+                                        "refine: failed to patch audio/write JSON", exc_info=True
                                     )
                             _push(f"onTranscribeRefined({json.dumps(job_id)})")
                             logger.info("Refine ASR complete for job %s", job_id)
