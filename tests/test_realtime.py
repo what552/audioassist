@@ -2,6 +2,7 @@
 import sys
 import types
 import wave
+import queue
 import threading
 import tempfile
 import os
@@ -177,9 +178,16 @@ class TestFlushSpeech:
             rt._flush_speech()
         mock_tx.assert_not_called()
 
-    def test_long_enough_segment_spawns_thread(self):
+    def test_long_enough_segment_enqueues_for_transcription(self):
+        """A segment that meets the minimum length is enqueued, not spawned directly."""
         rt, m = _make_rt()
         rt._speech_buffer = [np.zeros(512, dtype=np.float32)] * m.MIN_SPEECH_CHUNKS
+        rt._flush_speech()
+        assert rt._transcribe_queue.qsize() == 1
+
+    def test_flush_does_not_spawn_extra_threads(self):
+        """Flushing multiple utterances must not spawn extra threads (uses the queue)."""
+        rt, m = _make_rt()
         spawned = []
         original_thread = threading.Thread
 
@@ -189,8 +197,112 @@ class TestFlushSpeech:
             return t
 
         with patch("threading.Thread", side_effect=capture_thread):
-            rt._flush_speech()
-        assert len(spawned) == 1
+            for _ in range(3):
+                rt._speech_buffer = [np.zeros(512, dtype=np.float32)] * m.MIN_SPEECH_CHUNKS
+                rt._flush_speech()
+
+        # No new threads spawned — items sit in the queue waiting for the worker
+        assert len(spawned) == 0
+
+
+# ── Worker queue — serial execution ──────────────────────────────────────────
+
+class TestWorkerQueue:
+    """Verify that the transcription worker processes items serially."""
+
+    def test_worker_processes_queued_items(self):
+        """Items enqueued via _flush_speech are processed by _transcription_worker."""
+        rt, m = _make_rt()
+        processed = []
+
+        def fake_transcribe(buf):
+            processed.append(len(buf))
+
+        rt._transcribe_segment = fake_transcribe
+
+        # Enqueue three segments manually (bypassing the min-length guard)
+        chunks_a = [np.zeros(512, dtype=np.float32)] * 5
+        chunks_b = [np.zeros(512, dtype=np.float32)] * 7
+        chunks_c = [np.zeros(512, dtype=np.float32)] * 6
+        rt._transcribe_queue.put(chunks_a)
+        rt._transcribe_queue.put(chunks_b)
+        rt._transcribe_queue.put(chunks_c)
+        rt._transcribe_queue.put(None)  # sentinel
+
+        # Run the worker in a thread and wait for it to finish
+        worker = threading.Thread(target=rt._transcription_worker)
+        worker.start()
+        worker.join(timeout=5)
+
+        assert not worker.is_alive(), "worker did not exit after sentinel"
+        assert processed == [5, 7, 6]
+
+    def test_worker_never_runs_two_transcriptions_concurrently(self):
+        """At most one _transcribe_segment call is active at any point in time."""
+        rt, m = _make_rt()
+        concurrency_violations = []
+        active = threading.local()
+
+        barrier = threading.Event()
+        call_count = [0]
+
+        def slow_transcribe(buf):
+            # Record if another call is already "inside"
+            if getattr(active, "inside", False):
+                concurrency_violations.append(True)
+            active.inside = True
+            # simulate a tiny bit of work
+            barrier.wait(timeout=0.1)
+            active.inside = False
+
+        rt._transcribe_segment = slow_transcribe
+
+        # Enqueue several segments at once
+        for _ in range(4):
+            rt._transcribe_queue.put([np.zeros(512, dtype=np.float32)] * 5)
+        rt._transcribe_queue.put(None)  # sentinel
+
+        worker = threading.Thread(target=rt._transcription_worker)
+        worker.start()
+        barrier.set()  # release the barrier so worker can proceed
+        worker.join(timeout=5)
+
+        assert not worker.is_alive()
+        assert concurrency_violations == [], "concurrent _transcribe_segment calls detected"
+
+    def test_stop_sends_sentinel_and_joins_worker(self):
+        """stop() signals the worker with None sentinel and joins it."""
+        rt, m = _make_rt()
+        # Wire up a live worker thread
+        rt._worker_thread = threading.Thread(
+            target=rt._transcription_worker, daemon=True
+        )
+        rt._worker_thread.start()
+
+        rt.stop()  # should put sentinel and join
+
+        assert rt._worker_thread is None, "worker_thread should be cleared after stop()"
+
+    def test_pause_does_not_stop_worker(self):
+        """pause() stops the stream but leaves the worker running to drain the queue."""
+        rt, m = _make_rt()
+        mock_stream = MagicMock()
+        rt._stream = mock_stream
+
+        # Start a real worker
+        rt._worker_thread = threading.Thread(
+            target=rt._transcription_worker, daemon=True
+        )
+        rt._worker_thread.start()
+
+        rt.pause()
+
+        # Worker must still be alive (it has not received the sentinel)
+        assert rt._worker_thread.is_alive(), "pause() must not stop the worker thread"
+
+        # Clean up
+        rt._transcribe_queue.put(None)
+        rt._worker_thread.join(timeout=5)
 
 
 # ── Transcribe segment ────────────────────────────────────────────────────────

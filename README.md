@@ -139,6 +139,7 @@ Click **🎙 Start Recording** in the history sidebar footer to start live micro
 - The complete microphone recording is saved as `output/<session_id>.wav`; the path is passed to the frontend via `onRealtimeStarted(sessionId, wavPath)` and stored in `session.audioPath` so the player is wired automatically when the session finishes.
 - Realtime transcript text is not automatically saved — copy manually if needed.
 - **Concurrency rules:** Uploading a file is blocked while a recording is active; starting a new recording is blocked while a file transcription is running.
+- **MLX serial execution (Apple Silicon):** Each detected utterance is placed in a `queue.Queue` and processed by a single long-running worker thread. This guarantees that `mlx-whisper` (and any other Metal/GPU backend) is never called from two threads at the same time, preventing the `A command encoder is already encoding to this command buffer` Metal assertion failure that would otherwise crash the process when several short speech segments are flushed in quick succession (e.g. during pause/resume).
 
 ### Dependencies
 
