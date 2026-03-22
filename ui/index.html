@@ -26,13 +26,16 @@
   <main id="main">
 
     <!-- ── Left: History sidebar ──────────────────────────────────────────── -->
-    <nav id="history-panel">
+    <nav id="history-panel" style="width:210px">
       <div id="history-list"></div>
       <div id="history-footer">
         <button id="btn-upload" class="btn-sidebar">📁 Upload File</button>
         <button id="btn-start-recording" class="btn-sidebar btn-sidebar-record">🎙 Start Recording</button>
       </div>
     </nav>
+
+    <!-- ── Resizer: history | center ────────────────────────────────────── -->
+    <div class="col-resizer" id="resizer-left"></div>
 
     <!-- ── Center: player + transcript content ────────────────────────────── -->
     <section id="center-panel">
@@ -143,8 +146,11 @@
 
     </section>
 
+    <!-- ── Resizer: center | summary ────────────────────────────────────── -->
+    <div class="col-resizer" id="resizer-right" hidden></div>
+
     <!-- ── Right: Summary panel (collapsible via toolbar toggle) ──────────── -->
-    <aside id="summary-panel" hidden>
+    <aside id="summary-panel" hidden style="width:360px">
       <div id="summary-inner">
 
         <!-- Controls row -->
@@ -166,6 +172,9 @@
             <span class="summary-spinner"></span> Generating…
           </div>
         </div>
+
+        <!-- Vertical resizer: summary-output | agent-chat -->
+        <div class="summary-v-resizer" id="summary-v-resizer"></div>
 
         <!-- Agent chat -->
         <div id="agent-chat">
@@ -238,5 +247,6 @@
 <script src="js/summary.js"></script>
 <script src="js/history.js"></script>
 <script src="js/app.js"></script>
+<script src="js/resizer.js"></script>
 </body>
 </html>
