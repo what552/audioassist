@@ -240,7 +240,19 @@
       </div>
       <div id="template-list"></div>
 
-      <div class="config-section-title" style="margin-top:12px">Obsidian Sync</div>
+      <div class="config-section-title" style="margin-top:12px">Storage</div>
+      <div class="config-row">
+        <label for="cfg-output-folder">Output folder</label>
+        <div class="config-folder-row">
+          <input id="cfg-output-folder" type="text" readonly />
+          <button id="btn-output-browse" class="btn-toolbar btn-sm">Choose…</button>
+        </div>
+      </div>
+      <div class="config-actions">
+        <button id="btn-save-storage" class="btn-primary btn-sm">Save</button>
+      </div>
+
+      <div class="config-section-title" style="margin-top:4px">Obsidian Sync</div>
       <div class="config-row">
         <label>
           <input id="cfg-obsidian-enabled" type="checkbox" />

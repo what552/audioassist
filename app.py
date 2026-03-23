@@ -24,9 +24,29 @@ logger = logging.getLogger(__name__)
 _window = None
 
 APP_DATA_DIR = user_data_dir("TranscribeApp", appauthor=False)
-OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
+_DEFAULT_OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
+
+# Known audio extensions used when copying source files into the output dir
+_AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".mp4", ".aac", ".flac", ".ogg", ".mov", ".mkv")
+
+
+def _resolve_output_dir() -> str:
+    """Return OUTPUT_DIR: persisted path from config if valid, else default."""
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, encoding="utf-8") as _f:
+                _cfg = json.load(_f)
+            stored = _cfg.get("storage", {}).get("output_dir", "")
+            if stored and os.path.isdir(stored):
+                return stored
+    except Exception:
+        pass
+    return _DEFAULT_OUTPUT_DIR
+
+
+OUTPUT_DIR = _resolve_output_dir()
 
 _LANG_INSTRUCTIONS: dict[str, str] = {
     "zh":    "请用中文生成纪要。",
@@ -1028,21 +1048,19 @@ class API:
 
     def delete_session(self, job_id: str) -> bool:
         """Delete a transcript session and all associated files."""
-        json_path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-        wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
-        summary_path = os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
-        meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
+        candidates = [
+            os.path.join(OUTPUT_DIR, f"{job_id}.json"),
+            os.path.join(OUTPUT_DIR, f"{job_id}.wav"),
+            os.path.join(OUTPUT_DIR, f"{job_id}.md"),
+            os.path.join(OUTPUT_DIR, f"{job_id}_summary.json"),
+            os.path.join(OUTPUT_DIR, f"{job_id}_meta.json"),
+            os.path.join(OUTPUT_DIR, f"{job_id}_chat.json"),
+        ] + [os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}") for ext in _AUDIO_EXTS]
         deleted = False
-        if os.path.exists(json_path):
-            os.remove(json_path)
-            deleted = True
-        if os.path.exists(wav_path):
-            os.remove(wav_path)
-            deleted = True
-        if os.path.exists(summary_path):
-            os.remove(summary_path)
-        if os.path.exists(meta_path):
-            os.remove(meta_path)
+        for p in candidates:
+            if os.path.exists(p):
+                os.remove(p)
+                deleted = True
         return deleted
 
     # ── Model management ───────────────────────────────────────────────────────
@@ -1119,6 +1137,40 @@ class API:
 
     def get_api_config(self) -> dict:
         return self._load_config().get("api", {})
+
+    # ── Storage config ──────────────────────────────────────────────────────────
+
+    def get_storage_config(self) -> dict:
+        """Return current storage paths."""
+        return {"output_dir": OUTPUT_DIR, "default_output_dir": _DEFAULT_OUTPUT_DIR}
+
+    def set_output_dir(self, path: str) -> dict:
+        """
+        Persist a new OUTPUT_DIR.  Effective immediately for new operations.
+
+        Returns {"ok": True, "path": path} on success,
+                {"ok": False, "error": "..."} on failure.
+        """
+        global OUTPUT_DIR
+        path = (path or "").strip()
+        if not path:
+            return {"ok": False, "error": "Path is empty"}
+        if not os.path.isdir(path):
+            return {"ok": False, "error": f"Directory not found: {path}"}
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        cfg = self._load_config()
+        cfg.setdefault("storage", {})["output_dir"] = path
+        self._save_config(cfg)
+        OUTPUT_DIR = path
+        return {"ok": True, "path": path}
+
+    def select_output_folder(self) -> Optional[str]:
+        """Open a native folder picker and return the chosen path (or None)."""
+        if _window is None:
+            return None
+        import webview
+        result = _window.create_file_dialog(dialog_type=webview.FileDialog.FOLDER)
+        return result[0] if result else None
 
     # ── Obsidian sync ───────────────────────────────────────────────────────────
 

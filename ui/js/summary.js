@@ -65,6 +65,9 @@ const Summary = (() => {
       btnSaveConfig:      document.getElementById('btn-save-config'),
       btnAddTemplate:     document.getElementById('btn-add-template'),
       templateList:       document.getElementById('template-list'),
+      cfgOutputFolder:    document.getElementById('cfg-output-folder'),
+      btnOutputBrowse:    document.getElementById('btn-output-browse'),
+      btnSaveStorage:     document.getElementById('btn-save-storage'),
       obsEnabled:         document.getElementById('cfg-obsidian-enabled'),
       obsFolder:          document.getElementById('cfg-obsidian-folder'),
       btnObsBrowse:       document.getElementById('btn-obsidian-browse'),
@@ -88,6 +91,8 @@ const Summary = (() => {
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
     dom.btnAddTemplate.addEventListener('click', _onAddTemplate);
+    dom.btnOutputBrowse.addEventListener('click', _onOutputBrowse);
+    dom.btnSaveStorage.addEventListener('click', _onSaveStorage);
     dom.btnObsBrowse.addEventListener('click', _onObsBrowse);
     dom.btnSaveObsidian.addEventListener('click', _onSaveObsidian);
 
@@ -183,6 +188,36 @@ const Summary = (() => {
       dom.obsFolder.value    = obs.folder || '';
     } catch (e) {
       console.warn('[Summary] _loadObsidianConfig error:', e);
+    }
+    try {
+      const st = await window.pywebview.api.get_storage_config();
+      dom.cfgOutputFolder.value = st.output_dir || '';
+    } catch (e) {
+      console.warn('[Summary] _loadStorageConfig error:', e);
+    }
+  }
+
+  async function _onOutputBrowse() {
+    try {
+      const folder = await window.pywebview.api.select_output_folder();
+      if (folder) dom.cfgOutputFolder.value = folder;
+    } catch (e) {
+      console.warn('[Summary] _onOutputBrowse error:', e);
+    }
+  }
+
+  async function _onSaveStorage() {
+    try {
+      const result = await window.pywebview.api.set_output_dir(
+        dom.cfgOutputFolder.value.trim()
+      );
+      if (result && result.ok) {
+        _closeModal();
+      } else {
+        alert(result?.error || 'Failed to set output folder');
+      }
+    } catch (e) {
+      console.error('[Summary] _onSaveStorage error:', e);
     }
   }
 
