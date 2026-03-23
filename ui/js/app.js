@@ -86,16 +86,18 @@ const App = (() => {
     History.render(_sortedSessions(), _selectedId);
 
     const session = _selectedId ? _sessions.get(_selectedId) : null;
-    if (!session) { _setView('idle'); return; }
+    if (!session) { _setView('idle'); Summary.reset(); return; }
 
     if (session.type === 'file') {
       if (session.status === 'transcribing') {
         _setView('transcribing');
         dom.progressFilename.textContent = session.filename;
+        Summary.reset();
       } else if (session.status === 'error') {
         _setView('error');
         dom.errorFilename.textContent = session.filename;
         dom.errorMsg.textContent = session.errorMsg || 'Unknown error';
+        Summary.reset();
       } else if (session.status === 'refining') {
         _setView('file-done');
         dom.refineHint.hidden = false;
@@ -117,9 +119,11 @@ const App = (() => {
       if (session.status === 'recording') {
         _setView('realtime-rec');
         _syncControlBar(session);
+        Summary.reset();
       } else if (session.status === 'paused') {
         _setView('realtime-paused');
         _syncControlBar(session);
+        Summary.reset();
       } else { // done
         _setView('realtime-done');
         Player.load(session.audioPath || '');
@@ -459,6 +463,17 @@ const App = (() => {
     Player.onTimeUpdate((t) => {
       Transcript.highlightAt(t);
       _updateTimeDisplay(t);
+    });
+
+    // Spacebar: toggle play/pause when player is visible and no input has focus
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space') return;
+      if (dom.playerBar.hidden) return;
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+      if (document.activeElement && document.activeElement.isContentEditable) return;
+      e.preventDefault();
+      if (dom.audioEl.paused) Player.play(); else Player.pause();
     });
 
     dom.saveBtn.addEventListener('click', () => Transcript.saveAll());

@@ -94,6 +94,16 @@ const Summary = (() => {
     await _initChat(jobId);
   }
 
+  // ── Public: reset panel (no active job — recording / transcribing / idle) ──
+
+  function reset() {
+    _jobId = null;
+    _setOutput('placeholder');
+    _renderVersions([]);
+    agentDom.messages.innerHTML = '';
+    _agentCurrentBubble = null;
+  }
+
   // ── Version management ─────────────────────────────────────────────────────
 
   async function _loadVersions(jobId) {
@@ -470,7 +480,7 @@ const Summary = (() => {
   }
 
   return {
-    init, showForJob,
+    init, showForJob, reset,
     onChunk, onComplete, onError,
     onAgentChunk, onAgentToolStart, onAgentToolEnd,
     onAgentDraftUpdated, onAgentComplete, onAgentError,
