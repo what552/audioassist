@@ -22,8 +22,25 @@ const Summary = (() => {
   let _generating = false;
   let _agentBusy = false;
   let _agentCurrentBubble = null;
+  let _streamBuffer      = '';  // summary chunk accumulator
+  let _agentStreamBuffer = '';  // agent chunk accumulator
   let dom = {};
   let agentDom = {};
+
+  // ── Markdown rendering ──────────────────────────────────────────────────────
+
+  // Configure marked once: GitHub-flavoured, line breaks as <br>
+  if (typeof marked !== 'undefined') {
+    marked.use({ gfm: true, breaks: true });
+  }
+
+  function _md(text) {
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+      // Fallback: escape HTML only
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    return DOMPurify.sanitize(marked.parse(text));
+  }
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -307,11 +324,13 @@ const Summary = (() => {
   function onChunk(jobId, chunk) {
     if (jobId !== _jobId) return;
     if (dom.summaryText.hidden) {
-      dom.summaryText.textContent = '';
+      _streamBuffer = '';
+      dom.summaryText.innerHTML = '';
       dom.summaryText.hidden = false;
       dom.placeholder.hidden = true;
     }
-    dom.summaryText.textContent += chunk;
+    _streamBuffer += chunk;
+    dom.summaryText.innerHTML = _md(_streamBuffer);
     dom.output.scrollTop = dom.output.scrollHeight;
   }
 
@@ -354,7 +373,11 @@ const Summary = (() => {
   function _appendChatBubble(role, text) {
     const bubble = document.createElement('div');
     bubble.className = `chat-bubble chat-bubble-${role}`;
-    bubble.textContent = text;
+    if (role === 'assistant' && text) {
+      bubble.innerHTML = _md(text);
+    } else {
+      bubble.textContent = text;
+    }
     agentDom.messages.appendChild(bubble);
     agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
     return bubble;
@@ -369,6 +392,7 @@ const Summary = (() => {
     agentDom.btnSend.disabled = true;
     _agentBusy = true;
 
+    _agentStreamBuffer = '';
     _appendChatBubble('user', text);
     _agentCurrentBubble = _appendChatBubble('assistant', '');
     _agentCurrentBubble.classList.add('chat-bubble-loading');
@@ -405,7 +429,8 @@ const Summary = (() => {
     if (jobId !== _jobId) return;
     if (_agentCurrentBubble) {
       _agentCurrentBubble.classList.remove('chat-bubble-loading');
-      _agentCurrentBubble.textContent += chunk;
+      _agentStreamBuffer += chunk;
+      _agentCurrentBubble.innerHTML = _md(_agentStreamBuffer);
     }
     agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
   }
@@ -434,10 +459,11 @@ const Summary = (() => {
     agentDom.toolStatus.hidden = true;
     if (_agentCurrentBubble) {
       _agentCurrentBubble.classList.remove('chat-bubble-loading');
-      if (!_agentCurrentBubble.textContent && fullText) {
-        _agentCurrentBubble.textContent = fullText;
-      }
+      // Re-render with the authoritative full text to fix any mid-chunk MD artifacts
+      const finalText = fullText || _agentStreamBuffer;
+      if (finalText) _agentCurrentBubble.innerHTML = _md(finalText);
       _agentCurrentBubble = null;
+      _agentStreamBuffer = '';
     }
     agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
   }
@@ -461,7 +487,8 @@ const Summary = (() => {
     _generating = active;
     dom.btnSummarize.disabled = active;
     if (active) {
-      dom.summaryText.textContent = '';
+      _streamBuffer = '';
+      dom.summaryText.innerHTML = '';
       dom.summaryText.hidden = false;
       dom.placeholder.hidden = true;
       dom.loading.hidden = false;
@@ -477,13 +504,13 @@ const Summary = (() => {
     const btnExport = document.getElementById('btn-export-summary');
     if (btnExport) btnExport.hidden = (state !== 'text');
     if (state === 'placeholder') {
-      dom.summaryText.textContent = '';
+      dom.summaryText.innerHTML = '';
       dom.summaryText.style.color = '';
     } else if (state === 'text') {
-      dom.summaryText.textContent = text;
+      dom.summaryText.innerHTML = _md(text);
       dom.summaryText.style.color = '';
     } else if (state === 'error') {
-      dom.summaryText.textContent = '⚠ ' + text;
+      dom.summaryText.textContent = '⚠ ' + text;  // error messages are plain text
       dom.summaryText.style.color = 'var(--warn)';
     }
   }
