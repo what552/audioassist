@@ -114,6 +114,7 @@
         <span id="transcript-meta"></span>
         <button id="btn-save" class="btn-save" hidden>Save</button>
         <span id="save-status" class="save-status"></span>
+        <button id="btn-export-transcript" class="btn-toolbar btn-sm">Export ▾</button>
       </div>
       <!-- Refine hint (shown while background high-accuracy ASR runs) -->
       <div id="refine-hint" class="refine-hint" hidden></div>
@@ -157,6 +158,7 @@
         <div id="summary-controls">
           <select id="sel-template" title="Summary template"></select>
           <button id="btn-summarize" class="btn-primary btn-sm">Generate</button>
+          <button id="btn-export-summary" class="btn-toolbar btn-sm" hidden>Export ▾</button>
         </div>
 
         <!-- Version switcher -->
@@ -240,6 +242,8 @@
     </div>
   </div>
 </div>
+
+<div id="toast" hidden></div>
 
 <script src="js/player.js"></script>
 <script src="js/transcript.js"></script>

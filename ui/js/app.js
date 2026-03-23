@@ -36,6 +36,10 @@ const App = (() => {
   let _timerInterval = null;
   let _timerSeconds  = 0;
 
+  // ── Export menu (shared by transcript + summary export buttons) ────────────
+  let _exportMenuEl  = null;
+  let _toastTimer    = null;
+
   function _startTimer() {
     _timerInterval = setInterval(() => { _timerSeconds++; _updateTimer(); }, 1000);
   }
@@ -444,8 +448,10 @@ const App = (() => {
       playerFilename:     document.getElementById('player-filename'),
       audioEl:            document.getElementById('audio-el'),
       playerTime:         document.getElementById('player-time'),
-      saveBtn:            document.getElementById('btn-save'),
-      saveStatus:         document.getElementById('save-status'),
+      saveBtn:              document.getElementById('btn-save'),
+      saveStatus:           document.getElementById('save-status'),
+      btnExportTranscript:  document.getElementById('btn-export-transcript'),
+      toast:                document.getElementById('toast'),
       btnUpload:          document.getElementById('btn-upload'),
       selEngine:          document.getElementById('sel-engine'),
       rcSessionName:      document.getElementById('rc-session-name'),
@@ -479,6 +485,10 @@ const App = (() => {
     dom.saveBtn.addEventListener('click', () => Transcript.saveAll());
     document.addEventListener('transcript:unsaved', (e) => {
       _updateSaveStatus(e.detail.count);
+    });
+
+    dom.btnExportTranscript.addEventListener('click', (e) => {
+      openExportMenu(e, (fmt) => _exportTranscript(fmt));
     });
 
     dom.btnUpload.addEventListener('click', _onUpload);
@@ -752,9 +762,67 @@ const App = (() => {
     _populateEngineSelector();
   }
 
+  // ── Export dropdown (shared with summary.js via App.openExportMenu) ─────────
+
+  function openExportMenu(e, onSelect) {
+    if (_exportMenuEl) { _exportMenuEl.remove(); _exportMenuEl = null; }
+    const menu = document.createElement('div');
+    menu.className = 'export-menu';
+    _exportMenuEl = menu;
+    ['txt', 'md'].forEach(fmt => {
+      const btn = document.createElement('button');
+      btn.className = 'export-item';
+      btn.textContent = `Export as ${fmt.toUpperCase()}`;
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        menu.remove(); _exportMenuEl = null;
+        onSelect(fmt);
+      });
+      menu.appendChild(btn);
+    });
+    document.body.appendChild(menu);
+    const rect = e.currentTarget.getBoundingClientRect();
+    menu.style.left = rect.left + 'px';
+    menu.style.top  = (rect.bottom + 4) + 'px';
+    const dismiss = (ev) => {
+      if (!menu.contains(ev.target)) {
+        menu.remove(); _exportMenuEl = null;
+        document.removeEventListener('mousedown', dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
+  }
+
+  function showToast(msg, duration = 2500) {
+    if (!dom.toast) return;
+    dom.toast.textContent = msg;
+    dom.toast.hidden = false;
+    dom.toast.classList.remove('toast-fade');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => {
+      dom.toast.classList.add('toast-fade');
+      setTimeout(() => { dom.toast.hidden = true; }, 300);
+    }, duration);
+  }
+
+  async function _exportTranscript(fmt) {
+    const jobId = _selectedId;
+    if (!jobId || !window.pywebview) return;
+    try {
+      const res = await window.pywebview.api.export_transcript(jobId, fmt);
+      if (res && res.status === 'saved') {
+        const name = res.path.replace(/\\/g, '/').split('/').pop();
+        showToast(`已保存到 ${name}`);
+      }
+    } catch (err) {
+      console.error('[App] export_transcript error:', err);
+    }
+  }
+
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
            onTranscribeCancel, onTranscribeRefined,
-           refreshEngineSelector: _populateEngineSelector };
+           refreshEngineSelector: _populateEngineSelector,
+           openExportMenu, showToast };
 })();
 
 // ── Global event handlers (called by Python via evaluate_js) ──────────────────

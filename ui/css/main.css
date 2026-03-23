@@ -1139,6 +1139,50 @@ select { font-family: inherit; }
 }
 .speaker-menu-item:hover { background: var(--bg-hover); }
 
+/* ── Export dropdown menu ────────────────────────────────────────────────────── */
+.export-menu {
+  position: fixed;
+  background: var(--bg-toolbar);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  padding: 4px 0;
+  z-index: 1000;
+  min-width: 150px;
+}
+.export-item {
+  display: block;
+  width: 100%;
+  padding: 7px 14px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.export-item:hover { background: var(--bg-hover); }
+
+/* ── Toast notification ──────────────────────────────────────────────────────── */
+#toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e3a1e;
+  color: #90cc90;
+  border: 1px solid #3a6a3a;
+  border-radius: var(--radius);
+  padding: 8px 20px;
+  font-size: 13px;
+  z-index: 2000;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.3s;
+}
+#toast.toast-fade { opacity: 0; }
+
 .row-speaker-input {
   font-family: var(--font);
   font-size: 11px;

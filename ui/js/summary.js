@@ -74,6 +74,13 @@ const Summary = (() => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendAgentTurn(); }
     });
 
+    const btnExportSummary = document.getElementById('btn-export-summary');
+    if (btnExportSummary) {
+      btnExportSummary.addEventListener('click', (e) => {
+        App.openExportMenu(e, (fmt) => _exportSummary(fmt));
+      });
+    }
+
     _loadConfig();
     _loadTemplates();
   }
@@ -467,6 +474,8 @@ const Summary = (() => {
     dom.placeholder.hidden = state !== 'placeholder';
     dom.summaryText.hidden = state !== 'text' && state !== 'error';
     dom.loading.hidden = true;
+    const btnExport = document.getElementById('btn-export-summary');
+    if (btnExport) btnExport.hidden = (state !== 'text');
     if (state === 'placeholder') {
       dom.summaryText.textContent = '';
       dom.summaryText.style.color = '';
@@ -476,6 +485,19 @@ const Summary = (() => {
     } else if (state === 'error') {
       dom.summaryText.textContent = '⚠ ' + text;
       dom.summaryText.style.color = 'var(--warn)';
+    }
+  }
+
+  async function _exportSummary(fmt) {
+    if (!_jobId || !window.pywebview) return;
+    try {
+      const res = await window.pywebview.api.export_summary(_jobId, fmt);
+      if (res && res.status === 'saved') {
+        const name = res.path.replace(/\\/g, '/').split('/').pop();
+        App.showToast(`已保存到 ${name}`);
+      }
+    } catch (err) {
+      console.error('[Summary] export_summary error:', err);
     }
   }
 

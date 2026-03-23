@@ -104,6 +104,29 @@ def _push(js: str):
         _window.evaluate_js(js)
 
 
+# ── Export helpers ─────────────────────────────────────────────────────────────
+
+def _fmt_time(seconds: float) -> str:
+    m, s = divmod(int(seconds), 60)
+    return f"{m:02d}:{s:02d}"
+
+
+def _transcript_to_txt(segments: list) -> str:
+    return "\n".join(
+        f"[{_fmt_time(seg.get('start', 0))}] {seg.get('speaker', '')}: {seg.get('text', '').strip()}"
+        for seg in segments
+    )
+
+
+def _transcript_to_md(segments: list) -> str:
+    lines = ["# Transcript", ""]
+    for seg in segments:
+        lines.append(f"**{_fmt_time(seg.get('start', 0))} {seg.get('speaker', '')}**  ")
+        lines.append(seg.get("text", "").strip())
+        lines.append("")
+    return "\n".join(lines)
+
+
 class API:
     def __init__(self):
         self._realtime = None  # RealtimeTranscriber instance when active
@@ -846,6 +869,81 @@ class API:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(versions, f, ensure_ascii=False, indent=2)
         return True
+
+    def export_transcript(self, job_id: str, format: str) -> dict:
+        """
+        Export transcript to a user-chosen file via a native Save dialog.
+
+        format: 'txt' or 'md'
+        Returns {"status": "saved", "path": "..."} or {"status": "cancelled"}.
+        """
+        if _window is None:
+            return {"status": "error", "error": "No window"}
+        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        if not os.path.exists(path):
+            return {"status": "error", "error": "Transcript not found"}
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        fmt = (format or "txt").lower().strip()
+        if fmt == "md":
+            content      = _transcript_to_md(data.get("segments", []))
+            default_name = "transcript.md"
+            file_types   = ("Markdown (*.md)", "All files (*.*)")
+        else:
+            content      = _transcript_to_txt(data.get("segments", []))
+            default_name = "transcript.txt"
+            file_types   = ("Text Files (*.txt)", "All files (*.*)")
+
+        import webview
+        result = _window.create_file_dialog(
+            dialog_type=webview.FileDialog.SAVE,
+            save_filename=default_name,
+            file_types=file_types,
+        )
+        if not result:
+            return {"status": "cancelled"}
+
+        save_path = result[0] if isinstance(result, (list, tuple)) else result
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return {"status": "saved", "path": save_path}
+
+    def export_summary(self, job_id: str, format: str) -> dict:
+        """
+        Export the latest summary version to a user-chosen file via a native Save dialog.
+
+        format: 'txt' or 'md'
+        Returns {"status": "saved", "path": "..."} or {"status": "cancelled"}.
+        """
+        if _window is None:
+            return {"status": "error", "error": "No window"}
+        versions = self.get_summary_versions(job_id)
+        if not versions:
+            return {"status": "error", "error": "No summary available"}
+
+        text = versions[-1].get("text", "")
+        fmt  = (format or "txt").lower().strip()
+        if fmt == "md":
+            default_name = "summary.md"
+            file_types   = ("Markdown (*.md)", "All files (*.*)")
+        else:
+            default_name = "summary.txt"
+            file_types   = ("Text Files (*.txt)", "All files (*.*)")
+
+        import webview
+        result = _window.create_file_dialog(
+            dialog_type=webview.FileDialog.SAVE,
+            save_filename=default_name,
+            file_types=file_types,
+        )
+        if not result:
+            return {"status": "cancelled"}
+
+        save_path = result[0] if isinstance(result, (list, tuple)) else result
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return {"status": "saved", "path": save_path}
 
     def rename_session(self, job_id: str, name: str) -> bool:
         """Rename a transcript session.
