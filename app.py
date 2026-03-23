@@ -84,6 +84,9 @@ _DEFAULT_TEMPLATES = [
 _cancel_flags: dict[str, threading.Event] = {}
 _cancel_flags_mutex = threading.Lock()
 
+# Guard so the Obsidian startup scan runs only once per process
+_obsidian_startup_done = False
+
 
 class _TranscriptionCancelled(Exception):
     """Raised inside transcribe() thread when the job is cancelled."""
@@ -426,6 +429,7 @@ class API:
             except Exception:
                 logger.warning("save_transcript: failed to regenerate .md", exc_info=True)
 
+        threading.Thread(target=lambda: self._obsidian_auto_sync(job_id), daemon=True).start()
         return True
 
     def rename_speaker(self, job_id: str, old_speaker: str, new_speaker: str) -> dict:
@@ -877,6 +881,13 @@ class API:
             })
 
         result.sort(key=lambda x: x["date"], reverse=True)
+
+        # One-time background Obsidian startup scan
+        global _obsidian_startup_done
+        if not _obsidian_startup_done:
+            _obsidian_startup_done = True
+            threading.Thread(target=self._obsidian_startup_scan, daemon=True).start()
+
         return result
 
     def get_summary_versions(self, job_id: str) -> list[dict]:
@@ -903,6 +914,7 @@ class API:
         versions = versions[-3:]  # keep max 3
         with open(path, "w", encoding="utf-8") as f:
             json.dump(versions, f, ensure_ascii=False, indent=2)
+        threading.Thread(target=lambda: self._obsidian_auto_sync(job_id), daemon=True).start()
         return True
 
     def export_transcript(self, job_id: str, format: str) -> dict:
@@ -990,11 +1002,18 @@ class API:
         if os.path.exists(json_path):
             with open(json_path, encoding="utf-8") as f:
                 data = json.load(f)
+            # Capture old display name and date for Obsidian rename BEFORE write
+            old_display = data.get("filename") or os.path.basename(data.get("audio", "")) or job_id
+            old_date    = (data.get("created_at") or "")[:10]
             data["filename"] = name
             tmp_path = json_path + ".tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_path, json_path)
+            threading.Thread(
+                target=lambda: self._obsidian_rename(job_id, old_display, old_date, name),
+                daemon=True,
+            ).start()
             return True
         wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
         if os.path.exists(wav_path):
@@ -1099,6 +1118,107 @@ class API:
 
     def get_api_config(self) -> dict:
         return self._load_config().get("api", {})
+
+    # ── Obsidian sync ───────────────────────────────────────────────────────────
+
+    def get_obsidian_config(self) -> dict:
+        """Return current Obsidian sync config: {folder, enabled}."""
+        obs = self._load_config().get("obsidian", {})
+        return {"folder": obs.get("folder", ""), "enabled": bool(obs.get("enabled", False))}
+
+    def set_obsidian_config(self, folder: str, enabled: bool) -> bool:
+        """Save Obsidian sync settings to config.json."""
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        cfg = self._load_config()
+        cfg["obsidian"] = {"folder": (folder or "").strip(), "enabled": bool(enabled)}
+        self._save_config(cfg)
+        return True
+
+    def select_obsidian_folder(self) -> Optional[str]:
+        """Open a native folder picker and return the chosen path (or None)."""
+        if _window is None:
+            return None
+        import webview
+        result = _window.create_file_dialog(dialog_type=webview.FileDialog.FOLDER)
+        return result[0] if result else None
+
+    def sync_to_obsidian(self, job_id: str) -> dict:
+        """
+        Sync a single session to the configured Obsidian folder.
+
+        Returns {"status": "ok", "path": "..."}, {"status": "disabled"},
+                or {"status": "error", "error": "..."}.
+        """
+        obs = self._load_config().get("obsidian", {})
+        if not obs.get("enabled") or not obs.get("folder"):
+            return {"status": "disabled"}
+        folder = obs["folder"]
+        if not os.path.isdir(folder):
+            return {"status": "error", "error": f"Folder not found: {folder}"}
+        from src.obsidian import sync_job
+        try:
+            path = sync_job(job_id, OUTPUT_DIR, folder)
+            return {"status": "ok", "path": path}
+        except Exception as e:
+            logger.warning("sync_to_obsidian failed for job %s: %s", job_id, e)
+            return {"status": "error", "error": str(e)}
+
+    # ── Obsidian internal helpers ───────────────────────────────────────────────
+
+    def _obsidian_auto_sync(self, job_id: str) -> None:
+        """Silently sync a job after transcript/summary save."""
+        obs = self._load_config().get("obsidian", {})
+        if not obs.get("enabled") or not obs.get("folder"):
+            return
+        folder = obs["folder"]
+        if not os.path.isdir(folder):
+            return
+        from src.obsidian import sync_job
+        try:
+            sync_job(job_id, OUTPUT_DIR, folder)
+        except Exception:
+            logger.warning("Obsidian auto-sync failed for job %s", job_id, exc_info=True)
+
+    def _obsidian_rename(
+        self, job_id: str, old_display: str, old_date: str, new_display: str
+    ) -> None:
+        """Rename the Obsidian MD file when a session is renamed."""
+        obs = self._load_config().get("obsidian", {})
+        if not obs.get("enabled") or not obs.get("folder"):
+            return
+        folder = obs["folder"]
+        if not os.path.isdir(folder):
+            return
+        from src.obsidian import obsidian_filename, sync_job
+        import time as _t
+        date = old_date or _t.strftime("%Y-%m-%d")
+        old_name = obsidian_filename(date, old_display)
+        new_name = obsidian_filename(date, new_display)
+        old_path = os.path.join(folder, old_name)
+        new_path = os.path.join(folder, new_name)
+        try:
+            if os.path.exists(old_path) and old_path != new_path:
+                os.rename(old_path, new_path)
+            elif not os.path.exists(new_path):
+                sync_job(job_id, OUTPUT_DIR, folder)
+        except Exception:
+            logger.warning("Obsidian rename failed for job %s", job_id, exc_info=True)
+
+    def _obsidian_startup_scan(self) -> None:
+        """Background startup scan — sync all sessions missing an Obsidian file."""
+        obs = self._load_config().get("obsidian", {})
+        if not obs.get("enabled") or not obs.get("folder"):
+            return
+        folder = obs["folder"]
+        if not os.path.isdir(folder):
+            return
+        from src.obsidian import scan_and_sync
+        try:
+            synced = scan_and_sync(OUTPUT_DIR, folder)
+            if synced:
+                logger.info("Obsidian startup sync: wrote %d file(s)", len(synced))
+        except Exception:
+            logger.warning("Obsidian startup scan failed", exc_info=True)
 
     def save_summary_templates(self, templates: list[dict]) -> bool:
         os.makedirs(APP_DATA_DIR, exist_ok=True)

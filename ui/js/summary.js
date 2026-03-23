@@ -62,9 +62,13 @@ const Summary = (() => {
       cfgBaseUrl:     document.getElementById('cfg-base-url'),
       cfgApiKey:      document.getElementById('cfg-api-key'),
       cfgModel:       document.getElementById('cfg-model'),
-      btnSaveConfig:  document.getElementById('btn-save-config'),
-      btnAddTemplate: document.getElementById('btn-add-template'),
-      templateList:   document.getElementById('template-list'),
+      btnSaveConfig:      document.getElementById('btn-save-config'),
+      btnAddTemplate:     document.getElementById('btn-add-template'),
+      templateList:       document.getElementById('template-list'),
+      obsEnabled:         document.getElementById('cfg-obsidian-enabled'),
+      obsFolder:          document.getElementById('cfg-obsidian-folder'),
+      btnObsBrowse:       document.getElementById('btn-obsidian-browse'),
+      btnSaveObsidian:    document.getElementById('btn-save-obsidian'),
     };
 
     agentDom = {
@@ -84,6 +88,8 @@ const Summary = (() => {
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
     dom.btnAddTemplate.addEventListener('click', _onAddTemplate);
+    dom.btnObsBrowse.addEventListener('click', _onObsBrowse);
+    dom.btnSaveObsidian.addEventListener('click', _onSaveObsidian);
 
     agentDom.btnSend.addEventListener('click', _sendAgentTurn);
     agentDom.btnClear.addEventListener('click', _clearAgentChat);
@@ -170,6 +176,34 @@ const Summary = (() => {
       dom.cfgModel.value   = cfg.model    || '';
     } catch (e) {
       console.warn('[Summary] _loadConfig error:', e);
+    }
+    try {
+      const obs = await window.pywebview.api.get_obsidian_config();
+      dom.obsEnabled.checked = !!obs.enabled;
+      dom.obsFolder.value    = obs.folder || '';
+    } catch (e) {
+      console.warn('[Summary] _loadObsidianConfig error:', e);
+    }
+  }
+
+  async function _onObsBrowse() {
+    try {
+      const folder = await window.pywebview.api.select_obsidian_folder();
+      if (folder) dom.obsFolder.value = folder;
+    } catch (e) {
+      console.warn('[Summary] _onObsBrowse error:', e);
+    }
+  }
+
+  async function _onSaveObsidian() {
+    try {
+      await window.pywebview.api.set_obsidian_config(
+        dom.obsFolder.value.trim(),
+        dom.obsEnabled.checked,
+      );
+      _closeModal();
+    } catch (e) {
+      console.error('[Summary] _onSaveObsidian error:', e);
     }
   }
 
