@@ -2,9 +2,9 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.11 — r02-b4)
+## Features (v0.12 — r02-b12)
 
-- **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel
+- **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel; all three column dividers are draggable for custom widths
 - **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
 - **History sidebar** — lists all sessions (active first, then newest-first); click any entry to switch the center panel; live sessions show a 🔴 indicator
 - **Engine selector** — dynamically lists all downloaded ASR model variants; each option is a specific model (e.g. `Qwen3-ASR 1.7B`, `Whisper Large v3 Turbo`); refreshes after download or delete
@@ -16,17 +16,25 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Transcription retry** — if a transcription fails the error panel shows a Retry button that re-launches the same file with one click
 - **Transcript list** — speaker-labelled blocks with timestamps; click any row to seek the player
 - **Inline editing** — double-click a row's text to edit in-place (Enter/Blur saves, Escape cancels); unsaved rows highlighted in orange
+- **Speaker rename** — click any speaker label to open a rename menu; rename all segments for that speaker in one step (bulk) or just the individual segment (single); changes are reflected immediately in the transcript list
 - **Save button** — flush all edits back to the JSON transcript; `.md` sidecar regenerated automatically
-- **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time
+- **Export transcript** — "Export ▾" button in the transcript header exports the current transcript as `.txt` (plain text with timestamps and speakers) or `.md` (Markdown with speaker headings) via a native Save dialog
+- **Audio player** — HTML5 playback panel; playhead position synced to transcript highlight in real time; spacebar toggles play/pause when the player is visible (spacebar never activates toolbar buttons such as Start Recording)
 - **Output files** — per-job `.json` (full word-level data) + `.md` (human-readable) saved to the platform data directory
-- **Summary panel** — collapsible right panel; LLM-powered streaming summarization; up to 3 versions saved per job with a version switcher; interactive Summary Agent chat for multi-turn editing and Q&A (see [Summary panel](#summary-panel))
+- **Summary panel** — collapsible right panel; LLM-powered streaming summarization with Markdown rendering; up to 3 versions saved per job with a version switcher; interactive Summary Agent chat for multi-turn editing and Q&A (see [Summary panel](#summary-panel))
+- **Export summary** — "Export ▾" button in the summary panel exports the current summary as `.txt` or `.md` via a native Save dialog
+- **Markdown rendering** — summary text and Summary Agent replies are rendered as Markdown (bold, headings, lists, code blocks) using `marked.js` + `DOMPurify`; raw `**` symbols are never shown to the user
+- **Obsidian vault sync** — configure a target vault folder in Settings; every time a transcript is saved or a summary is generated the corresponding session is automatically written as `YYYY-MM-DD display_name.md` with YAML frontmatter (date, duration, speakers, source, job_id) plus summary and transcript sections; session renames propagate to the vault filename; on first launch all existing sessions are back-filled (see Settings → Obsidian Sync)
 - **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the pipeline runs speaker diarization only (ASR already done live) to produce the final transcript (see [Realtime transcription](#realtime-transcription))
 - **Realtime timestamps** — each live utterance records absolute `start`/`end` times (seconds from session start); displayed as `[MM:SS]` prefix in the live panel and passed to the diarizer for accurate speaker labelling
-- **Finish → diarize only + background refine** — when a realtime session ends, the already-transcribed segments are used for instant diarize-only output; simultaneously a full high-accuracy ASR pipeline runs in the background; when it completes the transcript is silently replaced and a "正在进行高精度转写…" banner at the top of the transcript area notifies the user while the background job is in flight
+- **Finish → diarize only + background refine** — when a realtime session ends, the already-transcribed segments are used for instant diarize-only output; simultaneously a full high-accuracy ASR pipeline runs in the background (30-minute timeout); when it completes the transcript is silently replaced and a "正在进行高精度转写…" banner at the top of the transcript area notifies the user while the background job is in flight
+- **Short recording guard** — if a recording is stopped with < 5 seconds of audio, a confirmation dialog asks whether to keep or discard the session; discarding deletes the WAV file and removes the entry from history
+- **Screen sleep prevention** — while a realtime recording is active, `caffeinate` (macOS) is held to prevent the display and system from sleeping; released automatically when recording stops or finishes
+- **Summary panel reset on new recording** — starting a new realtime recording resets the right-hand summary panel so stale content from the previous session is never shown
 - **Session rename** — hover over any history item and click ✏ to rename inline (Enter to save, Esc to cancel)
 - **Session delete** — hover and click 🗑 to delete; removes transcript JSON and summary file after confirmation
 - **Model library modal** — toolbar "Models" button opens a modal listing all available models (ASR + Diarizer) with download status, Download button with animated indeterminate progress bar, and Delete button to free disk space; badge reflects actual post-delete state (remains "✓ Downloaded" if HF cache still intact); shows "⚠ Incomplete" when a partial download is detected
-- **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model) and template management; no longer embedded inside the summary panel
+- **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model), template management, and Obsidian vault sync configuration
 - **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
 - **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
 

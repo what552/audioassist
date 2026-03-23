@@ -599,6 +599,7 @@ class API:
             except Exception as e:
                 logger.exception("Realtime start failed")
                 self._realtime = None
+                self._caffeinate_stop()
                 _push(f"onRealtimeError({json.dumps(str(e))})")
 
         threading.Thread(target=_run, daemon=True).start()

@@ -393,3 +393,28 @@ class TestRtSegmentsCollection:
         assert called_with.get("wav_path") == wav_path
         # Segments should be consumed (popped)
         assert wav_path not in api._rt_segments
+
+
+# ── Caffeinate leak guard ─────────────────────────────────────────────────────
+
+class TestCaffeinateOnStartFailure:
+    def test_caffeinate_released_when_start_raises(self):
+        """
+        If RealtimeTranscriber.start() raises, _caffeinate_stop() must be called
+        so the system-sleep-prevention lock is not held indefinitely.
+        """
+        api = API()
+        caffeinate_stopped = []
+
+        def boom():
+            raise RuntimeError("model load failed")
+
+        with patch("src.realtime.RealtimeTranscriber") as MockRT, \
+             patch.object(api, "_caffeinate_stop",
+                          side_effect=lambda: caffeinate_stopped.append(True)), \
+             patch.object(app_module, "_push"):
+            MockRT.return_value.start.side_effect = boom
+            api.start_realtime()
+            _wait(0.3)
+
+        assert caffeinate_stopped, "_caffeinate_stop() must be called after start() failure"

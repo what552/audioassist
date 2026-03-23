@@ -247,7 +247,9 @@ class MeetingAgent:
     # ── Tool execution ──────────────────────────────────────────────────────
 
     def _execute_tool(self, name: str, args: dict, default_job_id: str) -> Any:
-        job_id = args.get("job_id", default_job_id)
+        # Always use the session's job_id — never trust the model-supplied value
+        # to prevent prompt-injection attacks that could read/write other sessions.
+        job_id = default_job_id
         if name == "get_transcript":
             return self._tool_get_transcript(job_id, args.get("max_chars", 6000))
         elif name == "get_current_summary":

@@ -256,3 +256,55 @@ class TestProviderFallback:
         assert isinstance(result, str)
         chunk_events = [e for e in events if e[0] == "onAgentChunk"]
         assert len(chunk_events) >= 1
+
+
+# ── Security: job_id isolation ────────────────────────────────────────────────
+
+class TestJobIdIsolation:
+    def test_execute_tool_ignores_model_supplied_job_id(self, tmp_path):
+        """Model-supplied job_id must be overridden by default_job_id."""
+        # Write transcript for the legitimate session
+        _write_transcript(tmp_path, job_id="legit-job")
+        # Write a *different* session that an adversarial prompt might try to access
+        other_data = {"segments": [{"speaker": "X", "start": 0.0, "end": 1.0, "text": "secret"}]}
+        (tmp_path / "other-job.json").write_text(json.dumps(other_data), encoding="utf-8")
+
+        agent, _ = _make_agent(tmp_path)
+        # Model passes a different job_id in args — must be ignored
+        result = agent._execute_tool(
+            "get_transcript",
+            {"job_id": "other-job", "max_chars": 6000},
+            default_job_id="legit-job",
+        )
+        assert "error" not in result
+        assert "secret" not in result.get("transcript", "")
+        assert "Hello everyone." in result.get("transcript", "")
+
+    def test_tool_loop_uses_session_job_id_not_model_value(self, tmp_path):
+        """Even if the model returns a different job_id in tool args, the session job_id is used."""
+        _write_transcript(tmp_path, job_id="session-job")
+        agent, _ = _make_agent(tmp_path)
+
+        # Model call requests get_transcript with a *different* job_id
+        responses = iter([
+            _make_tool_call_response("get_transcript", {"job_id": "attacker-job"}),
+            _make_stop_response("Ok."),
+        ])
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = lambda **kw: next(responses)
+
+        executed_job_ids = []
+        original_execute = agent._execute_tool
+
+        def spy_execute(name, args, default_job_id):
+            # Record which job_id the tool actually runs with
+            executed_job_ids.append(default_job_id)
+            return original_execute(name, args, default_job_id)
+
+        agent._execute_tool = spy_execute
+
+        with patch("src.agent._OpenAI", return_value=mock_client):
+            agent.run("session-job", "read transcript", [])
+
+        # The tool must have been called with the session job_id, not the attacker's
+        assert all(jid == "session-job" for jid in executed_job_ids)
