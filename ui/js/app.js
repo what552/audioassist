@@ -206,6 +206,18 @@ const App = (() => {
     Player.load(s.audioPath || '');
   }
 
+  async function _onFinishRecording() {
+    const secs = _timerSeconds;
+    if (secs < 5) {
+      const keep = confirm('录音时长不足 5 秒，是否保留？');
+      if (!keep) {
+        const s = _sessions.get(_activeRealtimeId);
+        if (s) s.discarding = true;
+      }
+    }
+    await window.pywebview.api.stop_realtime();
+  }
+
   // ── Realtime state ─────────────────────────────────────────────────────────
 
   function _onRealtimeState(state, sessionId, wavPath) {
@@ -229,11 +241,16 @@ const App = (() => {
       const rtSession = _sessions.get(_activeRealtimeId);
       const wavPath   = rtSession?.audioPath;
       const rtName    = rtSession?.filename;
+      const discard   = rtSession?.discarding;
+      const rtId      = _activeRealtimeId;
       _sessions.delete(_activeRealtimeId);
       if (_selectedId === _activeRealtimeId) _selectedId = null;
       _activeRealtimeId = null;
       _resetTimer();
-      if (wavPath) {
+      if (discard) {
+        if (rtId) window.pywebview.api.delete_session(rtId).catch(() => {});
+        _render();
+      } else if (wavPath) {
         (async () => { await _startTranscription(wavPath, rtName); })();
       } else {
         _render();
@@ -471,15 +488,20 @@ const App = (() => {
       _updateTimeDisplay(t);
     });
 
-    // Spacebar: toggle play/pause when player is visible and no input has focus
+    // Spacebar: toggle play/pause; never activate buttons (prevents accidental recording)
     document.addEventListener('keydown', (e) => {
       if (e.code !== 'Space') return;
-      if (dom.playerBar.hidden) return;
-      const tag = document.activeElement && document.activeElement.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
-      if (document.activeElement && document.activeElement.isContentEditable) return;
+      const active = document.activeElement;
+      const tag = active && active.tagName;
+      // Let space type in text fields
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (active && active.isContentEditable) return;
+      // Blur any focused button so space can't click it (e.g. Start Recording)
+      if (tag === 'BUTTON') active.blur();
       e.preventDefault();
-      if (dom.audioEl.paused) Player.play(); else Player.pause();
+      if (!dom.playerBar.hidden) {
+        if (dom.audioEl.paused) Player.play(); else Player.pause();
+      }
     });
 
     dom.saveBtn.addEventListener('click', () => Transcript.saveAll());
@@ -495,7 +517,7 @@ const App = (() => {
 
     dom.rcBtnPause.addEventListener('click', _onPauseResume);
     dom.rcBtnPlay.addEventListener('click', _onPlayRecording);
-    dom.rcBtnFinish.addEventListener('click', () => window.pywebview.api.stop_realtime());
+    dom.rcBtnFinish.addEventListener('click', _onFinishRecording);
 
     // Models modal
     dom.btnModels.addEventListener('click', _openModelsModal);
