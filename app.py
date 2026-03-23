@@ -11,6 +11,8 @@ import json
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import threading
 from typing import Optional
 
@@ -107,6 +109,7 @@ class API:
         self._realtime = None  # RealtimeTranscriber instance when active
         # Pre-collected realtime segments keyed by wav_path — consumed by transcribe()
         self._rt_segments: dict[str, list] = {}
+        self._caffeinate_proc = None  # caffeinate subprocess (macOS only)
 
     # ── File selection ─────────────────────────────────────────────────────────
 
@@ -456,6 +459,33 @@ class API:
 
     # ── Realtime ───────────────────────────────────────────────────────────────
 
+    # ── Screen-sleep prevention (macOS caffeinate) ─────────────────────────────
+
+    def _caffeinate_start(self) -> None:
+        """Hold a caffeinate lock to prevent display and idle sleep (macOS only)."""
+        if sys.platform != "darwin":
+            return
+        if self._caffeinate_proc is not None:
+            return  # already running
+        try:
+            self._caffeinate_proc = subprocess.Popen(
+                ["caffeinate", "-d", "-i"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            logger.warning("caffeinate: failed to start", exc_info=True)
+
+    def _caffeinate_stop(self) -> None:
+        """Release the caffeinate lock."""
+        proc = self._caffeinate_proc
+        self._caffeinate_proc = None
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception:
+                logger.warning("caffeinate: failed to terminate", exc_info=True)
+
     def start_realtime(self, options: Optional[dict] = None) -> dict:
         """
         Start realtime microphone transcription in a background thread.
@@ -471,6 +501,7 @@ class API:
 
         # Sentinel prevents a second call racing before _run() sets self._realtime
         self._realtime = object()
+        self._caffeinate_start()
 
         options = options or {}
         model_id = options.get("model_id")
@@ -566,6 +597,7 @@ class API:
         """
         rt = self._realtime
         self._realtime = None
+        self._caffeinate_stop()
         if rt is None:
             return {"status": "not_running"}
 
