@@ -127,6 +127,12 @@ def _transcript_to_md(segments: list) -> str:
     return "\n".join(lines)
 
 
+# Maximum wall-clock seconds allowed for the background refine thread.
+# If exceeded, onTranscribeRefined is pushed immediately so the UI unblocks
+# and the user sees the realtime draft instead of spinning forever.
+REFINE_TIMEOUT = 1800  # 30 minutes
+
+
 class API:
     def __init__(self):
         self._realtime = None  # RealtimeTranscriber instance when active
@@ -275,6 +281,24 @@ class API:
                     _ac = audio_copy  # capture for closure
 
                     def _refine():
+                        # Guard events — ensure onTranscribeRefined is pushed
+                        # exactly once regardless of which path (success/timeout) wins.
+                        _succeeded = threading.Event()
+                        _timed_out = threading.Event()
+
+                        def _on_timeout():
+                            if not _succeeded.is_set():
+                                _timed_out.set()
+                                logger.warning(
+                                    "Refine ASR timed out after %ds for job %s; "
+                                    "falling back to realtime draft",
+                                    REFINE_TIMEOUT, job_id,
+                                )
+                                _push(f"onTranscribeRefined({json.dumps(job_id)})")
+
+                        timer = threading.Timer(REFINE_TIMEOUT, _on_timeout)
+                        timer.daemon = True
+                        timer.start()
                         try:
                             from src.pipeline import run as pipeline_run
                             logger.info("Refine ASR started for job %s", job_id)
@@ -312,10 +336,21 @@ class API:
                                     logger.warning(
                                         "refine: failed to patch audio/write JSON", exc_info=True
                                     )
-                            _push(f"onTranscribeRefined({json.dumps(job_id)})")
-                            logger.info("Refine ASR complete for job %s", job_id)
+                            _succeeded.set()
+                            timer.cancel()
+                            if not _timed_out.is_set():
+                                _push(f"onTranscribeRefined({json.dumps(job_id)})")
+                                logger.info("Refine ASR complete for job %s", job_id)
+                            else:
+                                logger.info(
+                                    "Refine ASR finished after timeout for job %s "
+                                    "(result on disk; UI already unblocked)",
+                                    job_id,
+                                )
                         except Exception:
                             logger.exception("Refine ASR failed for job %s", job_id)
+                            _succeeded.set()
+                            timer.cancel()
 
                     threading.Thread(target=_refine, daemon=True).start()
 

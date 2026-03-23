@@ -257,3 +257,90 @@ class TestRefineOverwritesJson:
         assert any("onTranscribeComplete" in c for c in js_calls)
         # No error event from the refine failure
         assert not any("onTranscribeError" in c for c in js_calls)
+
+
+# ── Refine timeout ────────────────────────────────────────────────────────────
+
+class TestRefineTimeout:
+    def test_timeout_pushes_onTranscribeRefined(self):
+        """When pipeline hangs longer than REFINE_TIMEOUT, onTranscribeRefined is pushed."""
+        import threading as _threading
+        api = API()
+        sample_segs = [{"text": "Hi", "start": 0.0, "end": 1.0}]
+        unblock = _threading.Event()
+
+        def _hang(*args, **kwargs):
+            # Simulate a stuck pipeline; unblock after test finishes
+            unblock.wait(timeout=10)
+            raise RuntimeError("unblocked after test")
+
+        with tempfile.TemporaryDirectory() as td:
+            wav = os.path.join(td, "session.wav")
+            open(wav, "wb").close()
+            api._rt_segments[wav] = sample_segs
+
+            js_calls: list[str] = []
+            with patch("src.pipeline.run_realtime_segments",
+                       side_effect=_make_fake_diarize_only(td)), \
+                 patch("src.pipeline.run", side_effect=_hang), \
+                 patch.object(app_module, "_push", side_effect=js_calls.append), \
+                 patch.object(app_module, "OUTPUT_DIR", td), \
+                 patch.object(app_module, "REFINE_TIMEOUT", 0.15):
+                api.transcribe(wav, {})
+                _wait(0.6)          # wait for timeout (0.15s) to fire
+            unblock.set()           # release the stuck thread after patch context
+
+        assert any("onTranscribeRefined" in c for c in js_calls)
+
+    def test_no_double_push_on_normal_completion(self):
+        """Normal completion must push onTranscribeRefined exactly once."""
+        api = API()
+        sample_segs = [{"text": "Hi", "start": 0.0, "end": 1.0}]
+
+        with tempfile.TemporaryDirectory() as td:
+            wav = os.path.join(td, "session.wav")
+            open(wav, "wb").close()
+            api._rt_segments[wav] = sample_segs
+
+            js_calls: list[str] = []
+            with patch("src.pipeline.run_realtime_segments",
+                       side_effect=_make_fake_diarize_only(td)), \
+                 patch("src.pipeline.run",
+                       side_effect=_make_fake_pipeline_run(td)), \
+                 patch.object(app_module, "_push", side_effect=js_calls.append), \
+                 patch.object(app_module, "OUTPUT_DIR", td), \
+                 patch.object(app_module, "REFINE_TIMEOUT", 10.0):
+                api.transcribe(wav, {})
+                _wait(0.8)
+
+        refined_calls = [c for c in js_calls if "onTranscribeRefined" in c]
+        assert len(refined_calls) == 1
+
+    def test_timeout_does_not_push_error(self):
+        """Timeout must not produce onTranscribeError."""
+        import threading as _threading
+        api = API()
+        sample_segs = [{"text": "Hi", "start": 0.0, "end": 1.0}]
+        unblock = _threading.Event()
+
+        def _hang(*args, **kwargs):
+            unblock.wait(timeout=10)
+            raise RuntimeError("done")
+
+        with tempfile.TemporaryDirectory() as td:
+            wav = os.path.join(td, "session.wav")
+            open(wav, "wb").close()
+            api._rt_segments[wav] = sample_segs
+
+            js_calls: list[str] = []
+            with patch("src.pipeline.run_realtime_segments",
+                       side_effect=_make_fake_diarize_only(td)), \
+                 patch("src.pipeline.run", side_effect=_hang), \
+                 patch.object(app_module, "_push", side_effect=js_calls.append), \
+                 patch.object(app_module, "OUTPUT_DIR", td), \
+                 patch.object(app_module, "REFINE_TIMEOUT", 0.15):
+                api.transcribe(wav, {})
+                _wait(0.6)
+            unblock.set()
+
+        assert not any("onTranscribeError" in c for c in js_calls)
