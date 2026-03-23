@@ -1054,7 +1054,7 @@ class API:
             os.path.join(OUTPUT_DIR, f"{job_id}.md"),
             os.path.join(OUTPUT_DIR, f"{job_id}_summary.json"),
             os.path.join(OUTPUT_DIR, f"{job_id}_meta.json"),
-            os.path.join(OUTPUT_DIR, f"{job_id}_chat.json"),
+            os.path.join(OUTPUT_DIR, f"{job_id}_agent_chat.json"),
         ] + [os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}") for ext in _AUDIO_EXTS]
         deleted = False
         for p in candidates:

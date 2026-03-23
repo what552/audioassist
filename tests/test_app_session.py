@@ -199,7 +199,7 @@ class TestDeleteSessionComplete(unittest.TestCase):
 
     def test_deletes_chat_json(self):
         self._touch(f"{self.job_id}.json")
-        chat = self._touch(f"{self.job_id}_chat.json")
+        chat = self._touch(f"{self.job_id}_agent_chat.json")
         self.api.delete_session(self.job_id)
         self.assertFalse(os.path.exists(chat))
 
@@ -227,7 +227,7 @@ class TestDeleteSessionComplete(unittest.TestCase):
             self._touch(f"{self.job_id}.md"),
             self._touch(f"{self.job_id}_summary.json"),
             self._touch(f"{self.job_id}_meta.json"),
-            self._touch(f"{self.job_id}_chat.json"),
+            self._touch(f"{self.job_id}_agent_chat.json"),
             self._touch(f"{self.job_id}_audio.mp3"),
         ]
         self.api.delete_session(self.job_id)
