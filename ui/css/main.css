@@ -1113,3 +1113,45 @@ select { font-family: inherit; }
 .model-btn-delete { color: var(--text-muted); }
 .model-btn-delete:hover:not(:disabled) { color: #e06c6c; }
 .model-btn-delete:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Speaker rename ──────────────────────────────────────────────────────────── */
+.speaker-menu {
+  position: fixed;
+  background: var(--bg-toolbar);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  padding: 4px 0;
+  z-index: 1000;
+  min-width: 170px;
+}
+.speaker-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 14px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.speaker-menu-item:hover { background: var(--bg-hover); }
+
+.row-speaker-input {
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 5px;
+  width: 90px;
+  outline: none;
+  line-height: 1.6;
+}
+.row-speaker.renaming { visibility: hidden; position: absolute; }

@@ -367,6 +367,93 @@ class API:
 
         return True
 
+    def rename_speaker(self, job_id: str, old_speaker: str, new_speaker: str) -> dict:
+        """
+        Rename ALL segments where speaker == old_speaker to new_speaker.
+
+        Returns {"ok": True, "segments": [...]} on success,
+                {"ok": False, "error": "..."} on failure.
+        """
+        new_speaker = (new_speaker or "").strip()
+        if not new_speaker:
+            return {"ok": False, "error": "Speaker name cannot be empty"}
+
+        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        with _transcript_locks_mutex:
+            if job_id not in _transcript_locks:
+                _transcript_locks[job_id] = threading.Lock()
+            lock = _transcript_locks[job_id]
+
+        with lock:
+            if not os.path.exists(path):
+                return {"ok": False, "error": "File not found"}
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            for seg in data.get("segments", []):
+                if seg.get("speaker") == old_speaker:
+                    seg["speaker"] = new_speaker
+
+            tmp_path = path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+
+            try:
+                from src.merge import SpeakerBlock, to_markdown
+                segs = data.get("segments", [])
+                blocks = [SpeakerBlock(**{k: s[k] for k in ("speaker", "start", "end", "text", "words")}) for s in segs]
+                md_path = path[:-5] + ".md"
+                to_markdown(blocks, data.get("audio", ""), data.get("language", ""), md_path)
+            except Exception:
+                logger.warning("rename_speaker: failed to regenerate .md", exc_info=True)
+
+        return {"ok": True, "segments": data.get("segments", [])}
+
+    def rename_segment_speaker(self, job_id: str, segment_index: int, new_speaker: str) -> dict:
+        """
+        Rename the speaker of the single segment at segment_index.
+
+        Returns {"ok": True, "segment": {...}} on success,
+                {"ok": False, "error": "..."} on failure.
+        """
+        new_speaker = (new_speaker or "").strip()
+        if not new_speaker:
+            return {"ok": False, "error": "Speaker name cannot be empty"}
+
+        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        with _transcript_locks_mutex:
+            if job_id not in _transcript_locks:
+                _transcript_locks[job_id] = threading.Lock()
+            lock = _transcript_locks[job_id]
+
+        with lock:
+            if not os.path.exists(path):
+                return {"ok": False, "error": "File not found"}
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            segs = data.get("segments", [])
+            if segment_index < 0 or segment_index >= len(segs):
+                return {"ok": False, "error": f"Index {segment_index} out of range"}
+
+            segs[segment_index]["speaker"] = new_speaker
+
+            tmp_path = path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+
+            try:
+                from src.merge import SpeakerBlock, to_markdown
+                blocks = [SpeakerBlock(**{k: s[k] for k in ("speaker", "start", "end", "text", "words")}) for s in segs]
+                md_path = path[:-5] + ".md"
+                to_markdown(blocks, data.get("audio", ""), data.get("language", ""), md_path)
+            except Exception:
+                logger.warning("rename_segment_speaker: failed to regenerate .md", exc_info=True)
+
+        return {"ok": True, "segment": segs[segment_index]}
+
     # ── Realtime ───────────────────────────────────────────────────────────────
 
     def start_realtime(self, options: Optional[dict] = None) -> dict:
