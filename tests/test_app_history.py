@@ -178,6 +178,34 @@ class TestGetHistoryWavEntries:
         assert result[0]["type"] == "realtime"
         assert result[1]["type"] == "file"
 
+    def test_new_layout_realtime_unique_wav_name_appears(self, env):
+        api, tmp = env
+        job_id = "abcd1234-0000-0000-0000-000000000000"
+        session_dir = tmp / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        wav = session_dir / "realtime_recording_abcd1234.wav"
+        wav.write_bytes(b"RIFF")
+
+        result = api.get_history()
+        assert len(result) == 1
+        assert result[0]["type"] == "realtime"
+        assert result[0]["filename"] == "abcd1234"
+        assert result[0]["audio_path"].endswith("realtime_recording_abcd1234.wav")
+
+    def test_new_layout_realtime_legacy_wav_name_still_appears(self, env):
+        api, tmp = env
+        job_id = "deadbeef-0000-0000-0000-000000000000"
+        session_dir = tmp / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        wav = session_dir / "realtime_recording.wav"
+        wav.write_bytes(b"RIFF")
+
+        result = api.get_history()
+        assert len(result) == 1
+        assert result[0]["type"] == "realtime"
+        assert result[0]["filename"] == "deadbeef"
+        assert result[0]["audio_path"].endswith("realtime_recording.wav")
+
 
 # ── get_summary_versions ───────────────────────────────────────────────────────
 

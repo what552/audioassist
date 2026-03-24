@@ -347,3 +347,42 @@ class TestRefineTimeout:
             unblock.set()
 
         assert not any("onTranscribeError" in c for c in js_calls)
+
+
+class TestRealtimeRenameDurability:
+    def test_renamed_wav_only_filename_and_job_id_survive_transcribe_and_refine(self):
+        api = API()
+        sample_segs = [{"text": "draft text", "start": 0.0, "end": 1.0}]
+
+        with tempfile.TemporaryDirectory() as td:
+            rt_job = "076bf942-0000-0000-0000-000000000000"
+            rt_dir = os.path.join(td, "meetings", rt_job)
+            os.makedirs(rt_dir, exist_ok=True)
+            wav = os.path.join(rt_dir, "realtime_recording_076bf942.wav")
+            open(wav, "wb").close()
+            with open(os.path.join(rt_dir, "meta.json"), "w", encoding="utf-8") as f:
+                json.dump({"filename": "Custom Title"}, f)
+
+            api._rt_segments[wav] = sample_segs
+
+            with patch("src.pipeline.run_realtime_segments",
+                       side_effect=_make_fake_diarize_only(td)), \
+                 patch("src.pipeline.run",
+                       side_effect=_make_fake_pipeline_run(td, refined_text="high quality")), \
+                 patch.object(app_module, "_push"), \
+                 patch.object(app_module, "OUTPUT_DIR", td):
+                result = api.transcribe(wav, {})
+                job_id = result["job_id"]
+                _wait(0.8)
+
+            json_path = os.path.join(td, "meetings", job_id, "transcript.json")
+            with open(json_path, encoding="utf-8") as f:
+                data = json.load(f)
+            with open(os.path.join(rt_dir, "meta.json"), encoding="utf-8") as f:
+                meta = json.load(f)
+
+            assert data["filename"] == "Custom Title"
+            assert data["job_id"] == job_id
+            assert data["segments"][0]["text"] == "high quality"
+            assert meta["filename"] == "Custom Title"
+            assert meta["transcribed_job_id"] == job_id

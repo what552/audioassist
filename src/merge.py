@@ -16,6 +16,8 @@ MAX_BLOCK_CHARS = 220
 STRONG_PAUSE_SECONDS = 1.2
 SOFT_PAUSE_SECONDS = 0.6
 SENTENCE_ENDINGS = ".!?。！？；;"
+NO_SPACE_BEFORE = ".,!?;:)]}%。，！？；：、"
+NO_SPACE_AFTER = "([{"
 
 
 @dataclass
@@ -85,9 +87,52 @@ def _make_block(speaker: str, words: list[WordSegment]) -> SpeakerBlock:
         speaker=speaker,
         start=words[0].start,
         end=words[-1].end,
-        text="".join(w.word for w in words),
+        text=_join_words(words),
         words=[{"word": w.word, "start": w.start, "end": w.end} for w in words],
     )
+
+
+def _is_cjk_char(ch: str) -> bool:
+    return (
+        "\u3400" <= ch <= "\u4dbf"
+        or "\u4e00" <= ch <= "\u9fff"
+        or "\uf900" <= ch <= "\ufaff"
+    )
+
+
+def _is_wordish_char(ch: str) -> bool:
+    return ch.isascii() and (ch.isalnum() or ch in "'")
+
+
+def _needs_space_between(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    if left[-1].isspace() or right[0].isspace():
+        return False
+    if right[0] in NO_SPACE_BEFORE:
+        return False
+    if left[-1] in NO_SPACE_AFTER:
+        return False
+    if _is_cjk_char(left[-1]) or _is_cjk_char(right[0]):
+        return False
+    if _is_wordish_char(left[-1]) and _is_wordish_char(right[0]):
+        return True
+    if left[-1] in ".!?;:)]}\"'" and _is_wordish_char(right[0]):
+        return True
+    return False
+
+
+def _join_words(words: list[WordSegment]) -> str:
+    if not words:
+        return ""
+
+    parts = [words[0].word]
+    for word in words[1:]:
+        token = word.word
+        if _needs_space_between(parts[-1], token):
+            parts.append(" ")
+        parts.append(token)
+    return "".join(parts)
 
 
 def _block_char_len(words: list[WordSegment]) -> int:

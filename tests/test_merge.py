@@ -117,7 +117,7 @@ class TestMerge:
         asr = TranscriptResult(text="abc", language="en", words=words)
         blocks = merge(asr, segs)
         assert len(blocks) == 1
-        assert blocks[0].text == "abc"
+        assert blocks[0].text == "a b c"
 
     def test_splits_single_speaker_block_on_long_pause(self):
         segs = [SpeakerSegment("SPEAKER_00", 0.0, 20.0)]
@@ -130,8 +130,8 @@ class TestMerge:
         asr = TranscriptResult(text="Hello world. Next topic", language="en", words=words)
         blocks = merge(asr, segs)
         assert len(blocks) == 2
-        assert blocks[0].text == "Helloworld."
-        assert blocks[1].text == "Nexttopic"
+        assert blocks[0].text == "Hello world."
+        assert blocks[1].text == "Next topic"
 
     def test_splits_single_speaker_block_when_duration_grows_too_long(self):
         segs = [SpeakerSegment("SPEAKER_00", 0.0, 80.0)]
@@ -146,7 +146,30 @@ class TestMerge:
         asr = TranscriptResult(text="abcdef", language="en", words=words)
         blocks = merge(asr, segs)
         assert len(blocks) >= 2
-        assert "".join(block.text for block in blocks) == "abcdef"
+        assert " ".join(" ".join(block.text.split()) for block in blocks) == "a b c d e f"
+
+    def test_english_words_keep_spaces(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 10.0)]
+        words = [
+            WordSegment("May", 0.0, 0.2),
+            WordSegment("I", 0.3, 0.4),
+            WordSegment("see", 0.5, 0.7),
+            WordSegment("your", 0.8, 1.0),
+            WordSegment("passport", 1.1, 1.4),
+        ]
+        asr = TranscriptResult(text="May I see your passport", language="en", words=words)
+        blocks = merge(asr, segs)
+        assert blocks[0].text == "May I see your passport"
+
+    def test_cjk_words_stay_compact(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 10.0)]
+        words = [
+            WordSegment("你好", 0.0, 0.2),
+            WordSegment("世界", 0.3, 0.5),
+        ]
+        asr = TranscriptResult(text="你好世界", language="zh", words=words)
+        blocks = merge(asr, segs)
+        assert blocks[0].text == "你好世界"
 
 
 # ── to_json ───────────────────────────────────────────────────────────────────

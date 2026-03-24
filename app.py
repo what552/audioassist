@@ -31,6 +31,7 @@ TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
 
 # Known audio extensions used when copying source files into the output dir
 _AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".mp4", ".aac", ".flac", ".ogg", ".mov", ".mkv")
+_REALTIME_WAV_PREFIX = "realtime_recording"
 
 
 def _resolve_output_dir() -> str:
@@ -65,6 +66,63 @@ def _transcript_path(job_id: str) -> Optional[str]:
 def _summary_path(job_id: str) -> str:
     """Return summary.json path for job_id using new or legacy layout."""
     return resolve_summary_path(OUTPUT_DIR, job_id)
+
+
+def _realtime_wav_name(session_id: str) -> str:
+    """Return a collision-resistant realtime WAV filename for this session."""
+    return f"{_REALTIME_WAV_PREFIX}_{session_id[:8]}.wav"
+
+
+def _read_json_file(path: str, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _write_json_atomic(path: str, data: dict) -> None:
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _get_transcript_lock(job_id: str) -> threading.Lock:
+    with _transcript_locks_mutex:
+        if job_id not in _transcript_locks:
+            _transcript_locks[job_id] = threading.Lock()
+        return _transcript_locks[job_id]
+
+
+def _realtime_meta_path_for_wav(wav_path: str) -> Optional[str]:
+    """Return meta.json path for a realtime WAV in new or legacy layout."""
+    src_abs = os.path.abspath(wav_path)
+    meetings_dir = os.path.abspath(os.path.join(OUTPUT_DIR, "meetings"))
+    rt_session_dir = os.path.dirname(src_abs)
+    if os.path.dirname(rt_session_dir) == meetings_dir:
+        return os.path.join(rt_session_dir, "meta.json")
+
+    out_abs = os.path.abspath(OUTPUT_DIR)
+    if os.path.dirname(src_abs) == out_abs:
+        stem = os.path.splitext(os.path.basename(src_abs))[0]
+        return os.path.join(OUTPUT_DIR, f"{stem}_meta.json")
+    return None
+
+
+def _find_realtime_wav(session_dir: str) -> Optional[str]:
+    """Find the realtime WAV for a session, supporting old and new basenames."""
+    legacy = os.path.join(session_dir, "realtime_recording.wav")
+    if os.path.exists(legacy):
+        return legacy
+
+    try:
+        for name in sorted(os.listdir(session_dir)):
+            if name.startswith(_REALTIME_WAV_PREFIX + "_") and name.endswith(".wav"):
+                return os.path.join(session_dir, name)
+    except Exception:
+        return None
+    return None
 
 
 _LANG_INSTRUCTIONS: dict[str, str] = {
@@ -272,6 +330,14 @@ class API:
 
                 hf_token     = options.get("hf_token") or os.environ.get("HF_TOKEN")
                 num_speakers = options.get("num_speakers")
+                meta_filename: Optional[str] = None
+                if path.lower().endswith(".wav"):
+                    meta_path = _realtime_meta_path_for_wav(path)
+                    if meta_path and os.path.exists(meta_path):
+                        meta = _read_json_file(meta_path, {})
+                        if isinstance(meta, dict):
+                            value = (meta.get("filename") or "").strip()
+                            meta_filename = value or None
 
                 # F6: create session dir
                 s_dir = _session_dir(job_id)
@@ -315,60 +381,34 @@ class API:
                     # F6: copy audio into session dir as source_audio.{ext}
                     audio_copy = os.path.join(s_dir, f"source_audio{ext}")
                     shutil.copy2(path, audio_copy)
-                    # Patch the JSON: replace audio field + inject job_id
-                    with open(json_path, encoding="utf-8") as f:
-                        data = json.load(f)
-                    data["audio"] = audio_copy
-                    data["job_id"] = job_id
-                    tmp_json = json_path + ".tmp"
-                    with open(tmp_json, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    os.replace(tmp_json, json_path)
                 except Exception:
                     logger.warning("transcribe: failed to copy audio file", exc_info=True)
+                try:
+                    # Patch durable metadata even if audio copy failed.
+                    lock = _get_transcript_lock(job_id)
+                    with lock:
+                        data = _read_json_file(json_path, {})
+                        if audio_copy:
+                            data["audio"] = audio_copy
+                        data["job_id"] = job_id
+                        if meta_filename:
+                            data["filename"] = meta_filename
+                        _write_json_atomic(json_path, data)
+                except Exception:
+                    logger.warning("transcribe: failed to patch transcript metadata", exc_info=True)
 
                 # If source was a realtime WAV from our output dir, record
                 # transcribed_job_id in its meta.json so get_history() can
                 # skip the orphaned WAV entry on next launch.
                 try:
                     if path.lower().endswith(".wav"):
-                        src_abs = os.path.abspath(path)
-                        # Check new layout: meetings/{wav_stem}/realtime_recording.wav
-                        meetings_dir = os.path.join(OUTPUT_DIR, "meetings")
-                        # Try to find which session dir this WAV belongs to
-                        rt_session_dir = os.path.dirname(src_abs)
-                        meta_path_rt = os.path.join(rt_session_dir, "meta.json")
-                        if os.path.dirname(rt_session_dir) == os.path.abspath(meetings_dir):
-                            rt_meta: dict = {}
-                            if os.path.exists(meta_path_rt):
-                                try:
-                                    with open(meta_path_rt, encoding="utf-8") as f:
-                                        rt_meta = json.load(f)
-                                except Exception:
-                                    pass
-                            rt_meta["transcribed_job_id"] = job_id
-                            tmp_rt = meta_path_rt + ".tmp"
-                            with open(tmp_rt, "w", encoding="utf-8") as f:
-                                json.dump(rt_meta, f, ensure_ascii=False, indent=2)
-                            os.replace(tmp_rt, meta_path_rt)
-                        else:
-                            # Legacy: WAV in flat OUTPUT_DIR
-                            out_abs = os.path.abspath(OUTPUT_DIR)
-                            if os.path.dirname(src_abs) == out_abs:
-                                wav_stem = os.path.splitext(os.path.basename(path))[0]
-                                legacy_meta = os.path.join(OUTPUT_DIR, f"{wav_stem}_meta.json")
+                        meta_path_rt = _realtime_meta_path_for_wav(path)
+                        if meta_path_rt:
+                            rt_meta = _read_json_file(meta_path_rt, {})
+                            if not isinstance(rt_meta, dict):
                                 rt_meta = {}
-                                if os.path.exists(legacy_meta):
-                                    try:
-                                        with open(legacy_meta, encoding="utf-8") as f:
-                                            rt_meta = json.load(f)
-                                    except Exception:
-                                        pass
-                                rt_meta["transcribed_job_id"] = job_id
-                                tmp_rt = legacy_meta + ".tmp"
-                                with open(tmp_rt, "w", encoding="utf-8") as f:
-                                    json.dump(rt_meta, f, ensure_ascii=False, indent=2)
-                                os.replace(tmp_rt, legacy_meta)
+                            rt_meta["transcribed_job_id"] = job_id
+                            _write_json_atomic(meta_path_rt, rt_meta)
                 except Exception:
                     logger.warning("transcribe: failed to write WAV meta", exc_info=True)
 
@@ -407,6 +447,15 @@ class API:
                         try:
                             from src.pipeline import run as pipeline_run
                             logger.info("Refine ASR started for job %s", job_id)
+                            lock = _get_transcript_lock(job_id)
+                            preserved_filename = None
+                            preserved_job_id = job_id
+                            if os.path.exists(json_path):
+                                with lock:
+                                    current = _read_json_file(json_path, {})
+                                if isinstance(current, dict):
+                                    preserved_filename = current.get("filename") or None
+                                    preserved_job_id = current.get("job_id") or job_id
                             refined_json, _ = pipeline_run(
                                 audio_path=path,
                                 output_dir=s_dir,
@@ -421,24 +470,16 @@ class API:
                                     "[refine %d%%] %s", int(p * 100), m
                                 ),
                             )
-                            # Re-patch audio field and atomically overwrite JSON.
-                            # Acquire the same per-job lock used by save_transcript()
-                            # so a concurrent user save cannot interleave with this write.
-                            with _transcript_locks_mutex:
-                                if job_id not in _transcript_locks:
-                                    _transcript_locks[job_id] = threading.Lock()
-                                _refine_lock = _transcript_locks[job_id]
-
-                            with _refine_lock:
+                            # Re-patch durable metadata after pipeline overwrite.
+                            with lock:
                                 try:
-                                    with open(refined_json, encoding="utf-8") as f:
-                                        rdata = json.load(f)
+                                    rdata = _read_json_file(refined_json, {})
                                     if _ac:
                                         rdata["audio"] = _ac
-                                    tmp = refined_json + ".tmp"
-                                    with open(tmp, "w", encoding="utf-8") as f:
-                                        json.dump(rdata, f, ensure_ascii=False, indent=2)
-                                    os.replace(tmp, refined_json)
+                                    rdata["job_id"] = preserved_job_id
+                                    if preserved_filename:
+                                        rdata["filename"] = preserved_filename
+                                    _write_json_atomic(refined_json, rdata)
                                 except Exception:
                                     logger.warning(
                                         "refine: failed to patch audio/write JSON", exc_info=True
@@ -692,7 +733,7 @@ class API:
                 # F6: realtime WAV goes into session dir
                 rt_session_dir = _session_dir(session_id)
                 os.makedirs(rt_session_dir, exist_ok=True)
-                output_path = os.path.join(rt_session_dir, "realtime_recording.wav")
+                output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
 
                 from src.realtime import RealtimeTranscriber
                 rt = RealtimeTranscriber(
@@ -968,8 +1009,8 @@ class API:
                         pass
                 else:
                     # WAV-only realtime session dir
-                    wav_file = os.path.join(session_dir_path, "realtime_recording.wav")
-                    if os.path.exists(wav_file):
+                    wav_file = _find_realtime_wav(session_dir_path)
+                    if wav_file and os.path.exists(wav_file):
                         seen_job_ids.add(job_id)
                         meta_file = os.path.join(session_dir_path, "meta.json")
                         mtime = os.path.getmtime(wav_file)
@@ -1196,16 +1237,14 @@ class API:
         """
         json_path = _transcript_path(job_id)
         if json_path and os.path.exists(json_path):
-            with open(json_path, encoding="utf-8") as f:
-                data = json.load(f)
-            # Capture old display name and date for Obsidian rename BEFORE write
-            old_display = data.get("filename") or os.path.basename(data.get("audio", "")) or job_id
-            old_date    = (data.get("created_at") or "")[:10]
-            data["filename"] = name
-            tmp_path = json_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, json_path)
+            lock = _get_transcript_lock(job_id)
+            with lock:
+                data = _read_json_file(json_path, {})
+                # Capture old display name and date for Obsidian rename BEFORE write
+                old_display = data.get("filename") or os.path.basename(data.get("audio", "")) or job_id
+                old_date    = (data.get("created_at") or "")[:10]
+                data["filename"] = name
+                _write_json_atomic(json_path, data)
             threading.Thread(
                 target=lambda: self._obsidian_rename(job_id, old_display, old_date, name),
                 daemon=True,
@@ -1215,18 +1254,20 @@ class API:
         s_dir = _session_dir(job_id)
         if os.path.isdir(s_dir):
             meta_path = os.path.join(s_dir, "meta.json")
-            tmp_path = meta_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump({"filename": name}, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, meta_path)
+            meta = _read_json_file(meta_path, {})
+            if not isinstance(meta, dict):
+                meta = {}
+            meta["filename"] = name
+            _write_json_atomic(meta_path, meta)
             return True
         wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
         if os.path.exists(wav_path):
             meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
-            tmp_path = meta_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump({"filename": name}, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, meta_path)
+            meta = _read_json_file(meta_path, {})
+            if not isinstance(meta, dict):
+                meta = {}
+            meta["filename"] = name
+            _write_json_atomic(meta_path, meta)
             return True
         return False
 
