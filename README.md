@@ -20,7 +20,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Transcription progress** — live progress bar + status message while pipeline runs
 - **Transcription cancel** — Cancel button in the progress panel aborts an in-flight transcription and returns the UI to idle
 - **Transcription retry** — if a transcription fails the error panel shows a Retry button that re-launches the same file with one click
-- **Transcript list** — speaker-labelled blocks with timestamps; click any row to seek the player
+- **Transcript list** — speaker-labelled blocks with timestamps; long single-speaker stretches are automatically split on pauses / excessive duration to improve readability and seeking; click any row to seek the player
 - **Inline editing** — double-click a row's text to edit in-place (Enter/Blur saves, Escape cancels); unsaved rows highlighted in orange
 - **Speaker rename** — click any speaker label to open a rename menu; rename all segments for that speaker in one step (bulk) or just the individual segment (single); changes are reflected immediately in the transcript list
 - **Save button** — flush all edits back to the JSON transcript; `.md` sidecar regenerated automatically

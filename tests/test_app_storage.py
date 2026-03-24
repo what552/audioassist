@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import app as app_module
 from app import API, _DEFAULT_OUTPUT_DIR
+from src.session_paths import resolve_summary_path, resolve_transcript_path
 
 
 @pytest.fixture
@@ -177,6 +178,33 @@ def test_get_history_finds_new_layout_sessions(api):
         _setup_new_layout_session(output_dir, "new-job-001")
         history = instance.get_history()
     assert any(h["job_id"] == "new-job-001" for h in history)
+
+
+def test_resolve_transcript_path_prefers_new_layout(api):
+    _, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    _setup_new_layout_session(output_dir, "pref-job")
+    with open(os.path.join(output_dir, "pref-job.json"), "w") as f:
+        json.dump({"segments": []}, f)
+    path = resolve_transcript_path(output_dir, "pref-job")
+    assert path == os.path.join(output_dir, "meetings", "pref-job", "transcript.json")
+
+
+def test_resolve_summary_path_prefers_new_layout_when_session_dir_exists(api):
+    _, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    session_dir = _setup_new_layout_session(output_dir, "sum-pref-job")
+    with open(os.path.join(output_dir, "sum-pref-job_summary.json"), "w") as f:
+        json.dump([{"text": "legacy"}], f)
+    path = resolve_summary_path(output_dir, "sum-pref-job")
+    assert path == os.path.join(session_dir, "summary.json")
+
+
+def test_resolve_summary_path_falls_back_to_legacy_without_session_dir(api):
+    _, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    path = resolve_summary_path(output_dir, "legacy-only-job")
+    assert path == os.path.join(output_dir, "legacy-only-job_summary.json")
 
 
 def test_get_history_finds_legacy_sessions(api):

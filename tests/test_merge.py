@@ -9,6 +9,7 @@ from src.merge import (
     SpeakerBlock,
     get_speaker_at,
     merge,
+    split_long_blocks,
     to_json,
     to_markdown,
     _fmt_time,
@@ -117,6 +118,35 @@ class TestMerge:
         blocks = merge(asr, segs)
         assert len(blocks) == 1
         assert blocks[0].text == "abc"
+
+    def test_splits_single_speaker_block_on_long_pause(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 20.0)]
+        words = [
+            WordSegment("Hello", 0.0, 0.4),
+            WordSegment("world.", 0.4, 0.8),
+            WordSegment("Next", 2.4, 2.8),
+            WordSegment("topic", 2.8, 3.1),
+        ]
+        asr = TranscriptResult(text="Hello world. Next topic", language="en", words=words)
+        blocks = merge(asr, segs)
+        assert len(blocks) == 2
+        assert blocks[0].text == "Helloworld."
+        assert blocks[1].text == "Nexttopic"
+
+    def test_splits_single_speaker_block_when_duration_grows_too_long(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 80.0)]
+        words = [
+            WordSegment("a", 0.0, 0.2),
+            WordSegment("b", 10.0, 10.2),
+            WordSegment("c", 20.0, 20.2),
+            WordSegment("d", 30.0, 30.2),
+            WordSegment("e", 40.0, 40.2),
+            WordSegment("f", 50.0, 50.2),
+        ]
+        asr = TranscriptResult(text="abcdef", language="en", words=words)
+        blocks = merge(asr, segs)
+        assert len(blocks) >= 2
+        assert "".join(block.text for block in blocks) == "abcdef"
 
 
 # ── to_json ───────────────────────────────────────────────────────────────────

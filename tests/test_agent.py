@@ -34,10 +34,19 @@ def _make_agent(tmp_path) -> tuple[MeetingAgent, list]:
     return agent, events
 
 
-def _write_transcript(tmp_path, job_id="job-001"):
+def _write_transcript(tmp_path, job_id="job-001", data=None):
     (tmp_path / f"{job_id}.json").write_text(
-        json.dumps(TRANSCRIPT_DATA), encoding="utf-8"
+        json.dumps(data or TRANSCRIPT_DATA), encoding="utf-8"
     )
+
+
+def _write_transcript_new_layout(tmp_path, job_id="job-001", data=None):
+    session_dir = tmp_path / "meetings" / job_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "transcript.json").write_text(
+        json.dumps(data or TRANSCRIPT_DATA), encoding="utf-8"
+    )
+    return session_dir
 
 
 def _write_summary(tmp_path, job_id="job-001"):
@@ -46,9 +55,29 @@ def _write_summary(tmp_path, job_id="job-001"):
     )
 
 
+def _write_summary_new_layout(tmp_path, job_id="job-001", data=None):
+    session_dir = tmp_path / "meetings" / job_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "summary.json").write_text(
+        json.dumps(data or SUMMARY_DATA), encoding="utf-8"
+    )
+    return session_dir
+
+
 # ── Tool unit tests ──────────────────────────────────────────────────────────
 
 class TestToolGetTranscript:
+    def test_prefers_new_layout_when_session_dir_exists(self, tmp_path):
+        legacy_data = {
+            "segments": [{"speaker": "LEGACY", "start": 0.0, "end": 1.0, "text": "old", "words": []}]
+        }
+        _write_transcript(tmp_path, data=legacy_data)
+        _write_transcript_new_layout(tmp_path, "job-001")
+        agent, _ = _make_agent(tmp_path)
+        result = agent._tool_get_transcript("job-001")
+        assert "LEGACY" not in result["transcript"]
+        assert "Hello everyone." in result["transcript"]
+
     def test_formats_with_timestamps_and_speakers(self, tmp_path):
         _write_transcript(tmp_path)
         agent, _ = _make_agent(tmp_path)
@@ -73,6 +102,19 @@ class TestToolGetTranscript:
 
 
 class TestToolGetCurrentSummary:
+    def test_reads_new_layout_summary(self, tmp_path):
+        _write_summary_new_layout(tmp_path)
+        agent, _ = _make_agent(tmp_path)
+        result = agent._tool_get_current_summary("job-001")
+        assert result["summary"] == "Second summary."
+        assert result["version_count"] == 2
+
+    def test_falls_back_to_legacy_summary(self, tmp_path):
+        _write_summary(tmp_path)
+        agent, _ = _make_agent(tmp_path)
+        result = agent._tool_get_current_summary("job-001")
+        assert result["summary"] == "Second summary."
+
     def test_returns_latest_version(self, tmp_path):
         _write_summary(tmp_path)
         agent, _ = _make_agent(tmp_path)
@@ -88,6 +130,14 @@ class TestToolGetCurrentSummary:
 
 
 class TestToolGetSummaryVersions:
+    def test_prefers_new_layout_versions(self, tmp_path):
+        legacy = [{"text": "Legacy summary.", "created_at": "2026-03-22 09:00"}]
+        _write_summary_new_layout(tmp_path)
+        (tmp_path / "job-001_summary.json").write_text(json.dumps(legacy), encoding="utf-8")
+        agent, _ = _make_agent(tmp_path)
+        result = agent._tool_get_summary_versions("job-001")
+        assert result["versions"][-1]["preview"] == "Second summary."
+
     def test_lists_versions_with_preview(self, tmp_path):
         _write_summary(tmp_path)
         agent, _ = _make_agent(tmp_path)
@@ -104,6 +154,20 @@ class TestToolGetSummaryVersions:
 
 
 class TestToolUpdateSummary:
+    def test_writes_new_layout_when_session_dir_exists(self, tmp_path):
+        _write_transcript_new_layout(tmp_path)
+        agent, _ = _make_agent(tmp_path)
+        result = agent._tool_update_summary("job-001", "New summary text.", "agent edit")
+        assert result["saved"] is True
+        assert (tmp_path / "meetings" / "job-001" / "summary.json").exists()
+        assert not (tmp_path / "job-001_summary.json").exists()
+
+    def test_falls_back_to_legacy_when_no_session_dir(self, tmp_path):
+        agent, _ = _make_agent(tmp_path)
+        result = agent._tool_update_summary("job-001", "Legacy summary text.", "agent edit")
+        assert result["saved"] is True
+        assert (tmp_path / "job-001_summary.json").exists()
+
     def test_saves_new_version(self, tmp_path):
         agent, events = _make_agent(tmp_path)
         result = agent._tool_update_summary("job-001", "New summary text.", "agent edit")

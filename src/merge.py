@@ -3,13 +3,19 @@ Merge ASR word timestamps with speaker diarization segments.
 Outputs: JSON (full data) + MD (human-readable).
 """
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Optional
 import json
 import os
 
 from .types import WordSegment, TranscriptResult
 from .diarize import SpeakerSegment
+
+MAX_BLOCK_DURATION = 45.0
+MAX_BLOCK_CHARS = 220
+STRONG_PAUSE_SECONDS = 1.2
+SOFT_PAUSE_SECONDS = 0.6
+SENTENCE_ENDINGS = ".!?。！？；;"
 
 
 @dataclass
@@ -71,7 +77,7 @@ def merge(
     if current_words:
         blocks.append(_make_block(current_speaker, current_words))
 
-    return blocks
+    return split_long_blocks(blocks)
 
 
 def _make_block(speaker: str, words: list[WordSegment]) -> SpeakerBlock:
@@ -82,6 +88,62 @@ def _make_block(speaker: str, words: list[WordSegment]) -> SpeakerBlock:
         text="".join(w.word for w in words),
         words=[{"word": w.word, "start": w.start, "end": w.end} for w in words],
     )
+
+
+def _block_char_len(words: list[WordSegment]) -> int:
+    return sum(len(w.word) for w in words)
+
+
+def _ends_sentence(word: str) -> bool:
+    return bool(word) and word.rstrip()[-1:] in SENTENCE_ENDINGS
+
+
+def _should_split(words: list[WordSegment], next_word: WordSegment) -> bool:
+    if not words:
+        return False
+
+    prev = words[-1]
+    gap = max(0.0, next_word.start - prev.end)
+    duration = next_word.end - words[0].start
+    char_len = _block_char_len(words) + len(next_word.word)
+
+    if gap >= STRONG_PAUSE_SECONDS:
+        return True
+    if _ends_sentence(prev.word) and gap >= SOFT_PAUSE_SECONDS:
+        return True
+    if duration >= MAX_BLOCK_DURATION:
+        return True
+    if char_len >= MAX_BLOCK_CHARS and gap >= SOFT_PAUSE_SECONDS / 2:
+        return True
+    return False
+
+
+def split_long_blocks(blocks: list[SpeakerBlock]) -> list[SpeakerBlock]:
+    """Split overly long single-speaker blocks using pauses and sentence boundaries."""
+    split_blocks: list[SpeakerBlock] = []
+
+    for block in blocks:
+        if len(block.words) <= 1:
+            split_blocks.append(block)
+            continue
+
+        current_words: list[WordSegment] = []
+        for raw_word in block.words:
+            word = WordSegment(
+                word=raw_word["word"],
+                start=raw_word["start"],
+                end=raw_word["end"],
+            )
+            if current_words and _should_split(current_words, word):
+                split_blocks.append(_make_block(block.speaker, current_words))
+                current_words = [word]
+            else:
+                current_words.append(word)
+
+        if current_words:
+            split_blocks.append(_make_block(block.speaker, current_words))
+
+    return split_blocks
 
 
 # ── Output formats ────────────────────────────────────────────────────────────

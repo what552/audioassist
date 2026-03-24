@@ -17,6 +17,7 @@ import threading
 from typing import Optional
 
 from platformdirs import user_data_dir
+from src.session_paths import get_session_paths, resolve_summary_path, resolve_transcript_path
 
 logger = logging.getLogger(__name__)
 
@@ -53,23 +54,17 @@ OUTPUT_DIR = _resolve_output_dir()
 
 def _session_dir(job_id: str) -> str:
     """Return the per-session directory path under OUTPUT_DIR/meetings/."""
-    return os.path.join(OUTPUT_DIR, "meetings", job_id)
+    return get_session_paths(OUTPUT_DIR, job_id).session_dir
 
 
 def _transcript_path(job_id: str) -> Optional[str]:
     """Return transcript.json path for job_id using new or legacy layout."""
-    new = os.path.join(_session_dir(job_id), "transcript.json")
-    if os.path.exists(new):
-        return new
-    old = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-    return old if os.path.exists(old) else None
+    return resolve_transcript_path(OUTPUT_DIR, job_id)
 
 
 def _summary_path(job_id: str) -> str:
     """Return summary.json path for job_id using new or legacy layout."""
-    if os.path.isdir(_session_dir(job_id)):
-        return os.path.join(_session_dir(job_id), "summary.json")
-    return os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
+    return resolve_summary_path(OUTPUT_DIR, job_id)
 
 
 _LANG_INSTRUCTIONS: dict[str, str] = {
