@@ -36,6 +36,10 @@ const App = (() => {
   let _timerInterval = null;
   let _timerSeconds  = 0;
 
+  // ── Export menu (shared by transcript + summary export buttons) ────────────
+  let _exportMenuEl  = null;
+  let _toastTimer    = null;
+
   function _startTimer() {
     _timerInterval = setInterval(() => { _timerSeconds++; _updateTimer(); }, 1000);
   }
@@ -86,16 +90,18 @@ const App = (() => {
     History.render(_sortedSessions(), _selectedId);
 
     const session = _selectedId ? _sessions.get(_selectedId) : null;
-    if (!session) { _setView('idle'); return; }
+    if (!session) { _setView('idle'); Summary.reset(); return; }
 
     if (session.type === 'file') {
       if (session.status === 'transcribing') {
         _setView('transcribing');
         dom.progressFilename.textContent = session.filename;
+        Summary.reset();
       } else if (session.status === 'error') {
         _setView('error');
         dom.errorFilename.textContent = session.filename;
         dom.errorMsg.textContent = session.errorMsg || 'Unknown error';
+        Summary.reset();
       } else if (session.status === 'refining') {
         _setView('file-done');
         dom.refineHint.hidden = false;
@@ -117,9 +123,11 @@ const App = (() => {
       if (session.status === 'recording') {
         _setView('realtime-rec');
         _syncControlBar(session);
+        Summary.reset();
       } else if (session.status === 'paused') {
         _setView('realtime-paused');
         _syncControlBar(session);
+        Summary.reset();
       } else { // done
         _setView('realtime-done');
         Player.load(session.audioPath || '');
@@ -198,6 +206,18 @@ const App = (() => {
     Player.load(s.audioPath || '');
   }
 
+  async function _onFinishRecording() {
+    const secs = _timerSeconds;
+    if (secs < 5) {
+      const keep = confirm('录音时长不足 5 秒，是否保留？');
+      if (!keep) {
+        const s = _sessions.get(_activeRealtimeId);
+        if (s) s.discarding = true;
+      }
+    }
+    await window.pywebview.api.stop_realtime();
+  }
+
   // ── Realtime state ─────────────────────────────────────────────────────────
 
   function _onRealtimeState(state, sessionId, wavPath) {
@@ -221,11 +241,16 @@ const App = (() => {
       const rtSession = _sessions.get(_activeRealtimeId);
       const wavPath   = rtSession?.audioPath;
       const rtName    = rtSession?.filename;
+      const discard   = rtSession?.discarding;
+      const rtId      = _activeRealtimeId;
       _sessions.delete(_activeRealtimeId);
       if (_selectedId === _activeRealtimeId) _selectedId = null;
       _activeRealtimeId = null;
       _resetTimer();
-      if (wavPath) {
+      if (discard) {
+        if (rtId) window.pywebview.api.delete_session(rtId).catch(() => {});
+        _render();
+      } else if (wavPath) {
         (async () => { await _startTranscription(wavPath, rtName); })();
       } else {
         _render();
@@ -440,8 +465,10 @@ const App = (() => {
       playerFilename:     document.getElementById('player-filename'),
       audioEl:            document.getElementById('audio-el'),
       playerTime:         document.getElementById('player-time'),
-      saveBtn:            document.getElementById('btn-save'),
-      saveStatus:         document.getElementById('save-status'),
+      saveBtn:              document.getElementById('btn-save'),
+      saveStatus:           document.getElementById('save-status'),
+      btnExportTranscript:  document.getElementById('btn-export-transcript'),
+      toast:                document.getElementById('toast'),
       btnUpload:          document.getElementById('btn-upload'),
       selEngine:          document.getElementById('sel-engine'),
       rcSessionName:      document.getElementById('rc-session-name'),
@@ -461,16 +488,36 @@ const App = (() => {
       _updateTimeDisplay(t);
     });
 
+    // Spacebar: toggle play/pause; never activate buttons (prevents accidental recording)
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space') return;
+      const active = document.activeElement;
+      const tag = active && active.tagName;
+      // Let space type in text fields
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (active && active.isContentEditable) return;
+      // Blur any focused button so space can't click it (e.g. Start Recording)
+      if (tag === 'BUTTON') active.blur();
+      e.preventDefault();
+      if (!dom.playerBar.hidden) {
+        if (dom.audioEl.paused) Player.play(); else Player.pause();
+      }
+    });
+
     dom.saveBtn.addEventListener('click', () => Transcript.saveAll());
     document.addEventListener('transcript:unsaved', (e) => {
       _updateSaveStatus(e.detail.count);
+    });
+
+    dom.btnExportTranscript.addEventListener('click', (e) => {
+      openExportMenu(e, (fmt) => _exportTranscript(fmt));
     });
 
     dom.btnUpload.addEventListener('click', _onUpload);
 
     dom.rcBtnPause.addEventListener('click', _onPauseResume);
     dom.rcBtnPlay.addEventListener('click', _onPlayRecording);
-    dom.rcBtnFinish.addEventListener('click', () => window.pywebview.api.stop_realtime());
+    dom.rcBtnFinish.addEventListener('click', _onFinishRecording);
 
     // Models modal
     dom.btnModels.addEventListener('click', _openModelsModal);
@@ -737,9 +784,67 @@ const App = (() => {
     _populateEngineSelector();
   }
 
+  // ── Export dropdown (shared with summary.js via App.openExportMenu) ─────────
+
+  function openExportMenu(e, onSelect) {
+    if (_exportMenuEl) { _exportMenuEl.remove(); _exportMenuEl = null; }
+    const menu = document.createElement('div');
+    menu.className = 'export-menu';
+    _exportMenuEl = menu;
+    ['txt', 'md'].forEach(fmt => {
+      const btn = document.createElement('button');
+      btn.className = 'export-item';
+      btn.textContent = `Export as ${fmt.toUpperCase()}`;
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        menu.remove(); _exportMenuEl = null;
+        onSelect(fmt);
+      });
+      menu.appendChild(btn);
+    });
+    document.body.appendChild(menu);
+    const rect = e.currentTarget.getBoundingClientRect();
+    menu.style.left = rect.left + 'px';
+    menu.style.top  = (rect.bottom + 4) + 'px';
+    const dismiss = (ev) => {
+      if (!menu.contains(ev.target)) {
+        menu.remove(); _exportMenuEl = null;
+        document.removeEventListener('mousedown', dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
+  }
+
+  function showToast(msg, duration = 2500) {
+    if (!dom.toast) return;
+    dom.toast.textContent = msg;
+    dom.toast.hidden = false;
+    dom.toast.classList.remove('toast-fade');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => {
+      dom.toast.classList.add('toast-fade');
+      setTimeout(() => { dom.toast.hidden = true; }, 300);
+    }, duration);
+  }
+
+  async function _exportTranscript(fmt) {
+    const jobId = _selectedId;
+    if (!jobId || !window.pywebview) return;
+    try {
+      const res = await window.pywebview.api.export_transcript(jobId, fmt);
+      if (res && res.status === 'saved') {
+        const name = res.path.replace(/\\/g, '/').split('/').pop();
+        showToast(`已保存到 ${name}`);
+      }
+    } catch (err) {
+      console.error('[App] export_transcript error:', err);
+    }
+  }
+
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
            onTranscribeCancel, onTranscribeRefined,
-           refreshEngineSelector: _populateEngineSelector };
+           refreshEngineSelector: _populateEngineSelector,
+           openExportMenu, showToast };
 })();
 
 // ── Global event handlers (called by Python via evaluate_js) ──────────────────

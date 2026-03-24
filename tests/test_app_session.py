@@ -169,5 +169,77 @@ class TestDeleteSessionWavOnly(unittest.TestCase):
         self.assertFalse(os.path.exists(self.meta_path))
 
 
+class TestDeleteSessionComplete(unittest.TestCase):
+    """Verify delete_session() removes every sidecar file."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        import app as app_module
+        self._orig_output_dir = app_module.OUTPUT_DIR
+        app_module.OUTPUT_DIR = self.tmpdir
+        from app import API
+        self.api = API()
+        self.job_id = "test-complete-delete"
+
+    def tearDown(self):
+        import app as app_module
+        app_module.OUTPUT_DIR = self._orig_output_dir
+
+    def _touch(self, name):
+        path = os.path.join(self.tmpdir, name)
+        with open(path, "w") as f:
+            f.write("x")
+        return path
+
+    def test_deletes_md_sidecar(self):
+        self._touch(f"{self.job_id}.json")
+        md = self._touch(f"{self.job_id}.md")
+        self.api.delete_session(self.job_id)
+        self.assertFalse(os.path.exists(md))
+
+    def test_deletes_chat_json(self):
+        self._touch(f"{self.job_id}.json")
+        chat = self._touch(f"{self.job_id}_agent_chat.json")
+        self.api.delete_session(self.job_id)
+        self.assertFalse(os.path.exists(chat))
+
+    def test_deletes_audio_mp3(self):
+        self._touch(f"{self.job_id}.json")
+        audio = self._touch(f"{self.job_id}_audio.mp3")
+        self.api.delete_session(self.job_id)
+        self.assertFalse(os.path.exists(audio))
+
+    def test_deletes_audio_m4a(self):
+        self._touch(f"{self.job_id}.json")
+        audio = self._touch(f"{self.job_id}_audio.m4a")
+        self.api.delete_session(self.job_id)
+        self.assertFalse(os.path.exists(audio))
+
+    def test_deletes_audio_mp4(self):
+        self._touch(f"{self.job_id}.json")
+        audio = self._touch(f"{self.job_id}_audio.mp4")
+        self.api.delete_session(self.job_id)
+        self.assertFalse(os.path.exists(audio))
+
+    def test_deletes_all_sidecars_together(self):
+        files = [
+            self._touch(f"{self.job_id}.json"),
+            self._touch(f"{self.job_id}.md"),
+            self._touch(f"{self.job_id}_summary.json"),
+            self._touch(f"{self.job_id}_meta.json"),
+            self._touch(f"{self.job_id}_agent_chat.json"),
+            self._touch(f"{self.job_id}_audio.mp3"),
+        ]
+        self.api.delete_session(self.job_id)
+        for f in files:
+            self.assertFalse(os.path.exists(f), f"{f} should have been deleted")
+
+    def test_does_not_delete_unrelated_files(self):
+        self._touch(f"{self.job_id}.json")
+        unrelated = self._touch("other-job.json")
+        self.api.delete_session(self.job_id)
+        self.assertTrue(os.path.exists(unrelated))
+
+
 if __name__ == "__main__":
     unittest.main()

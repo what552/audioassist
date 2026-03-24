@@ -1,5 +1,6 @@
 /**
- * Summary — API config, template management, summary generation, version history.
+ * Summary — API config, template management, summary generation, version history,
+ * and interactive Summary Agent chat.
  *
  * Public API:
  *   Summary.init()               — wire up DOM; call once after DOMContentLoaded
@@ -9,11 +10,37 @@
  *   onSummaryChunk(jobId, chunk)        — streaming token/chunk
  *   onSummaryComplete(jobId, fullText)  — generation finished
  *   onSummaryError(jobId, message)      — error
+ *   onAgentChunk(jobId, chunk)          — agent streaming text delta
+ *   onAgentToolStart(jobId, toolName)   — agent tool call beginning
+ *   onAgentToolEnd(jobId, toolName)     — agent tool call finished
+ *   onAgentDraftUpdated(jobId, newText) — agent saved a new summary version
+ *   onAgentComplete(jobId, fullText)    — agent turn finished
+ *   onAgentError(jobId, message)        — agent error
  */
 const Summary = (() => {
   let _jobId = null;
   let _generating = false;
+  let _agentBusy = false;
+  let _agentCurrentBubble = null;
+  let _streamBuffer      = '';  // summary chunk accumulator
+  let _agentStreamBuffer = '';  // agent chunk accumulator
   let dom = {};
+  let agentDom = {};
+
+  // ── Markdown rendering ──────────────────────────────────────────────────────
+
+  // Configure marked once: GitHub-flavoured, line breaks as <br>
+  if (typeof marked !== 'undefined') {
+    marked.use({ gfm: true, breaks: true });
+  }
+
+  function _md(text) {
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+      // Fallback: escape HTML only
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    return DOMPurify.sanitize(marked.parse(text));
+  }
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -35,9 +62,25 @@ const Summary = (() => {
       cfgBaseUrl:     document.getElementById('cfg-base-url'),
       cfgApiKey:      document.getElementById('cfg-api-key'),
       cfgModel:       document.getElementById('cfg-model'),
-      btnSaveConfig:  document.getElementById('btn-save-config'),
-      btnAddTemplate: document.getElementById('btn-add-template'),
-      templateList:   document.getElementById('template-list'),
+      btnSaveConfig:      document.getElementById('btn-save-config'),
+      btnAddTemplate:     document.getElementById('btn-add-template'),
+      templateList:       document.getElementById('template-list'),
+      cfgOutputFolder:    document.getElementById('cfg-output-folder'),
+      btnOutputBrowse:    document.getElementById('btn-output-browse'),
+      btnSaveStorage:     document.getElementById('btn-save-storage'),
+      obsEnabled:         document.getElementById('cfg-obsidian-enabled'),
+      obsFolder:          document.getElementById('cfg-obsidian-folder'),
+      btnObsBrowse:       document.getElementById('btn-obsidian-browse'),
+      btnSaveObsidian:    document.getElementById('btn-save-obsidian'),
+    };
+
+    agentDom = {
+      chat:       document.getElementById('agent-chat'),
+      messages:   document.getElementById('agent-messages'),
+      toolStatus: document.getElementById('agent-tool-status'),
+      input:      document.getElementById('agent-input'),
+      btnSend:    document.getElementById('btn-agent-send'),
+      btnClear:   document.getElementById('btn-agent-clear'),
     };
 
     dom.btnToggle.addEventListener('click', _onTogglePanel);
@@ -48,6 +91,23 @@ const Summary = (() => {
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
     dom.btnAddTemplate.addEventListener('click', _onAddTemplate);
+    dom.btnOutputBrowse.addEventListener('click', _onOutputBrowse);
+    dom.btnSaveStorage.addEventListener('click', _onSaveStorage);
+    dom.btnObsBrowse.addEventListener('click', _onObsBrowse);
+    dom.btnSaveObsidian.addEventListener('click', _onSaveObsidian);
+
+    agentDom.btnSend.addEventListener('click', _sendAgentTurn);
+    agentDom.btnClear.addEventListener('click', _clearAgentChat);
+    agentDom.input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendAgentTurn(); }
+    });
+
+    const btnExportSummary = document.getElementById('btn-export-summary');
+    if (btnExportSummary) {
+      btnExportSummary.addEventListener('click', (e) => {
+        App.openExportMenu(e, (fmt) => _exportSummary(fmt));
+      });
+    }
 
     _loadConfig();
     _loadTemplates();
@@ -66,6 +126,17 @@ const Summary = (() => {
     dom.panel.hidden = false;
     _setOutput('placeholder');
     await _loadVersions(jobId);
+    await _initChat(jobId);
+  }
+
+  // ── Public: reset panel (no active job — recording / transcribing / idle) ──
+
+  function reset() {
+    _jobId = null;
+    _setOutput('placeholder');
+    _renderVersions([]);
+    agentDom.messages.innerHTML = '';
+    _agentCurrentBubble = null;
   }
 
   // ── Version management ─────────────────────────────────────────────────────
@@ -110,6 +181,64 @@ const Summary = (() => {
       dom.cfgModel.value   = cfg.model    || '';
     } catch (e) {
       console.warn('[Summary] _loadConfig error:', e);
+    }
+    try {
+      const obs = await window.pywebview.api.get_obsidian_config();
+      dom.obsEnabled.checked = !!obs.enabled;
+      dom.obsFolder.value    = obs.folder || '';
+    } catch (e) {
+      console.warn('[Summary] _loadObsidianConfig error:', e);
+    }
+    try {
+      const st = await window.pywebview.api.get_storage_config();
+      dom.cfgOutputFolder.value = st.output_dir || '';
+    } catch (e) {
+      console.warn('[Summary] _loadStorageConfig error:', e);
+    }
+  }
+
+  async function _onOutputBrowse() {
+    try {
+      const folder = await window.pywebview.api.select_output_folder();
+      if (folder) dom.cfgOutputFolder.value = folder;
+    } catch (e) {
+      console.warn('[Summary] _onOutputBrowse error:', e);
+    }
+  }
+
+  async function _onSaveStorage() {
+    try {
+      const result = await window.pywebview.api.set_output_dir(
+        dom.cfgOutputFolder.value.trim()
+      );
+      if (result && result.ok) {
+        _closeModal();
+      } else {
+        alert(result?.error || 'Failed to set output folder');
+      }
+    } catch (e) {
+      console.error('[Summary] _onSaveStorage error:', e);
+    }
+  }
+
+  async function _onObsBrowse() {
+    try {
+      const folder = await window.pywebview.api.select_obsidian_folder();
+      if (folder) dom.obsFolder.value = folder;
+    } catch (e) {
+      console.warn('[Summary] _onObsBrowse error:', e);
+    }
+  }
+
+  async function _onSaveObsidian() {
+    try {
+      await window.pywebview.api.set_obsidian_config(
+        dom.obsFolder.value.trim(),
+        dom.obsEnabled.checked,
+      );
+      _closeModal();
+    } catch (e) {
+      console.error('[Summary] _onSaveObsidian error:', e);
     }
   }
 
@@ -264,11 +393,13 @@ const Summary = (() => {
   function onChunk(jobId, chunk) {
     if (jobId !== _jobId) return;
     if (dom.summaryText.hidden) {
-      dom.summaryText.textContent = '';
+      _streamBuffer = '';
+      dom.summaryText.innerHTML = '';
       dom.summaryText.hidden = false;
       dom.placeholder.hidden = true;
     }
-    dom.summaryText.textContent += chunk;
+    _streamBuffer += chunk;
+    dom.summaryText.innerHTML = _md(_streamBuffer);
     dom.output.scrollTop = dom.output.scrollHeight;
   }
 
@@ -290,13 +421,143 @@ const Summary = (() => {
     _setOutput('error', message);
   }
 
+  // ── Agent chat ─────────────────────────────────────────────────────────────
+
+  async function _initChat(jobId) {
+    agentDom.messages.innerHTML = '';
+    _agentCurrentBubble = null;
+    try {
+      const session = await window.pywebview.api.get_agent_session(jobId);
+      const turns = session.turns || [];
+      for (const t of turns) {
+        if (t.role === 'user' || t.role === 'assistant') {
+          _appendChatBubble(t.role, t.content);
+        }
+      }
+    } catch (e) {
+      console.warn('[Summary] _initChat error:', e);
+    }
+  }
+
+  function _appendChatBubble(role, text) {
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble chat-bubble-${role}`;
+    if (role === 'assistant' && text) {
+      bubble.innerHTML = _md(text);
+    } else {
+      bubble.textContent = text;
+    }
+    agentDom.messages.appendChild(bubble);
+    agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
+    return bubble;
+  }
+
+  async function _sendAgentTurn() {
+    if (!_jobId || _agentBusy) return;
+    const text = agentDom.input.value.trim();
+    if (!text) return;
+
+    agentDom.input.value = '';
+    agentDom.btnSend.disabled = true;
+    _agentBusy = true;
+
+    _agentStreamBuffer = '';
+    _appendChatBubble('user', text);
+    _agentCurrentBubble = _appendChatBubble('assistant', '');
+    _agentCurrentBubble.classList.add('chat-bubble-loading');
+
+    try {
+      await window.pywebview.api.start_agent_turn(_jobId, text);
+      // Result delivered via onAgentChunk / onAgentComplete / onAgentError
+    } catch (err) {
+      _agentBusy = false;
+      agentDom.btnSend.disabled = false;
+      if (_agentCurrentBubble) {
+        _agentCurrentBubble.textContent = '⚠ ' + String(err);
+        _agentCurrentBubble.classList.remove('chat-bubble-loading');
+        _agentCurrentBubble.classList.add('chat-bubble-error');
+        _agentCurrentBubble = null;
+      }
+    }
+  }
+
+  async function _clearAgentChat() {
+    if (!_jobId) return;
+    agentDom.messages.innerHTML = '';
+    _agentCurrentBubble = null;
+    try {
+      await window.pywebview.api.clear_agent_session(_jobId);
+    } catch (e) {
+      console.warn('[Summary] _clearAgentChat error:', e);
+    }
+  }
+
+  // ── Agent Python → JS callbacks ────────────────────────────────────────────
+
+  function onAgentChunk(jobId, chunk) {
+    if (jobId !== _jobId) return;
+    if (_agentCurrentBubble) {
+      _agentCurrentBubble.classList.remove('chat-bubble-loading');
+      _agentStreamBuffer += chunk;
+      _agentCurrentBubble.innerHTML = _md(_agentStreamBuffer);
+    }
+    agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
+  }
+
+  function onAgentToolStart(jobId, toolName) {
+    if (jobId !== _jobId) return;
+    agentDom.toolStatus.textContent = `⚙ ${toolName}…`;
+    agentDom.toolStatus.hidden = false;
+  }
+
+  function onAgentToolEnd(jobId, toolName) {
+    if (jobId !== _jobId) return;
+    agentDom.toolStatus.hidden = true;
+  }
+
+  function onAgentDraftUpdated(jobId, newText) {
+    if (jobId !== _jobId) return;
+    _setOutput('text', newText);
+    _loadVersions(jobId);
+  }
+
+  function onAgentComplete(jobId, fullText) {
+    if (jobId !== _jobId) return;
+    _agentBusy = false;
+    agentDom.btnSend.disabled = false;
+    agentDom.toolStatus.hidden = true;
+    if (_agentCurrentBubble) {
+      _agentCurrentBubble.classList.remove('chat-bubble-loading');
+      // Re-render with the authoritative full text to fix any mid-chunk MD artifacts
+      const finalText = fullText || _agentStreamBuffer;
+      if (finalText) _agentCurrentBubble.innerHTML = _md(finalText);
+      _agentCurrentBubble = null;
+      _agentStreamBuffer = '';
+    }
+    agentDom.messages.scrollTop = agentDom.messages.scrollHeight;
+  }
+
+  function onAgentError(jobId, message) {
+    if (jobId !== _jobId) return;
+    _agentBusy = false;
+    agentDom.btnSend.disabled = false;
+    agentDom.toolStatus.hidden = true;
+    if (_agentCurrentBubble) {
+      _agentCurrentBubble.textContent = '⚠ ' + message;
+      _agentCurrentBubble.classList.remove('chat-bubble-loading');
+      _agentCurrentBubble.classList.add('chat-bubble-error');
+      _agentCurrentBubble = null;
+    }
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function _setGenerating(active) {
     _generating = active;
     dom.btnSummarize.disabled = active;
     if (active) {
-      dom.summaryText.textContent = '';
+      _streamBuffer = '';
+      dom.summaryText.innerHTML = '';
       dom.summaryText.hidden = false;
       dom.placeholder.hidden = true;
       dom.loading.hidden = false;
@@ -309,23 +570,50 @@ const Summary = (() => {
     dom.placeholder.hidden = state !== 'placeholder';
     dom.summaryText.hidden = state !== 'text' && state !== 'error';
     dom.loading.hidden = true;
+    const btnExport = document.getElementById('btn-export-summary');
+    if (btnExport) btnExport.hidden = (state !== 'text');
     if (state === 'placeholder') {
-      dom.summaryText.textContent = '';
+      dom.summaryText.innerHTML = '';
       dom.summaryText.style.color = '';
     } else if (state === 'text') {
-      dom.summaryText.textContent = text;
+      dom.summaryText.innerHTML = _md(text);
       dom.summaryText.style.color = '';
     } else if (state === 'error') {
-      dom.summaryText.textContent = '⚠ ' + text;
+      dom.summaryText.textContent = '⚠ ' + text;  // error messages are plain text
       dom.summaryText.style.color = 'var(--warn)';
     }
   }
 
-  return { init, showForJob, onChunk, onComplete, onError };
+  async function _exportSummary(fmt) {
+    if (!_jobId || !window.pywebview) return;
+    try {
+      const res = await window.pywebview.api.export_summary(_jobId, fmt);
+      if (res && res.status === 'saved') {
+        const name = res.path.replace(/\\/g, '/').split('/').pop();
+        App.showToast(`已保存到 ${name}`);
+      }
+    } catch (err) {
+      console.error('[Summary] export_summary error:', err);
+    }
+  }
+
+  return {
+    init, showForJob, reset,
+    onChunk, onComplete, onError,
+    onAgentChunk, onAgentToolStart, onAgentToolEnd,
+    onAgentDraftUpdated, onAgentComplete, onAgentError,
+  };
 })();
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
 
-function onSummaryChunk(jobId, chunk)       { Summary.onChunk(jobId, chunk); }
-function onSummaryComplete(jobId, fullText) { Summary.onComplete(jobId, fullText); }
-function onSummaryError(jobId, message)     { Summary.onError(jobId, message); }
+function onSummaryChunk(jobId, chunk)         { Summary.onChunk(jobId, chunk); }
+function onSummaryComplete(jobId, fullText)   { Summary.onComplete(jobId, fullText); }
+function onSummaryError(jobId, message)       { Summary.onError(jobId, message); }
+
+function onAgentChunk(jobId, chunk)           { Summary.onAgentChunk(jobId, chunk); }
+function onAgentToolStart(jobId, toolName)    { Summary.onAgentToolStart(jobId, toolName); }
+function onAgentToolEnd(jobId, toolName)      { Summary.onAgentToolEnd(jobId, toolName); }
+function onAgentDraftUpdated(jobId, newText)  { Summary.onAgentDraftUpdated(jobId, newText); }
+function onAgentComplete(jobId, fullText)     { Summary.onAgentComplete(jobId, fullText); }
+function onAgentError(jobId, message)         { Summary.onAgentError(jobId, message); }

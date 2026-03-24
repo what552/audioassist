@@ -16,6 +16,7 @@ const Transcript = (() => {
   // Treat words[] as READ-ONLY; never mutate individual word objects in place.
   let _segments = [];
   let _unsavedCount = 0;
+  let _speakerMenu = null;   // currently open popup, or null
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,12 @@ const Transcript = (() => {
     text.textContent = seg.text;
 
     row.append(time, speaker, text);
+
+    // Click on speaker label → rename menu
+    speaker.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _openSpeakerMenu(e, speaker, row);
+    });
 
     // Click → seek (ignore if clicking inside an active contenteditable)
     row.addEventListener('click', (e) => {
@@ -123,6 +130,124 @@ const Transcript = (() => {
     document.dispatchEvent(
       new CustomEvent('transcript:unsaved', { detail: { count: _unsavedCount } })
     );
+  }
+
+  // ── Speaker rename ───────────────────────────────────────────────────────────
+
+  function _closeMenu() {
+    if (_speakerMenu) {
+      _speakerMenu.remove();
+      _speakerMenu = null;
+    }
+  }
+
+  function _openSpeakerMenu(e, speakerEl, row) {
+    _closeMenu();
+    const oldName = speakerEl.textContent;
+
+    const menu = document.createElement('div');
+    menu.className = 'speaker-menu';
+    _speakerMenu = menu;
+
+    const btnSingle = document.createElement('button');
+    btnSingle.className = 'speaker-menu-item';
+    btnSingle.textContent = 'Rename this';
+    btnSingle.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      _closeMenu();
+      _startSpeakerInput(speakerEl, row, false);
+    });
+
+    const btnAll = document.createElement('button');
+    btnAll.className = 'speaker-menu-item';
+    btnAll.textContent = `Rename all "${oldName}"`;
+    btnAll.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      _closeMenu();
+      _startSpeakerInput(speakerEl, row, true);
+    });
+
+    menu.append(btnSingle, btnAll);
+    document.body.appendChild(menu);
+
+    // Position below the clicked element
+    const rect = speakerEl.getBoundingClientRect();
+    menu.style.left = rect.left + 'px';
+    menu.style.top  = (rect.bottom + 4) + 'px';
+
+    // Dismiss on outside click
+    const dismiss = (ev) => {
+      if (!menu.contains(ev.target)) {
+        _closeMenu();
+        document.removeEventListener('mousedown', dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
+  }
+
+  function _startSpeakerInput(speakerEl, row, bulk) {
+    const oldName = speakerEl.textContent;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'row-speaker-input';
+    input.value = oldName;
+    speakerEl.parentNode.insertBefore(input, speakerEl);
+    speakerEl.classList.add('renaming');
+    input.focus();
+    input.select();
+
+    async function confirm() {
+      const newName = input.value.trim();
+      cleanup();
+      if (!newName || newName === oldName) return;
+      await _applySpeakerRename(speakerEl, row, oldName, newName, bulk);
+    }
+
+    function cancel() { cleanup(); }
+
+    function cleanup() {
+      speakerEl.classList.remove('renaming');
+      input.remove();
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  { e.preventDefault(); confirm(); }
+      if (e.key === 'Escape') { cancel(); }
+    });
+    input.addEventListener('blur', confirm);
+  }
+
+  async function _applySpeakerRename(speakerEl, row, oldName, newName, bulk) {
+    if (!window.pywebview) return;
+    try {
+      if (bulk) {
+        const res = await window.pywebview.api.rename_speaker(_jobId, oldName, newName);
+        if (!res || !res.ok) {
+          console.error('[Transcript] rename_speaker failed:', res && res.error);
+          return;
+        }
+        // Update all speaker spans and in-memory segments
+        _segments.forEach((seg, i) => {
+          if (seg.speaker === oldName) {
+            seg.speaker = newName;
+            const r = _container.querySelector(`.transcript-row[data-index="${i}"] .row-speaker`);
+            if (r) r.textContent = newName;
+          }
+        });
+      } else {
+        const idx = parseInt(row.dataset.index, 10);
+        const res = await window.pywebview.api.rename_segment_speaker(_jobId, idx, newName);
+        if (!res || !res.ok) {
+          console.error('[Transcript] rename_segment_speaker failed:', res && res.error);
+          return;
+        }
+        _segments[idx].speaker = newName;
+        speakerEl.textContent = newName;
+      }
+    } catch (err) {
+      console.error('[Transcript] speaker rename error:', err);
+    }
   }
 
   // ── Playback highlight ────────────────────────────────────────────────────────
