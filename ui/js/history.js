@@ -87,13 +87,14 @@ const History = (() => {
         _startInlineRename(session, nameWrap);
       });
 
-      // Re-transcribe button (F4): shown for file sessions in terminal states
+      // Re-transcribe (F4) / Resume (F2): shown for file sessions in terminal states
       const retranscribeStates = ['done', 'error', 'interrupted', 'cancelled'];
       if (session.type === 'file' && retranscribeStates.includes(session.status) && _onRetranscribe) {
         const btnRetranscribe = document.createElement('button');
         btnRetranscribe.className = 'btn-history-action';
-        btnRetranscribe.title = 'Re-transcribe';
-        btnRetranscribe.textContent = '🔄';
+        const isInterrupted = session.status === 'interrupted';
+        btnRetranscribe.title = isInterrupted ? 'Resume' : 'Re-transcribe';
+        btnRetranscribe.textContent = isInterrupted ? '▶' : '🔄';
         btnRetranscribe.addEventListener('click', (e) => {
           e.stopPropagation();
           _onRetranscribe(session.id);

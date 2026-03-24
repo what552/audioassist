@@ -2,8 +2,14 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.12 — r02-b12)
+## Features (v0.13 — r02-b5)
 
+- **Session-per-directory storage (F6)** — each job lives in `meetings/{job_id}/` inside the output directory (`transcript.json`, `summary.json`, `agent_chat.json`, `source_audio.*`); legacy flat-file sessions are read transparently for backward compatibility; session delete uses `shutil.rmtree` for new layout
+- **Local-only model inference (F1)** — `pipeline.run()` and `run_realtime_segments()` never auto-download models; if a required model is not present, `ModelNotReadyError` is raised immediately with a clear message pointing to the Model Library; no silent network calls during transcription
+- **Checkpoint / resume (F2)** — long file transcriptions write a `transcription_task.json` checkpoint per chunk; if the app is closed mid-job, history shows the session as "⚠ interrupted"; the ▶ button in the history sidebar resumes from the last completed chunk instead of restarting from scratch; `discard_checkpoint()` API available to abandon a partial job
+- **Batch import + sequential queue (F3)** — the Upload button and drag-and-drop both accept multiple files at once; files are queued and processed one at a time (⏳ indicator in the history sidebar); the next file starts automatically when the current one finishes or errors
+- **One-click re-transcribe (F4)** — the 🔄 button in the history sidebar re-transcribes any completed or errored file session from scratch with the currently selected engine; interrupted sessions show a ▶ Resume button instead (see F2)
+- **Recording interrupt confirmation (F5)** — clicking Start Recording while a file transcription is running shows a confirmation dialog ("Stop and Start Recording?"); confirming cancels the transcription (session kept as interrupted), clears the queue, and starts the recording; declining leaves the transcription running untouched
 - **3-column layout** — left history sidebar, center transcript + player, collapsible right summary panel; all three column dividers are draggable for custom widths
 - **Session state machine** — all UI is driven by a single `_render()` from the selected session's `type + status`; file and realtime sessions coexist safely in the same history list
 - **History sidebar** — lists all sessions (active first, then newest-first); click any entry to switch the center panel; live sessions show a 🔴 indicator
@@ -102,9 +108,13 @@ Files written inside the data directory:
 |------|----------|
 | `config.json` | API configuration — `base_url`, `api_key`, `model` for the LLM summary endpoint |
 | `templates.json` | Summary templates — list of `{name, prompt}` objects managed in the ⚙ settings panel |
-| `output/<job_id>.json` | Full transcript with word-level timing and speaker labels |
-| `output/<job_id>.md` | Human-readable transcript sidecar (regenerated on each save) |
-| `output/<session_id>.wav` | Full microphone recording from a realtime session |
+| `output/meetings/<job_id>/transcript.json` | Full transcript with word-level timing and speaker labels (new layout) |
+| `output/meetings/<job_id>/transcript.md` | Human-readable transcript sidecar (regenerated on each save) |
+| `output/meetings/<job_id>/summary.json` | Saved summary versions (up to 3) |
+| `output/meetings/<job_id>/agent_chat.json` | Summary Agent conversation history |
+| `output/meetings/<job_id>/source_audio.*` | Copy of the original audio file |
+| `output/meetings/<job_id>/realtime_recording.wav` | Full WAV from a realtime session |
+| `output/meetings/<job_id>/transcription_task.json` | Checkpoint file (present while transcription is running or interrupted) |
 | `models/` | Downloaded ASR and diarization model weights |
 
 ### ASR engine

@@ -325,7 +325,7 @@ const App = (() => {
           _sessions.set(item.job_id, {
             id:         item.job_id,
             type:       item.type || 'file',
-            status:     'done',
+            status:     item.status || 'done',
             filename:   item.filename,
             created_at: item.date,
             duration:   item.duration,
@@ -398,11 +398,30 @@ const App = (() => {
     }
   }
 
-  // ── F4: Re-transcribe ──────────────────────────────────────────────────────
+  // ── F4: Re-transcribe / F2: Resume ────────────────────────────────────────
 
-  function _onRetranscribe(id) {
+  async function _onRetranscribe(id) {
     const s = _sessions.get(id);
-    if (!s || !s.audioPath) return;
+    if (!s) return;
+
+    if (s.status === 'interrupted') {
+      // F2: Resume from checkpoint — reuse same job_id, skip done chunks
+      _updateSession(id, { status: 'transcribing', errorMsg: null });
+      _selectedId = id;
+      _setProgress(0, 'Resuming…');
+      _render();
+      try {
+        await window.pywebview.api.resume_transcription(id);
+      } catch (err) {
+        console.error('[App] resume_transcription error:', err);
+        _updateSession(id, { status: 'error', errorMsg: String(err) });
+        _render();
+      }
+      return;
+    }
+
+    // F4: Re-transcribe from scratch
+    if (!s.audioPath) return;
     const filePath    = s.audioPath;
     const displayName = s.filename;
     _sessions.delete(id);

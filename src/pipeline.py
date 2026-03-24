@@ -266,6 +266,7 @@ def run_realtime_segments(
     num_speakers: Optional[int] = None,
     diarizer_model_id: Optional[str] = None,
     job_id: Optional[str] = None,
+    output_stem: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> tuple[str, str]:
     """
@@ -282,6 +283,7 @@ def run_realtime_segments(
         num_speakers: Hint for diarizer.
         diarizer_model_id: Diarizer catalog ID; defaults to community-1.
         job_id: Unique job identifier; auto-generated if None.
+        output_stem: Base name for output files (without extension). Defaults to job_id.
         progress_callback: Called with (percent 0.0-1.0, message) at each step.
 
     Returns:
@@ -295,8 +297,9 @@ def run_realtime_segments(
     if job_id is None:
         job_id = str(uuid.uuid4())
 
-    json_path = os.path.join(output_dir, f"{job_id}.json")
-    md_path   = os.path.join(output_dir, f"{job_id}.md")
+    stem = output_stem or job_id
+    json_path = os.path.join(output_dir, f"{stem}.json")
+    md_path   = os.path.join(output_dir, f"{stem}.md")
 
     def _progress(pct: float, msg: str):
         logger.info(f"[{pct:.0%}] {msg}")
