@@ -25,10 +25,11 @@ def env(tmp_path):
         yield API(), tmp_path
 
 
-def _fake_pipeline(audio_path, output_dir, job_id, **_kwargs):
+def _fake_pipeline(audio_path, output_dir, job_id=None, output_stem=None, **_kwargs):
     """Minimal pipeline stub: writes a JSON with basename 'audio' field."""
-    json_path = os.path.join(output_dir, f"{job_id}.json")
-    md_path   = os.path.join(output_dir, f"{job_id}.md")
+    stem = output_stem or job_id or "transcript"
+    json_path = os.path.join(output_dir, f"{stem}.json")
+    md_path   = os.path.join(output_dir, f"{stem}.md")
     data = {
         "audio":      os.path.basename(audio_path),
         "filename":   os.path.basename(audio_path),
@@ -55,8 +56,8 @@ class TestAudioCopy:
             api.transcribe(str(src), {})
             _wait()
 
-        copies = list(out_dir.glob("*_audio.mp3"))
-        assert len(copies) == 1, "Expected exactly one _audio.mp3 copy"
+        copies = list(out_dir.rglob("source_audio.mp3"))
+        assert len(copies) == 1, "Expected exactly one source_audio.mp3 copy"
 
     def test_copy_has_same_content_as_source(self, env, tmp_path):
         api, out_dir = env
@@ -69,7 +70,7 @@ class TestAudioCopy:
             api.transcribe(str(src), {})
             _wait()
 
-        copy = next(out_dir.glob("*_audio.mp3"))
+        copy = next(out_dir.rglob("source_audio.mp3"))
         assert copy.read_bytes() == content
 
     def test_copy_extension_matches_source(self, env, tmp_path):
@@ -82,7 +83,7 @@ class TestAudioCopy:
             api.transcribe(str(src), {})
             _wait()
 
-        assert list(out_dir.glob("*_audio.m4a")), "Expected *_audio.m4a copy"
+        assert list(out_dir.rglob("source_audio.m4a")), "Expected source_audio.m4a copy"
 
 
 # ── JSON audio field ──────────────────────────────────────────────────────────
@@ -91,7 +92,7 @@ class TestJsonAudioField:
     def _run_and_get_json(self, api, out_dir, src):
         job_ids = []
 
-        def _capture_pipeline(audio_path, output_dir, job_id, **kw):
+        def _capture_pipeline(audio_path, output_dir, job_id=None, **kw):
             job_ids.append(job_id)
             return _fake_pipeline(audio_path, output_dir, job_id, **kw)
 
@@ -100,7 +101,8 @@ class TestJsonAudioField:
             api.transcribe(str(src), {})
             _wait()
 
-        json_path = out_dir / f"{job_ids[0]}.json"
+        # F6: JSON is now at meetings/{job_id}/transcript.json
+        json_path = out_dir / "meetings" / job_ids[0] / "transcript.json"
         return json.loads(json_path.read_text(encoding="utf-8"))
 
     def test_audio_field_is_absolute_path(self, env, tmp_path):
@@ -117,7 +119,7 @@ class TestJsonAudioField:
         src = tmp_path / "talk.mp3"
         src.write_bytes(b"x")
         data = self._run_and_get_json(api, out_dir, src)
-        assert data["audio"].endswith("_audio.mp3")
+        assert data["audio"].endswith("source_audio.mp3")
         assert os.path.isfile(data["audio"])
 
     def test_filename_field_keeps_original_basename(self, env, tmp_path):

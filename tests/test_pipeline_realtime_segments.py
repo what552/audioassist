@@ -78,7 +78,8 @@ class TestRunRealtimeSegments:
         mock_mm.is_downloaded.return_value = True
 
         with patch("src.pipeline.DiarizationEngine", return_value=mock_diarizer), \
-             patch("src.pipeline.ModelManager",      return_value=mock_mm):
+             patch("src.pipeline.ModelManager",      return_value=mock_mm), \
+             patch("src.pipeline._validate_model_local", return_value="/fake/model/path"):
             json_path, md_path = run_realtime_segments(
                 segments=segs,
                 wav_path=wav,
@@ -99,7 +100,8 @@ class TestRunRealtimeSegments:
         mock_mm.is_downloaded.return_value = True
 
         with patch("src.pipeline.DiarizationEngine", return_value=mock_diarizer), \
-             patch("src.pipeline.ModelManager",      return_value=mock_mm):
+             patch("src.pipeline.ModelManager",      return_value=mock_mm), \
+             patch("src.pipeline._validate_model_local", return_value="/fake/model/path"):
             json_path, _ = run_realtime_segments(
                 segments=segs,
                 wav_path=wav,
@@ -128,7 +130,8 @@ class TestRunRealtimeSegments:
         mock_mm.is_downloaded.return_value = True
 
         with patch("src.pipeline.DiarizationEngine", return_value=mock_diarizer), \
-             patch("src.pipeline.ModelManager",      return_value=mock_mm):
+             patch("src.pipeline.ModelManager",      return_value=mock_mm), \
+             patch("src.pipeline._validate_model_local", return_value="/fake/model/path"):
             json_path, _ = run_realtime_segments(
                 segments=segs,
                 wav_path=wav,
@@ -164,7 +167,8 @@ class TestRunRealtimeSegments:
 
         calls = []
         with patch("src.pipeline.DiarizationEngine", return_value=mock_diarizer), \
-             patch("src.pipeline.ModelManager",      return_value=mock_mm):
+             patch("src.pipeline.ModelManager",      return_value=mock_mm), \
+             patch("src.pipeline._validate_model_local", return_value="/fake/model/path"):
             run_realtime_segments(
                 segments=segs,
                 wav_path=wav,

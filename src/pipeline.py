@@ -15,8 +15,29 @@ from .diarize import DiarizationEngine, SpeakerSegment, DEFAULT_DIARIZER_MODEL
 from .merge import SpeakerBlock, merge, to_json, to_markdown
 from .audio_utils import to_wav, split_to_chunks
 from .model_manager import ModelManager
+from . import checkpoint
 
 logger = logging.getLogger(__name__)
+
+
+class ModelNotReadyError(RuntimeError):
+    def __init__(self, model_id: str, reason: str):
+        self.model_id = model_id
+        self.reason = reason  # "model_not_downloaded" | "model_incomplete"
+        super().__init__(
+            f"Model '{model_id}' is not ready: {reason.replace('_', ' ')}. "
+            "Please download it from the Model Library."
+        )
+
+
+def _validate_model_local(mm: ModelManager, model_id: str) -> str:
+    """Validate that a model is downloaded and complete. Returns local path."""
+    if not mm.is_downloaded(model_id):
+        raise ModelNotReadyError(model_id, "model_not_downloaded")
+    path = mm.local_path(model_id)
+    if not path or not os.path.isdir(path):
+        raise ModelNotReadyError(model_id, "model_incomplete")
+    return path
 
 
 _WHISPER_SIZE_MAP: dict[str, str] = {
@@ -36,6 +57,8 @@ def run(
     asr_model_id: Optional[str] = None,
     diarizer_model_id: Optional[str] = None,
     job_id: Optional[str] = None,
+    output_stem: Optional[str] = None,
+    session_dir: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> tuple[str, str]:
     """
@@ -53,6 +76,8 @@ def run(
         diarizer_model_id: Diarization model catalog ID; defaults to
             "pyannote-diarization-community-1".
         job_id: Unique job identifier; auto-generated if None.
+        output_stem: Override filename stem for output files (default: job_id).
+        session_dir: If provided, read/write checkpoint to this directory (F2).
         progress_callback: Called with (percent 0.0-1.0, message) at each step.
 
     Returns:
@@ -66,8 +91,9 @@ def run(
     if job_id is None:
         job_id = str(uuid.uuid4())
 
-    json_path = os.path.join(output_dir, f"{job_id}.json")
-    md_path = os.path.join(output_dir, f"{job_id}.md")
+    stem = output_stem or job_id
+    json_path = os.path.join(output_dir, f"{stem}.json")
+    md_path   = os.path.join(output_dir, f"{stem}.md")
 
     def _progress(pct: float, msg: str):
         logger.info(f"[{pct:.0%}] {msg}")
@@ -79,12 +105,17 @@ def run(
     wav_path, is_temp_wav = to_wav(audio_path)
     temp_files = [wav_path] if is_temp_wav else []
 
+    # Load checkpoint if session_dir provided
+    ckpt_data: Optional[dict] = None
+    if session_dir:
+        ckpt_data = checkpoint.read(session_dir)
+
     try:
         # 1. Split into chunks
         chunks = split_to_chunks(wav_path)
         temp_files += [p for p, _ in chunks if p != wav_path]
 
-        # 2. ASR — auto-download and load from ModelManager-managed local path
+        # 2. ASR — validate local models (F1: no auto-download)
         mm = ModelManager()
         if engine == "whisper":
             _progress(0.05, "Loading Whisper ASR model...")
@@ -93,23 +124,7 @@ def run(
         else:
             asr_id     = asr_model_id or "qwen3-asr-1.7b"
             aligner_id = "qwen3-forced-aligner"
-            if not mm.is_downloaded(asr_id):
-                _progress(0.03, f"Downloading ASR model ({asr_id})…")
-                mm.download(
-                    asr_id,
-                    progress_callback=lambda p, m: _progress(0.03 + p * 0.02, m),
-                )
-            if not mm.is_downloaded(aligner_id):
-                try:
-                    _progress(0.04, f"Downloading aligner model ({aligner_id})…")
-                    mm.download(
-                        aligner_id,
-                        progress_callback=lambda p, m: _progress(0.04 + p * 0.01, m),
-                    )
-                except Exception:
-                    logger.warning(
-                        "Aligner download failed — word-level timestamps will be unavailable"
-                    )
+            _validate_model_local(mm, asr_id)
             _progress(0.05, "Loading Qwen3-ASR model...")
             aligner_path = mm.local_path(aligner_id) if mm.is_downloaded(aligner_id) else None
             asr = ASREngine(
@@ -123,18 +138,75 @@ def run(
         all_text: list[str] = []
         language = ""
 
-        for i, (chunk_path, offset) in enumerate(chunks):
-            chunk_pct = 0.1 + 0.5 * (i / len(chunks))
-            _progress(chunk_pct, f"Transcribing chunk {i + 1}/{len(chunks)}...")
-            result = asr.transcribe(chunk_path)
-            all_text.append(result.text)
-            language = result.language or language
-            for w in result.words:
-                all_words.append(WordSegment(
-                    word=w.word,
-                    start=round(w.start + offset, 3),
-                    end=round(w.end + offset, 3),
-                ))
+        # Build initial chunk list from checkpoint if available
+        if ckpt_data and session_dir:
+            ckpt_chunks = {c["index"]: c for c in ckpt_data.get("chunks", [])}
+        else:
+            ckpt_chunks = {}
+
+        # Write initial checkpoint
+        if session_dir:
+            ckpt_payload: dict = {
+                "job_id": job_id,
+                "source_audio": audio_path,
+                "engine": engine,
+                "model_id": asr_model_id or ("qwen3-asr-1.7b" if engine != "whisper" else asr_model_id),
+                "status": "running",
+                "chunks": [
+                    ckpt_chunks.get(i, {"index": i, "offset": offset, "status": "pending"})
+                    for i, (_, offset) in enumerate(chunks)
+                ],
+                "completed_chunks": sum(1 for c in ckpt_chunks.values() if c.get("status") == "done"),
+                "total_chunks": len(chunks),
+            }
+            checkpoint.write(session_dir, ckpt_payload)
+
+        try:
+            for i, (chunk_path, offset) in enumerate(chunks):
+                # Skip already-done chunks from checkpoint
+                if ckpt_chunks.get(i, {}).get("status") == "done":
+                    done_chunk = ckpt_chunks[i]
+                    all_text.append(done_chunk.get("text", ""))
+                    language = done_chunk.get("language", "") or language
+                    for w in done_chunk.get("words", []):
+                        all_words.append(WordSegment(
+                            word=w["word"],
+                            start=round(w["start"] + offset, 3),
+                            end=round(w["end"] + offset, 3),
+                        ))
+                    continue
+
+                chunk_pct = 0.1 + 0.5 * (i / len(chunks))
+                _progress(chunk_pct, f"Transcribing chunk {i + 1}/{len(chunks)}...")
+                result = asr.transcribe(chunk_path)
+                all_text.append(result.text)
+                language = result.language or language
+                chunk_words = []
+                for w in result.words:
+                    all_words.append(WordSegment(
+                        word=w.word,
+                        start=round(w.start + offset, 3),
+                        end=round(w.end + offset, 3),
+                    ))
+                    chunk_words.append({"word": w.word, "start": w.start, "end": w.end})
+
+                # Update checkpoint after each chunk
+                if session_dir and ckpt_payload is not None:
+                    ckpt_payload["chunks"][i] = {
+                        "index": i, "offset": offset, "status": "done",
+                        "text": result.text, "words": chunk_words,
+                        "language": result.language or "",
+                    }
+                    ckpt_payload["completed_chunks"] = sum(
+                        1 for c in ckpt_payload["chunks"] if c.get("status") == "done"
+                    )
+                    checkpoint.write(session_dir, ckpt_payload)
+
+        except Exception:
+            if session_dir and ckpt_payload is not None:
+                ckpt_payload["status"] = "interrupted"
+                checkpoint.write(session_dir, ckpt_payload)
+            raise
 
         merged_asr = TranscriptResult(
             text="".join(all_text),
@@ -145,14 +217,9 @@ def run(
             f"Transcript ({len(merged_asr.text)} chars): {merged_asr.text[:80]}..."
         )
 
-        # 3. Diarization — auto-download if needed, then load
+        # 3. Diarization — validate local model (F1: no auto-download)
         actual_diarizer_id = diarizer_model_id or DEFAULT_DIARIZER_MODEL
-        if not mm.is_downloaded(actual_diarizer_id):
-            _progress(0.58, f"Downloading diarizer model ({actual_diarizer_id})…")
-            mm.download(
-                actual_diarizer_id,
-                progress_callback=lambda p, m: _progress(0.58 + p * 0.02, m),
-            )
+        _validate_model_local(mm, actual_diarizer_id)
         _progress(0.6, "Running speaker diarization...")
         diarizer = DiarizationEngine(
             model_id=diarizer_model_id,
@@ -172,6 +239,10 @@ def run(
         # 5. Output
         to_json(blocks, audio_path, merged_asr.language, json_path)
         to_markdown(blocks, audio_path, merged_asr.language, md_path)
+
+        # Delete checkpoint on success
+        if session_dir:
+            checkpoint.delete(session_dir)
 
         _progress(1.0, "Done.")
         logger.info(f"JSON → {json_path}")
@@ -232,15 +303,10 @@ def run_realtime_segments(
         if progress_callback:
             progress_callback(pct, msg)
 
-    # 1. Diarize
+    # 1. Diarize — validate local model (F1: no auto-download)
     mm = ModelManager()
     actual_diarizer_id = diarizer_model_id or DEFAULT_DIARIZER_MODEL
-    if not mm.is_downloaded(actual_diarizer_id):
-        _progress(0.1, f"Downloading diarizer model ({actual_diarizer_id})…")
-        mm.download(
-            actual_diarizer_id,
-            progress_callback=lambda p, m: _progress(0.1 + p * 0.4, m),
-        )
+    _validate_model_local(mm, actual_diarizer_id)
     _progress(0.5, "Running speaker diarization…")
     diarizer = DiarizationEngine(
         model_id=diarizer_model_id,

@@ -32,6 +32,25 @@ const App = (() => {
   let _activeRealtimeId  = null;
   let dom = {};
 
+  // ── File queue (F3) ────────────────────────────────────────────────────────
+  const _fileQueue = [];  // [{filePath, displayName}]
+
+  function _enqueueFiles(paths, names) {
+    for (let i = 0; i < paths.length; i++) {
+      _fileQueue.push({ filePath: paths[i], displayName: names ? names[i] : null });
+    }
+    _processQueue();
+  }
+
+  function _processQueue() {
+    if (_fileQueue.length === 0) return;
+    for (const s of _sessions.values()) {
+      if (s.status === 'transcribing') return;
+    }
+    const next = _fileQueue.shift();
+    _startTranscription(next.filePath, next.displayName);
+  }
+
   // ── Timer ──────────────────────────────────────────────────────────────────
   let _timerInterval = null;
   let _timerSeconds  = 0;
@@ -97,10 +116,17 @@ const App = (() => {
         _setView('transcribing');
         dom.progressFilename.textContent = session.filename;
         Summary.reset();
-      } else if (session.status === 'error') {
+      } else if (session.status === 'queued') {
+        _setView('transcribing');
+        dom.progressFilename.textContent = session.filename;
+        dom.progressMsg.textContent = 'Queued…';
+        dom.progressBar.style.width = '0%';
+        Summary.reset();
+      } else if (session.status === 'error' || session.status === 'interrupted') {
         _setView('error');
         dom.errorFilename.textContent = session.filename;
-        dom.errorMsg.textContent = session.errorMsg || 'Unknown error';
+        dom.errorMsg.textContent = session.errorMsg ||
+          (session.status === 'interrupted' ? 'Transcription was interrupted' : 'Unknown error');
         Summary.reset();
       } else if (session.status === 'refining') {
         _setView('file-done');
@@ -319,8 +345,15 @@ const App = (() => {
   function _canStartRecording() {
     for (const s of _sessions.values()) {
       if (s.status === 'transcribing') {
-        alert('A transcription is in progress. Please wait for it to finish before recording.');
-        return false;
+        const ok = confirm(
+          'Starting a recording now will stop the current file transcription. ' +
+          'You can re-transcribe the file later.\n\nStop and Start Recording?'
+        );
+        if (!ok) return false;
+        window.pywebview.api.cancel_transcription(s.id).catch(() => {});
+        _updateSession(s.id, { status: 'interrupted' });
+        _fileQueue.length = 0;
+        return true;
       }
     }
     return true;
@@ -334,10 +367,10 @@ const App = (() => {
       return;
     }
     try {
-      const path = await window.pywebview.api.select_file();
-      if (path) _startTranscription(path);
+      const paths = await window.pywebview.api.select_files();
+      if (paths && paths.length) _enqueueFiles(paths);
     } catch (err) {
-      console.error('[App] select_file error:', err);
+      console.error('[App] select_files error:', err);
     }
   }
 
@@ -363,6 +396,18 @@ const App = (() => {
     } catch (err) {
       alert('Transcription failed: ' + err);
     }
+  }
+
+  // ── F4: Re-transcribe ──────────────────────────────────────────────────────
+
+  function _onRetranscribe(id) {
+    const s = _sessions.get(id);
+    if (!s || !s.audioPath) return;
+    const filePath    = s.audioPath;
+    const displayName = s.filename;
+    _sessions.delete(id);
+    if (_selectedId === id) _selectedId = null;
+    _enqueueFiles([filePath], [displayName]);
   }
 
   // ── Progress / helpers ─────────────────────────────────────────────────────
@@ -402,6 +447,7 @@ const App = (() => {
   function onTranscribeComplete(jobId, _jsonPath, hasRefine) {
     if (!_sessions.has(jobId)) return;
     _updateSession(jobId, { status: hasRefine ? 'refining' : 'done' });
+    _processQueue();
   }
 
   function onTranscribeRefined(jobId) {
@@ -414,10 +460,17 @@ const App = (() => {
   function onTranscribeError(jobId, message) {
     if (!_sessions.has(jobId)) return;
     _updateSession(jobId, { status: 'error', errorMsg: message });
+    _processQueue();
   }
 
   function onTranscribeCancel(jobId) {
     if (!_sessions.has(jobId)) return;
+    const s = _sessions.get(jobId);
+    if (s && s.status === 'interrupted') {
+      // Keep session visible as interrupted
+      _render();
+      return;
+    }
     if (_selectedId === jobId) _selectedId = null;
     _sessions.delete(jobId);
     _render();
@@ -481,7 +534,7 @@ const App = (() => {
     Player.init(dom.audioEl);
     Summary.init();
     Realtime.init(_onRealtimeState, _canStartRecording);
-    History.init(_onHistorySelect, _onHistoryRename, _onHistoryDelete);
+    History.init(_onHistorySelect, _onHistoryRename, _onHistoryDelete, _onRetranscribe);
 
     Player.onTimeUpdate((t) => {
       Transcript.highlightAt(t);
@@ -558,8 +611,11 @@ const App = (() => {
     dom.centerPanel.addEventListener('drop', (e) => {
       e.preventDefault();
       dom.centerPanel.classList.remove('drag-over');
-      const file = e.dataTransfer.files[0];
-      if (file) _startTranscription(file.path || file.name);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length) {
+        const paths = files.map(f => f.path || f.name);
+        _enqueueFiles(paths);
+      }
     });
 
     _checkSetup();

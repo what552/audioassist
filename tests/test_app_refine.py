@@ -28,8 +28,9 @@ def _make_fake_diarize_only(out_dir: str, segs: list[dict] | None = None):
     """Return a fake run_realtime_segments that writes a minimal JSON."""
     def _fn(segments, wav_path, output_dir, **kw):
         job_id = kw.get("job_id", "test-job")
-        jp = os.path.join(output_dir, f"{job_id}.json")
-        mp = os.path.join(output_dir, f"{job_id}.md")
+        stem = kw.get("output_stem", job_id)
+        jp = os.path.join(output_dir, f"{stem}.json")
+        mp = os.path.join(output_dir, f"{stem}.md")
         os.makedirs(output_dir, exist_ok=True)
         data = {
             "audio": wav_path,
@@ -48,9 +49,10 @@ def _make_fake_diarize_only(out_dir: str, segs: list[dict] | None = None):
 
 def _make_fake_pipeline_run(out_dir: str, refined_text: str = "refined"):
     """Return a fake pipeline.run that writes a refined JSON."""
-    def _fn(audio_path, output_dir, *, job_id="test-job", **kw):
-        jp = os.path.join(output_dir, f"{job_id}.json")
-        mp = os.path.join(output_dir, f"{job_id}.md")
+    def _fn(audio_path, output_dir, *, job_id="test-job", output_stem=None, **kw):
+        stem = output_stem or job_id
+        jp = os.path.join(output_dir, f"{stem}.json")
+        mp = os.path.join(output_dir, f"{stem}.md")
         os.makedirs(output_dir, exist_ok=True)
         data = {
             "audio": audio_path,
@@ -222,7 +224,8 @@ class TestRefineOverwritesJson:
 
             assert captured_job, "onTranscribeComplete not received"
             job_id = captured_job[0]
-            json_path = os.path.join(td, f"{job_id}.json")
+            # F6: JSON is now at meetings/{job_id}/transcript.json
+            json_path = os.path.join(td, "meetings", job_id, "transcript.json")
             assert os.path.exists(json_path)
             with open(json_path) as f:
                 data = json.load(f)

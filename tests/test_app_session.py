@@ -241,5 +241,50 @@ class TestDeleteSessionComplete(unittest.TestCase):
         self.assertTrue(os.path.exists(unrelated))
 
 
+class TestDeleteSessionNewLayout(unittest.TestCase):
+    """Verify delete_session() uses shutil.rmtree for new session-per-directory layout."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        import app as app_module
+        self._orig_output_dir = app_module.OUTPUT_DIR
+        app_module.OUTPUT_DIR = self.tmpdir
+        from app import API
+        self.api = API()
+        self.job_id = "test-new-layout-delete"
+        # Create new-layout session dir with transcript.json
+        self.session_dir = os.path.join(self.tmpdir, "meetings", self.job_id)
+        os.makedirs(self.session_dir)
+        with open(os.path.join(self.session_dir, "transcript.json"), "w") as f:
+            json.dump({"filename": "test.mp3", "segments": []}, f)
+
+    def tearDown(self):
+        import app as app_module
+        app_module.OUTPUT_DIR = self._orig_output_dir
+
+    def test_delete_new_layout_removes_dir(self):
+        ok = self.api.delete_session(self.job_id)
+        self.assertTrue(ok)
+        self.assertFalse(os.path.exists(self.session_dir))
+
+    def test_delete_new_layout_removes_all_contents(self):
+        # Add extra files inside session dir
+        with open(os.path.join(self.session_dir, "summary.json"), "w") as f:
+            json.dump([], f)
+        with open(os.path.join(self.session_dir, "agent_chat.json"), "w") as f:
+            json.dump({}, f)
+        ok = self.api.delete_session(self.job_id)
+        self.assertTrue(ok)
+        self.assertFalse(os.path.isdir(self.session_dir))
+
+    def test_delete_new_layout_returns_true(self):
+        result = self.api.delete_session(self.job_id)
+        self.assertTrue(result)
+
+    def test_delete_missing_returns_false(self):
+        result = self.api.delete_session("nonexistent-new-id")
+        self.assertFalse(result)
+
+
 if __name__ == "__main__":
     unittest.main()
