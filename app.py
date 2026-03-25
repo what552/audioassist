@@ -333,20 +333,26 @@ class API:
                 # F6: create session dir
                 s_dir = _session_dir(job_id)
                 os.makedirs(s_dir, exist_ok=True)
-                meta_filename: Optional[str] = None
+                preferred_filename: Optional[str] = None
+                transcript_path = os.path.join(s_dir, "transcript.json")
+                if os.path.exists(transcript_path):
+                    existing = _read_json_file(transcript_path, {})
+                    if isinstance(existing, dict):
+                        value = (existing.get("filename") or "").strip()
+                        preferred_filename = value or None
                 session_meta_path = os.path.join(s_dir, "meta.json")
-                if os.path.exists(session_meta_path):
+                if preferred_filename is None and os.path.exists(session_meta_path):
                     meta = _read_json_file(session_meta_path, {})
                     if isinstance(meta, dict):
                         value = (meta.get("filename") or "").strip()
-                        meta_filename = value or None
-                if meta_filename is None and path.lower().endswith(".wav"):
+                        preferred_filename = value or None
+                if preferred_filename is None and path.lower().endswith(".wav"):
                     meta_path = _realtime_meta_path_for_wav(path)
                     if meta_path and os.path.exists(meta_path):
                         meta = _read_json_file(meta_path, {})
                         if isinstance(meta, dict):
                             value = (meta.get("filename") or "").strip()
-                            meta_filename = value or None
+                            preferred_filename = value or None
 
                 if rt_segments:
                     # Phase 1 — diarize-only: fast initial draft from live chunks
@@ -396,8 +402,8 @@ class API:
                         if audio_copy:
                             data["audio"] = audio_copy
                         data["job_id"] = job_id
-                        if meta_filename:
-                            data["filename"] = meta_filename
+                        if preferred_filename:
+                            data["filename"] = preferred_filename
                         _write_json_atomic(json_path, data)
                 except Exception:
                     logger.warning("transcribe: failed to patch transcript metadata", exc_info=True)

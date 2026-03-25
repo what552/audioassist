@@ -156,6 +156,42 @@ class TestJsonAudioField:
         dest = sync_job(job_id, str(out_dir), str(obs_dir))
         assert os.path.basename(dest).endswith("测试-上传.md")
 
+    def test_existing_transcript_filename_wins_over_stale_meta_on_same_job_rerun(self, env, tmp_path):
+        from src.obsidian import sync_job
+
+        api, out_dir = env
+        job_id = "upload-job-002"
+        session_dir = out_dir / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        src = tmp_path / "source_audio.wav"
+        src.write_bytes(b"RIFF")
+
+        transcript_path = session_dir / "transcript.json"
+        transcript_path.write_text(json.dumps({
+            "job_id": job_id,
+            "filename": "重命名后的标题",
+            "audio": str(src),
+            "language": "zh",
+            "created_at": "2026-03-25 12:00",
+            "segments": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        (session_dir / "meta.json").write_text(
+            json.dumps({"filename": "旧的-meta-标题"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with patch("src.pipeline.run", side_effect=_fake_pipeline), \
+             patch.object(app_module, "_push"):
+            api.transcribe(str(src), {}, job_id=job_id)
+            _wait()
+
+        data = json.loads(transcript_path.read_text(encoding="utf-8"))
+        assert data["filename"] == "重命名后的标题"
+
+        obs_dir = tmp_path / "obsidian"
+        dest = sync_job(job_id, str(out_dir), str(obs_dir))
+        assert os.path.basename(dest).endswith("重命名后的标题.md")
+
 
 # ── Resilience ────────────────────────────────────────────────────────────────
 
