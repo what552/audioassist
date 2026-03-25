@@ -330,18 +330,23 @@ class API:
 
                 hf_token     = options.get("hf_token") or os.environ.get("HF_TOKEN")
                 num_speakers = options.get("num_speakers")
+                # F6: create session dir
+                s_dir = _session_dir(job_id)
+                os.makedirs(s_dir, exist_ok=True)
                 meta_filename: Optional[str] = None
-                if path.lower().endswith(".wav"):
+                session_meta_path = os.path.join(s_dir, "meta.json")
+                if os.path.exists(session_meta_path):
+                    meta = _read_json_file(session_meta_path, {})
+                    if isinstance(meta, dict):
+                        value = (meta.get("filename") or "").strip()
+                        meta_filename = value or None
+                if meta_filename is None and path.lower().endswith(".wav"):
                     meta_path = _realtime_meta_path_for_wav(path)
                     if meta_path and os.path.exists(meta_path):
                         meta = _read_json_file(meta_path, {})
                         if isinstance(meta, dict):
                             value = (meta.get("filename") or "").strip()
                             meta_filename = value or None
-
-                # F6: create session dir
-                s_dir = _session_dir(job_id)
-                os.makedirs(s_dir, exist_ok=True)
 
                 if rt_segments:
                     # Phase 1 — diarize-only: fast initial draft from live chunks

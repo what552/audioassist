@@ -130,6 +130,32 @@ class TestJsonAudioField:
         # filename should remain the display name, not the internal copy name
         assert data["filename"] == "interview.mp3"
 
+    def test_session_meta_filename_is_promoted_to_transcript_and_obsidian(self, env, tmp_path):
+        from src.obsidian import sync_job
+
+        api, out_dir = env
+        job_id = "upload-job-001"
+        session_dir = out_dir / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        src = tmp_path / "source_audio.wav"
+        src.write_bytes(b"RIFF")
+
+        ok = api.rename_session(job_id, "测试-上传")
+        assert ok is True
+
+        with patch("src.pipeline.run", side_effect=_fake_pipeline), \
+             patch.object(app_module, "_push"):
+            api.transcribe(str(src), {}, job_id=job_id)
+            _wait()
+
+        json_path = session_dir / "transcript.json"
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        assert data["filename"] == "测试-上传"
+
+        obs_dir = tmp_path / "obsidian"
+        dest = sync_job(job_id, str(out_dir), str(obs_dir))
+        assert os.path.basename(dest).endswith("测试-上传.md")
+
 
 # ── Resilience ────────────────────────────────────────────────────────────────
 

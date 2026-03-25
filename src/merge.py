@@ -15,9 +15,15 @@ MAX_BLOCK_DURATION = 45.0
 MAX_BLOCK_CHARS = 220
 STRONG_PAUSE_SECONDS = 1.2
 SOFT_PAUSE_SECONDS = 0.6
+SENTENCE_PAUSE_SECONDS = 0.45
 SENTENCE_ENDINGS = ".!?。！？；;"
 NO_SPACE_BEFORE = ".,!?;:)]}%。，！？；：、"
 NO_SPACE_AFTER = "([{"
+MIN_LATIN_TERMINAL_WORDS = 4
+MIN_CJK_TERMINAL_CHARS = 4
+FORCE_LATIN_SENTENCE_WORDS = 18
+FORCE_LATIN_SENTENCE_CHARS = 120
+FORCE_CJK_SENTENCE_CHARS = 28
 
 
 @dataclass
@@ -52,11 +58,12 @@ def merge(
             speaker_segments[0].start if speaker_segments else 0,
             speaker_segments,
         )
+        text = _finalize_block_text(asr_result.text, [])
         return [SpeakerBlock(
             speaker=speaker,
             start=speaker_segments[0].start if speaker_segments else 0.0,
             end=speaker_segments[-1].end if speaker_segments else 0.0,
-            text=asr_result.text,
+            text=text,
             words=[],
         )]
 
@@ -83,11 +90,12 @@ def merge(
 
 
 def _make_block(speaker: str, words: list[WordSegment]) -> SpeakerBlock:
+    text = _finalize_block_text(_join_words(words), words)
     return SpeakerBlock(
         speaker=speaker,
         start=words[0].start,
         end=words[-1].end,
-        text=_join_words(words),
+        text=text,
         words=[{"word": w.word, "start": w.start, "end": w.end} for w in words],
     )
 
@@ -135,6 +143,85 @@ def _join_words(words: list[WordSegment]) -> str:
     return "".join(parts)
 
 
+def _dominant_script(words: list[WordSegment], text: str = "") -> str:
+    cjk_chars = 0
+    latin_chars = 0
+    for word in words:
+        for ch in word.word:
+            if _is_cjk_char(ch):
+                cjk_chars += 1
+            elif _is_wordish_char(ch):
+                latin_chars += 1
+
+    if not words:
+        for ch in text:
+            if _is_cjk_char(ch):
+                cjk_chars += 1
+            elif _is_wordish_char(ch):
+                latin_chars += 1
+
+    return "cjk" if cjk_chars > latin_chars else "latin"
+
+
+def _has_sentence_ending(words: list[WordSegment]) -> bool:
+    return any(_ends_sentence(w.word) for w in words)
+
+
+def _wordish_count(words: list[WordSegment]) -> int:
+    count = 0
+    for word in words:
+        token = word.word.strip()
+        if token and any(_is_wordish_char(ch) or _is_cjk_char(ch) for ch in token):
+            count += 1
+    return count
+
+
+def _terminal_char(text: str) -> str:
+    stripped = text.rstrip()
+    while stripped and stripped[-1] in "\"')]}":
+        stripped = stripped[:-1].rstrip()
+    return stripped[-1:] if stripped else ""
+
+
+def _has_terminal_sentence_punctuation(text: str) -> bool:
+    return _terminal_char(text) in SENTENCE_ENDINGS
+
+
+def _should_add_terminal_punctuation(text: str, words: list[WordSegment]) -> bool:
+    if not text or _has_terminal_sentence_punctuation(text):
+        return False
+
+    script = _dominant_script(words, text)
+    if script == "cjk":
+        visible_chars = sum(1 for ch in text if not ch.isspace())
+        return visible_chars >= MIN_CJK_TERMINAL_CHARS
+    return _wordish_count(words) >= MIN_LATIN_TERMINAL_WORDS
+
+
+def _terminal_punctuation(words: list[WordSegment], text: str) -> str:
+    return "。" if _dominant_script(words, text) == "cjk" else "."
+
+
+def _finalize_block_text(text: str, words: list[WordSegment]) -> str:
+    final = text.strip()
+    if _should_add_terminal_punctuation(final, words):
+        final += _terminal_punctuation(words, final)
+    return final
+
+
+def _should_force_sentence_break(words: list[WordSegment]) -> bool:
+    if not words or _has_sentence_ending(words):
+        return False
+
+    script = _dominant_script(words)
+    if script == "cjk":
+        return _block_char_len(words) >= FORCE_CJK_SENTENCE_CHARS
+    return (
+        _wordish_count(words) >= FORCE_LATIN_SENTENCE_WORDS
+        or _block_char_len(words) >= FORCE_LATIN_SENTENCE_CHARS
+    )
+
+
 def _block_char_len(words: list[WordSegment]) -> int:
     return sum(len(w.word) for w in words)
 
@@ -154,11 +241,15 @@ def _should_split(words: list[WordSegment], next_word: WordSegment) -> bool:
 
     if gap >= STRONG_PAUSE_SECONDS:
         return True
-    if _ends_sentence(prev.word) and gap >= SOFT_PAUSE_SECONDS:
+    if _ends_sentence(prev.word) and gap >= 0.05:
+        return True
+    if gap >= SENTENCE_PAUSE_SECONDS and _wordish_count(words) >= 4:
         return True
     if duration >= MAX_BLOCK_DURATION:
         return True
     if char_len >= MAX_BLOCK_CHARS and gap >= SOFT_PAUSE_SECONDS / 2:
+        return True
+    if _should_force_sentence_break(words + [next_word]):
         return True
     return False
 

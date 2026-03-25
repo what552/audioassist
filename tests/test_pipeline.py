@@ -141,6 +141,18 @@ class TestProgressCallback:
         assert md_path.endswith(".md")
 
 
+class TestMergeChunkTexts:
+    def test_english_chunks_join_with_space(self):
+        from src.pipeline import _merge_chunk_texts
+        text = _merge_chunk_texts(["May I see", "your passport"], "en")
+        assert text == "May I see your passport"
+
+    def test_cjk_chunks_join_without_ascii_space(self):
+        from src.pipeline import _merge_chunk_texts
+        text = _merge_chunk_texts(["你好", "世界"], "zh")
+        assert text == "你好世界"
+
+
 # ── diarizer model selection ──────────────────────────────────────────────────
 
 class TestDiarizerModelSelection:

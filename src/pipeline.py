@@ -47,6 +47,16 @@ _WHISPER_SIZE_MAP: dict[str, str] = {
 }
 
 
+def _merge_chunk_texts(chunks: list[str], language: str) -> str:
+    """Join per-chunk ASR text conservatively for fallback/no-word scenarios."""
+    parts = [chunk.strip() for chunk in chunks if chunk and chunk.strip()]
+    if not parts:
+        return ""
+    if (language or "").lower() in {"zh", "yue", "ja"}:
+        return "".join(parts)
+    return " ".join(parts)
+
+
 def run(
     audio_path: str,
     output_dir: str,
@@ -209,7 +219,7 @@ def run(
             raise
 
         merged_asr = TranscriptResult(
-            text="".join(all_text),
+            text=_merge_chunk_texts(all_text, language),
             language=language,
             words=all_words,
         )
