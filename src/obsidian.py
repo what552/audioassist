@@ -100,6 +100,26 @@ def build_md(data: dict, summary_text: Optional[str] = None) -> str:
     return "\n".join(lines)
 
 
+# ── Path helpers ───────────────────────────────────────────────────────────────
+
+def _resolve_paths(job_id: str, output_dir: str) -> tuple[str, str]:
+    """
+    Return (transcript_json_path, summary_json_path) using new or legacy layout.
+    New layout: output_dir/meetings/{job_id}/transcript.json
+    Legacy:     output_dir/{job_id}.json
+    """
+    session_dir = os.path.join(output_dir, "meetings", job_id)
+    if os.path.isdir(session_dir):
+        return (
+            os.path.join(session_dir, "transcript.json"),
+            os.path.join(session_dir, "summary.json"),
+        )
+    return (
+        os.path.join(output_dir, f"{job_id}.json"),
+        os.path.join(output_dir, f"{job_id}_summary.json"),
+    )
+
+
 # ── Sync functions ─────────────────────────────────────────────────────────────
 
 def sync_job(job_id: str, output_dir: str, obsidian_dir: str) -> str:
@@ -109,7 +129,7 @@ def sync_job(job_id: str, output_dir: str, obsidian_dir: str) -> str:
     Returns the absolute path of the written file.
     Raises FileNotFoundError if the transcript JSON does not exist.
     """
-    json_path = os.path.join(output_dir, f"{job_id}.json")
+    json_path, summary_path = _resolve_paths(job_id, output_dir)
     if not os.path.exists(json_path):
         raise FileNotFoundError(f"Transcript not found: {json_path}")
 
@@ -119,7 +139,6 @@ def sync_job(job_id: str, output_dir: str, obsidian_dir: str) -> str:
 
     # Load latest summary (optional)
     summary_text: Optional[str] = None
-    summary_path = os.path.join(output_dir, f"{job_id}_summary.json")
     if os.path.exists(summary_path):
         try:
             with open(summary_path, encoding="utf-8") as f:
@@ -149,22 +168,45 @@ def sync_job(job_id: str, output_dir: str, obsidian_dir: str) -> str:
 def scan_and_sync(output_dir: str, obsidian_dir: str) -> list[str]:
     """
     Scan *output_dir* for all transcript JSONs and sync each to *obsidian_dir*.
-    Skips non-job files (_summary, _agent_chat, _meta suffixes).
+    Handles both new layout (meetings/*/transcript.json) and legacy flat JSONs.
     Returns the list of written paths (errors are silently skipped).
     """
     synced: list[str] = []
     if not os.path.isdir(output_dir):
         return synced
+
+    seen_job_ids: set[str] = set()
+
+    # New layout: meetings/*/transcript.json
+    meetings_dir = os.path.join(output_dir, "meetings")
+    if os.path.isdir(meetings_dir):
+        for job_id in os.listdir(meetings_dir):
+            session_dir = os.path.join(meetings_dir, job_id)
+            if not os.path.isdir(session_dir):
+                continue
+            transcript = os.path.join(session_dir, "transcript.json")
+            if not os.path.exists(transcript):
+                continue
+            seen_job_ids.add(job_id)
+            try:
+                path = sync_job(job_id, output_dir, obsidian_dir)
+                synced.append(path)
+            except Exception:
+                pass
+
+    # Legacy flat JSONs
     for fname in os.listdir(output_dir):
         if not fname.endswith(".json"):
             continue
         stem = fname[:-5]
-        # Skip metadata / sidecar files
         if any(stem.endswith(s) for s in ("_summary", "_agent_chat", "_meta")):
+            continue
+        if stem in seen_job_ids:
             continue
         try:
             path = sync_job(stem, output_dir, obsidian_dir)
             synced.append(path)
         except Exception:
             pass
+
     return synced

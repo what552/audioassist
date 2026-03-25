@@ -5,7 +5,7 @@
  * App drives all data via render().
  *
  * Public API:
- *   History.init(onSelect, onRename, onDelete) — wire up DOM; callbacks on user actions
+ *   History.init(onSelect, onRename, onDelete, onRetranscribe) — wire up DOM; callbacks on user actions
  *   History.render(sessions, selectedId)        — redraw list from session array
  */
 const History = (() => {
@@ -13,13 +13,15 @@ const History = (() => {
   let _onSelect = null;
   let _onRename = null;
   let _onDelete = null;
+  let _onRetranscribe = null;
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
-  function init(onSelect, onRename, onDelete) {
+  function init(onSelect, onRename, onDelete, onRetranscribe) {
     _onSelect = onSelect;
     _onRename = onRename;
     _onDelete = onDelete;
+    _onRetranscribe = onRetranscribe || null;
     dom = {
       list: document.getElementById('history-list'),
     };
@@ -46,6 +48,8 @@ const History = (() => {
 
     const isLive = session.status === 'recording' || session.status === 'paused';
     if (isLive) el.classList.add('history-item-recording');
+    if (session.status === 'queued') el.classList.add('history-item-queued');
+    if (session.status === 'interrupted') el.classList.add('history-item-interrupted');
 
     // Clickable body (select)
     const body = document.createElement('div');
@@ -82,6 +86,21 @@ const History = (() => {
         e.stopPropagation();
         _startInlineRename(session, nameWrap);
       });
+
+      // Re-transcribe (F4) / Resume (F2): shown for file sessions in terminal states
+      const retranscribeStates = ['done', 'error', 'interrupted', 'cancelled'];
+      if (session.type === 'file' && retranscribeStates.includes(session.status) && _onRetranscribe) {
+        const btnRetranscribe = document.createElement('button');
+        btnRetranscribe.className = 'btn-history-action';
+        const isInterrupted = session.status === 'interrupted';
+        btnRetranscribe.title = isInterrupted ? 'Resume' : 'Re-transcribe';
+        btnRetranscribe.textContent = isInterrupted ? '▶' : '🔄';
+        btnRetranscribe.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _onRetranscribe(session.id);
+        });
+        actions.appendChild(btnRetranscribe);
+      }
 
       const btnDelete = document.createElement('button');
       btnDelete.className = 'btn-history-action btn-history-delete';

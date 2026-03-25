@@ -17,6 +17,7 @@ import threading
 from typing import Optional
 
 from platformdirs import user_data_dir
+from src.session_paths import get_session_paths, resolve_summary_path, resolve_transcript_path
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
 
 # Known audio extensions used when copying source files into the output dir
 _AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".mp4", ".aac", ".flac", ".ogg", ".mov", ".mkv")
+_REALTIME_WAV_PREFIX = "realtime_recording"
 
 
 def _resolve_output_dir() -> str:
@@ -47,6 +49,81 @@ def _resolve_output_dir() -> str:
 
 
 OUTPUT_DIR = _resolve_output_dir()
+
+
+# ── Session-per-directory helpers (F6) ─────────────────────────────────────────
+
+def _session_dir(job_id: str) -> str:
+    """Return the per-session directory path under OUTPUT_DIR/meetings/."""
+    return get_session_paths(OUTPUT_DIR, job_id).session_dir
+
+
+def _transcript_path(job_id: str) -> Optional[str]:
+    """Return transcript.json path for job_id using new or legacy layout."""
+    return resolve_transcript_path(OUTPUT_DIR, job_id)
+
+
+def _summary_path(job_id: str) -> str:
+    """Return summary.json path for job_id using new or legacy layout."""
+    return resolve_summary_path(OUTPUT_DIR, job_id)
+
+
+def _realtime_wav_name(session_id: str) -> str:
+    """Return a collision-resistant realtime WAV filename for this session."""
+    return f"{_REALTIME_WAV_PREFIX}_{session_id[:8]}.wav"
+
+
+def _read_json_file(path: str, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _write_json_atomic(path: str, data: dict) -> None:
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _get_transcript_lock(job_id: str) -> threading.Lock:
+    with _transcript_locks_mutex:
+        if job_id not in _transcript_locks:
+            _transcript_locks[job_id] = threading.Lock()
+        return _transcript_locks[job_id]
+
+
+def _realtime_meta_path_for_wav(wav_path: str) -> Optional[str]:
+    """Return meta.json path for a realtime WAV in new or legacy layout."""
+    src_abs = os.path.abspath(wav_path)
+    meetings_dir = os.path.abspath(os.path.join(OUTPUT_DIR, "meetings"))
+    rt_session_dir = os.path.dirname(src_abs)
+    if os.path.dirname(rt_session_dir) == meetings_dir:
+        return os.path.join(rt_session_dir, "meta.json")
+
+    out_abs = os.path.abspath(OUTPUT_DIR)
+    if os.path.dirname(src_abs) == out_abs:
+        stem = os.path.splitext(os.path.basename(src_abs))[0]
+        return os.path.join(OUTPUT_DIR, f"{stem}_meta.json")
+    return None
+
+
+def _find_realtime_wav(session_dir: str) -> Optional[str]:
+    """Find the realtime WAV for a session, supporting old and new basenames."""
+    legacy = os.path.join(session_dir, "realtime_recording.wav")
+    if os.path.exists(legacy):
+        return legacy
+
+    try:
+        for name in sorted(os.listdir(session_dir)):
+            if name.startswith(_REALTIME_WAV_PREFIX + "_") and name.endswith(".wav"):
+                return os.path.join(session_dir, name)
+    except Exception:
+        return None
+    return None
+
 
 _LANG_INSTRUCTIONS: dict[str, str] = {
     "zh":    "请用中文生成纪要。",
@@ -175,9 +252,42 @@ class API:
         )
         return result[0] if result else None
 
+    def select_files(self) -> list[str]:
+        """Open a native multi-file picker. Returns list of selected paths."""
+        import webview
+        result = _window.create_file_dialog(
+            dialog_type=webview.FileDialog.OPEN,
+            allow_multiple=True,
+            file_types=("Audio Video (*.mp3;*.mp4;*.m4a;*.wav;*.flac;*.ogg;*.aac;*.mov;*.mkv)",),
+        )
+        return list(result) if result else []
+
+    def resume_transcription(self, job_id: str) -> dict:
+        """
+        Resume an interrupted transcription job (F2).
+        Reads checkpoint to find source audio and options, then calls transcribe().
+
+        Returns: {"job_id": str} on success, {"error": "..."} if no checkpoint.
+        """
+        from src.checkpoint import read as ckpt_read
+        ckpt = ckpt_read(_session_dir(job_id))
+        if not ckpt:
+            return {"error": "no_checkpoint"}
+        opts = {
+            "engine": ckpt.get("engine", "qwen"),
+            "model_id": ckpt.get("model_id"),
+        }
+        return self.transcribe(ckpt["source_audio"], opts, job_id=job_id)
+
+    def discard_checkpoint(self, job_id: str) -> bool:
+        """Delete the checkpoint for a job without resuming (F2)."""
+        from src.checkpoint import delete as ckpt_delete
+        ckpt_delete(_session_dir(job_id))
+        return True
+
     # ── Transcription ──────────────────────────────────────────────────────────
 
-    def transcribe(self, path: str, options: dict) -> dict:
+    def transcribe(self, path: str, options: dict, job_id: Optional[str] = None) -> dict:
         """
         Start transcription in background thread.
         Pushes onTranscribeProgress(job_id, progress, message) events to JS.
@@ -185,10 +295,13 @@ class API:
         If pre-collected realtime segments exist for this path (stored by
         stop_realtime()), skips ASR and runs diarization only.
 
+        job_id: optional, used when resuming a checkpoint (F2).
+
         Returns: {"job_id": str}
         """
         import uuid
-        job_id = str(uuid.uuid4())
+        if job_id is None:
+            job_id = str(uuid.uuid4())
 
         # Pop realtime segments if this is a just-finished realtime session.
         # Must be popped here (before the thread starts) to avoid a TOCTOU race.
@@ -217,6 +330,29 @@ class API:
 
                 hf_token     = options.get("hf_token") or os.environ.get("HF_TOKEN")
                 num_speakers = options.get("num_speakers")
+                # F6: create session dir
+                s_dir = _session_dir(job_id)
+                os.makedirs(s_dir, exist_ok=True)
+                preferred_filename: Optional[str] = None
+                transcript_path = os.path.join(s_dir, "transcript.json")
+                if os.path.exists(transcript_path):
+                    existing = _read_json_file(transcript_path, {})
+                    if isinstance(existing, dict):
+                        value = (existing.get("filename") or "").strip()
+                        preferred_filename = value or None
+                session_meta_path = os.path.join(s_dir, "meta.json")
+                if preferred_filename is None and os.path.exists(session_meta_path):
+                    meta = _read_json_file(session_meta_path, {})
+                    if isinstance(meta, dict):
+                        value = (meta.get("filename") or "").strip()
+                        preferred_filename = value or None
+                if preferred_filename is None and path.lower().endswith(".wav"):
+                    meta_path = _realtime_meta_path_for_wav(path)
+                    if meta_path and os.path.exists(meta_path):
+                        meta = _read_json_file(meta_path, {})
+                        if isinstance(meta, dict):
+                            value = (meta.get("filename") or "").strip()
+                            preferred_filename = value or None
 
                 if rt_segments:
                     # Phase 1 — diarize-only: fast initial draft from live chunks
@@ -224,22 +360,25 @@ class API:
                     json_path, md_path = run_realtime_segments(
                         segments=rt_segments,
                         wav_path=path,
-                        output_dir=OUTPUT_DIR,
+                        output_dir=s_dir,
                         hf_token=hf_token,
                         num_speakers=num_speakers,
                         job_id=job_id,
+                        output_stem="transcript",
                         progress_callback=_progress,
                     )
                 else:
-                    from src.pipeline import run as pipeline_run
+                    from src.pipeline import run as pipeline_run, ModelNotReadyError
                     json_path, md_path = pipeline_run(
                         audio_path=path,
-                        output_dir=OUTPUT_DIR,
+                        output_dir=s_dir,
                         hf_token=hf_token,
                         engine=engine,
                         asr_model_id=model_id,
                         num_speakers=num_speakers,
                         job_id=job_id,
+                        output_stem="transcript",
+                        session_dir=s_dir,
                         progress_callback=_progress,
                     )
 
@@ -250,43 +389,37 @@ class API:
                 audio_copy: Optional[str] = None
                 try:
                     _, ext = os.path.splitext(path)
-                    audio_copy = os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}")
+                    # F6: copy audio into session dir as source_audio.{ext}
+                    audio_copy = os.path.join(s_dir, f"source_audio{ext}")
                     shutil.copy2(path, audio_copy)
-                    # Patch the JSON: replace the basename "audio" field with
-                    # the absolute path of the internal copy so Player.load()
-                    # can resolve it via file:// URL.
-                    with open(json_path, encoding="utf-8") as f:
-                        data = json.load(f)
-                    data["audio"] = audio_copy
-                    tmp_json = json_path + ".tmp"
-                    with open(tmp_json, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    os.replace(tmp_json, json_path)
                 except Exception:
                     logger.warning("transcribe: failed to copy audio file", exc_info=True)
+                try:
+                    # Patch durable metadata even if audio copy failed.
+                    lock = _get_transcript_lock(job_id)
+                    with lock:
+                        data = _read_json_file(json_path, {})
+                        if audio_copy:
+                            data["audio"] = audio_copy
+                        data["job_id"] = job_id
+                        if preferred_filename:
+                            data["filename"] = preferred_filename
+                        _write_json_atomic(json_path, data)
+                except Exception:
+                    logger.warning("transcribe: failed to patch transcript metadata", exc_info=True)
 
                 # If source was a realtime WAV from our output dir, record
-                # transcribed_job_id in its _meta.json so get_history() can
+                # transcribed_job_id in its meta.json so get_history() can
                 # skip the orphaned WAV entry on next launch.
                 try:
                     if path.lower().endswith(".wav"):
-                        src_abs = os.path.abspath(path)
-                        out_abs = os.path.abspath(OUTPUT_DIR)
-                        if os.path.dirname(src_abs) == out_abs:
-                            wav_stem = os.path.splitext(os.path.basename(path))[0]
-                            meta_path_rt = os.path.join(OUTPUT_DIR, f"{wav_stem}_meta.json")
-                            rt_meta: dict = {}
-                            if os.path.exists(meta_path_rt):
-                                try:
-                                    with open(meta_path_rt, encoding="utf-8") as f:
-                                        rt_meta = json.load(f)
-                                except Exception:
-                                    pass
+                        meta_path_rt = _realtime_meta_path_for_wav(path)
+                        if meta_path_rt:
+                            rt_meta = _read_json_file(meta_path_rt, {})
+                            if not isinstance(rt_meta, dict):
+                                rt_meta = {}
                             rt_meta["transcribed_job_id"] = job_id
-                            tmp_rt = meta_path_rt + ".tmp"
-                            with open(tmp_rt, "w", encoding="utf-8") as f:
-                                json.dump(rt_meta, f, ensure_ascii=False, indent=2)
-                            os.replace(tmp_rt, meta_path_rt)
+                            _write_json_atomic(meta_path_rt, rt_meta)
                 except Exception:
                     logger.warning("transcribe: failed to write WAV meta", exc_info=True)
 
@@ -325,36 +458,39 @@ class API:
                         try:
                             from src.pipeline import run as pipeline_run
                             logger.info("Refine ASR started for job %s", job_id)
+                            lock = _get_transcript_lock(job_id)
+                            preserved_filename = None
+                            preserved_job_id = job_id
+                            if os.path.exists(json_path):
+                                with lock:
+                                    current = _read_json_file(json_path, {})
+                                if isinstance(current, dict):
+                                    preserved_filename = current.get("filename") or None
+                                    preserved_job_id = current.get("job_id") or job_id
                             refined_json, _ = pipeline_run(
                                 audio_path=path,
-                                output_dir=OUTPUT_DIR,
+                                output_dir=s_dir,
                                 hf_token=hf_token,
                                 engine=engine,
                                 asr_model_id=model_id,
                                 num_speakers=num_speakers,
                                 job_id=job_id,  # same id → overwrites draft
+                                output_stem="transcript",
+                                session_dir=s_dir,
                                 progress_callback=lambda p, m: logger.debug(
                                     "[refine %d%%] %s", int(p * 100), m
                                 ),
                             )
-                            # Re-patch audio field and atomically overwrite JSON.
-                            # Acquire the same per-job lock used by save_transcript()
-                            # so a concurrent user save cannot interleave with this write.
-                            with _transcript_locks_mutex:
-                                if job_id not in _transcript_locks:
-                                    _transcript_locks[job_id] = threading.Lock()
-                                _refine_lock = _transcript_locks[job_id]
-
-                            with _refine_lock:
+                            # Re-patch durable metadata after pipeline overwrite.
+                            with lock:
                                 try:
-                                    with open(refined_json, encoding="utf-8") as f:
-                                        rdata = json.load(f)
+                                    rdata = _read_json_file(refined_json, {})
                                     if _ac:
                                         rdata["audio"] = _ac
-                                    tmp = refined_json + ".tmp"
-                                    with open(tmp, "w", encoding="utf-8") as f:
-                                        json.dump(rdata, f, ensure_ascii=False, indent=2)
-                                    os.replace(tmp, refined_json)
+                                    rdata["job_id"] = preserved_job_id
+                                    if preserved_filename:
+                                        rdata["filename"] = preserved_filename
+                                    _write_json_atomic(refined_json, rdata)
                                 except Exception:
                                     logger.warning(
                                         "refine: failed to patch audio/write JSON", exc_info=True
@@ -382,6 +518,13 @@ class API:
                 _push(f"onTranscribeCancel({json.dumps(job_id)})")
             except Exception as e:
                 logger.exception("Transcription failed")
+                # Import here to avoid circular import issues at module load
+                try:
+                    from src.pipeline import ModelNotReadyError as _MNR
+                    if isinstance(e, _MNR):
+                        pass  # fall through to generic error push below
+                except ImportError:
+                    pass
                 js = f"onTranscribeError({json.dumps(job_id)}, {json.dumps(str(e))})"
                 _push(js)
             finally:
@@ -407,8 +550,8 @@ class API:
 
     def get_transcript(self, job_id: str) -> Optional[dict]:
         """Load transcript JSON for a given job_id."""
-        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-        if not os.path.exists(path):
+        path = _transcript_path(job_id)
+        if not path:
             return None
         with open(path, encoding="utf-8") as f:
             return json.load(f)
@@ -421,14 +564,14 @@ class API:
         Uses a per-job lock and atomic rename to prevent data corruption from
         concurrent saves or a mid-write crash.
         """
-        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        path = _transcript_path(job_id)
         with _transcript_locks_mutex:
             if job_id not in _transcript_locks:
                 _transcript_locks[job_id] = threading.Lock()
             lock = _transcript_locks[job_id]
 
         with lock:
-            if not os.path.exists(path):
+            if not path or not os.path.exists(path):
                 return False
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -463,14 +606,14 @@ class API:
         if not new_speaker:
             return {"ok": False, "error": "Speaker name cannot be empty"}
 
-        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        path = _transcript_path(job_id)
         with _transcript_locks_mutex:
             if job_id not in _transcript_locks:
                 _transcript_locks[job_id] = threading.Lock()
             lock = _transcript_locks[job_id]
 
         with lock:
-            if not os.path.exists(path):
+            if not path or not os.path.exists(path):
                 return {"ok": False, "error": "File not found"}
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -506,14 +649,14 @@ class API:
         if not new_speaker:
             return {"ok": False, "error": "Speaker name cannot be empty"}
 
-        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
+        path = _transcript_path(job_id)
         with _transcript_locks_mutex:
             if job_id not in _transcript_locks:
                 _transcript_locks[job_id] = threading.Lock()
             lock = _transcript_locks[job_id]
 
         with lock:
-            if not os.path.exists(path):
+            if not path or not os.path.exists(path):
                 return {"ok": False, "error": "File not found"}
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -598,8 +741,10 @@ class API:
             try:
                 import uuid
                 session_id = str(uuid.uuid4())
-                output_path = os.path.join(OUTPUT_DIR, f"{session_id}.wav")
-                os.makedirs(OUTPUT_DIR, exist_ok=True)
+                # F6: realtime WAV goes into session dir
+                rt_session_dir = _session_dir(session_id)
+                os.makedirs(rt_session_dir, exist_ok=True)
+                output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
 
                 from src.realtime import RealtimeTranscriber
                 rt = RealtimeTranscriber(
@@ -717,8 +862,8 @@ class API:
         """
         def _run():
             try:
-                path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-                if not os.path.exists(path):
+                path = _transcript_path(job_id)
+                if not path or not os.path.exists(path):
                     _push(f"onSummaryError({json.dumps(job_id)}, {json.dumps('Transcript not found')})")
                     return
 
@@ -845,9 +990,64 @@ class API:
         if not os.path.isdir(OUTPUT_DIR):
             return result
 
-        json_stems: set[str] = set()
+        seen_job_ids: set[str] = set()
 
-        # ── Transcription jobs (*.json) ────────────────────────────────────────
+        # ── New layout: meetings/*/transcript.json ─────────────────────────────
+        meetings_dir = os.path.join(OUTPUT_DIR, "meetings")
+        if os.path.isdir(meetings_dir):
+            for job_id in os.listdir(meetings_dir):
+                session_dir_path = os.path.join(meetings_dir, job_id)
+                if not os.path.isdir(session_dir_path):
+                    continue
+                transcript_file = os.path.join(session_dir_path, "transcript.json")
+                if os.path.exists(transcript_file):
+                    try:
+                        with open(transcript_file, encoding="utf-8") as f:
+                            data = json.load(f)
+                        seen_job_ids.add(job_id)
+                        segs = data.get("segments", [])
+                        duration = round(segs[-1]["end"]) if segs else 0
+                        result.append({
+                            "job_id": job_id,
+                            "filename": data.get("filename") or data.get("audio") or job_id,
+                            "date": data.get("created_at", ""),
+                            "duration": duration,
+                            "language": data.get("language", ""),
+                            "audio_path": data.get("audio", ""),
+                            "type": "file",
+                        })
+                    except Exception:
+                        pass
+                else:
+                    # WAV-only realtime session dir
+                    wav_file = _find_realtime_wav(session_dir_path)
+                    if wav_file and os.path.exists(wav_file):
+                        seen_job_ids.add(job_id)
+                        meta_file = os.path.join(session_dir_path, "meta.json")
+                        mtime = os.path.getmtime(wav_file)
+                        date_str = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H:%M:%S")
+                        display_name = job_id[:8]
+                        if os.path.exists(meta_file):
+                            try:
+                                with open(meta_file, encoding="utf-8") as f:
+                                    meta = json.load(f)
+                                if meta.get("transcribed_job_id"):
+                                    continue  # already transcribed
+                                display_name = meta.get("filename", display_name)
+                            except Exception:
+                                pass
+                        result.append({
+                            "job_id": job_id,
+                            "filename": display_name,
+                            "date": date_str,
+                            "duration": 0,
+                            "language": "",
+                            "audio_path": os.path.abspath(wav_file),
+                            "type": "realtime",
+                        })
+
+        # ── Legacy flat layout: *.json ─────────────────────────────────────────
+        json_stems: set[str] = set()
         for path in glob.glob(os.path.join(OUTPUT_DIR, "*.json")):
             basename = os.path.basename(path)
             if basename.endswith("_summary.json") or basename.endswith("_meta.json"):
@@ -856,7 +1056,10 @@ class API:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
                 stem = os.path.splitext(os.path.basename(path))[0]
+                if stem in seen_job_ids:
+                    continue
                 json_stems.add(stem)
+                seen_job_ids.add(stem)
                 segs = data.get("segments", [])
                 duration = round(segs[-1]["end"]) if segs else 0
                 result.append({
@@ -871,13 +1074,13 @@ class API:
             except Exception:
                 pass
 
-        # ── WAV-only realtime recordings (no transcript JSON) ──────────────────
+        # ── Legacy WAV-only realtime recordings ────────────────────────────────
         for wav_path in glob.glob(os.path.join(OUTPUT_DIR, "*.wav")):
             stem = os.path.splitext(os.path.basename(wav_path))[0]
             if stem.endswith("_audio"):
-                continue  # internal audio copy from transcribe(); not a recording
-            if stem in json_stems:
-                continue  # already covered by a JSON entry
+                continue  # internal audio copy
+            if stem in seen_job_ids:
+                continue
             mtime = os.path.getmtime(wav_path)
             date_str = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H:%M:%S")
             display_name = stem[:8]
@@ -887,10 +1090,11 @@ class API:
                     with open(meta_path, encoding="utf-8") as f:
                         meta = json.load(f)
                     if meta.get("transcribed_job_id"):
-                        continue  # already transcribed; shown as a file entry
+                        continue  # already transcribed
                     display_name = meta.get("filename", display_name)
                 except Exception:
                     pass
+            seen_job_ids.add(stem)
             result.append({
                 "job_id": stem,
                 "filename": display_name,
@@ -900,6 +1104,28 @@ class API:
                 "audio_path": os.path.abspath(wav_path),
                 "type": "realtime",
             })
+
+        # ── Interrupted sessions from checkpoints (F2) ─────────────────────────
+        try:
+            from src.checkpoint import find_interrupted as _find_interrupted
+            interrupted = _find_interrupted(OUTPUT_DIR)
+            for ckpt in interrupted:
+                ckpt_job_id = ckpt.get("job_id", "")
+                if not ckpt_job_id or ckpt_job_id in seen_job_ids:
+                    continue
+                seen_job_ids.add(ckpt_job_id)
+                result.append({
+                    "job_id": ckpt_job_id,
+                    "filename": os.path.basename(ckpt.get("source_audio", ckpt_job_id)),
+                    "date": ckpt.get("updated_at", ""),
+                    "duration": 0,
+                    "language": "",
+                    "audio_path": ckpt.get("source_audio", ""),
+                    "type": "file",
+                    "status": "interrupted",
+                })
+        except Exception:
+            pass
 
         result.sort(key=lambda x: x["date"], reverse=True)
 
@@ -913,7 +1139,7 @@ class API:
 
     def get_summary_versions(self, job_id: str) -> list[dict]:
         """Return saved summary versions for a job (newest last)."""
-        path = os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
+        path = _summary_path(job_id)
         if not os.path.exists(path):
             return []
         with open(path, encoding="utf-8") as f:
@@ -922,8 +1148,8 @@ class API:
     def save_summary_version(self, job_id: str, text: str) -> bool:
         """Append a new summary version; keep at most 3 per job."""
         import time as _time
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        path = os.path.join(OUTPUT_DIR, f"{job_id}_summary.json")
+        path = _summary_path(job_id)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         versions: list[dict] = []
         if os.path.exists(path):
             try:
@@ -947,8 +1173,8 @@ class API:
         """
         if _window is None:
             return {"status": "error", "error": "No window"}
-        path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-        if not os.path.exists(path):
+        path = _transcript_path(job_id)
+        if not path or not os.path.exists(path):
             return {"status": "error", "error": "Transcript not found"}
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -1017,37 +1243,53 @@ class API:
         """Rename a transcript session.
 
         For JSON-backed sessions: updates the filename field in the JSON.
-        For WAV-only realtime sessions: writes a sidecar {job_id}_meta.json.
+        For WAV-only realtime sessions: writes meta.json inside session dir (new)
+          or sidecar {job_id}_meta.json (legacy).
         """
-        json_path = os.path.join(OUTPUT_DIR, f"{job_id}.json")
-        if os.path.exists(json_path):
-            with open(json_path, encoding="utf-8") as f:
-                data = json.load(f)
-            # Capture old display name and date for Obsidian rename BEFORE write
-            old_display = data.get("filename") or os.path.basename(data.get("audio", "")) or job_id
-            old_date    = (data.get("created_at") or "")[:10]
-            data["filename"] = name
-            tmp_path = json_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, json_path)
+        json_path = _transcript_path(job_id)
+        if json_path and os.path.exists(json_path):
+            lock = _get_transcript_lock(job_id)
+            with lock:
+                data = _read_json_file(json_path, {})
+                # Capture old display name and date for Obsidian rename BEFORE write
+                old_display = data.get("filename") or os.path.basename(data.get("audio", "")) or job_id
+                old_date    = (data.get("created_at") or "")[:10]
+                data["filename"] = name
+                _write_json_atomic(json_path, data)
             threading.Thread(
                 target=lambda: self._obsidian_rename(job_id, old_display, old_date, name),
                 daemon=True,
             ).start()
             return True
+        # WAV-only: new layout session dir or legacy flat WAV
+        s_dir = _session_dir(job_id)
+        if os.path.isdir(s_dir):
+            meta_path = os.path.join(s_dir, "meta.json")
+            meta = _read_json_file(meta_path, {})
+            if not isinstance(meta, dict):
+                meta = {}
+            meta["filename"] = name
+            _write_json_atomic(meta_path, meta)
+            return True
         wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
         if os.path.exists(wav_path):
             meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
-            tmp_path = meta_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump({"filename": name}, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, meta_path)
+            meta = _read_json_file(meta_path, {})
+            if not isinstance(meta, dict):
+                meta = {}
+            meta["filename"] = name
+            _write_json_atomic(meta_path, meta)
             return True
         return False
 
     def delete_session(self, job_id: str) -> bool:
         """Delete a transcript session and all associated files."""
+        # F6: new layout — rmtree the session directory
+        s_dir = _session_dir(job_id)
+        if os.path.isdir(s_dir):
+            shutil.rmtree(s_dir)
+            return True
+        # Legacy: per-file deletion
         candidates = [
             os.path.join(OUTPUT_DIR, f"{job_id}.json"),
             os.path.join(OUTPUT_DIR, f"{job_id}.wav"),

@@ -9,6 +9,7 @@ from src.merge import (
     SpeakerBlock,
     get_speaker_at,
     merge,
+    split_long_blocks,
     to_json,
     to_markdown,
     _fmt_time,
@@ -74,8 +75,8 @@ class TestMerge:
 
     def test_block_text(self, asr_result, two_speakers):
         blocks = merge(asr_result, two_speakers)
-        assert blocks[0].text == "你好世界"
-        assert blocks[1].text == "再见朋友"
+        assert blocks[0].text == "你好世界。"
+        assert blocks[1].text == "再见朋友。"
 
     def test_block_timestamps(self, asr_result, two_speakers):
         blocks = merge(asr_result, two_speakers)
@@ -116,7 +117,111 @@ class TestMerge:
         asr = TranscriptResult(text="abc", language="en", words=words)
         blocks = merge(asr, segs)
         assert len(blocks) == 1
-        assert blocks[0].text == "abc"
+        assert blocks[0].text == "a b c"
+
+    def test_splits_single_speaker_block_on_long_pause(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 20.0)]
+        words = [
+            WordSegment("Hello", 0.0, 0.4),
+            WordSegment("world.", 0.4, 0.8),
+            WordSegment("Next", 2.4, 2.8),
+            WordSegment("topic", 2.8, 3.1),
+        ]
+        asr = TranscriptResult(text="Hello world. Next topic", language="en", words=words)
+        blocks = merge(asr, segs)
+        assert len(blocks) == 2
+        assert blocks[0].text == "Hello world."
+        assert blocks[1].text == "Next topic"
+
+    def test_splits_single_speaker_block_when_duration_grows_too_long(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 80.0)]
+        words = [
+            WordSegment("a", 0.0, 0.2),
+            WordSegment("b", 10.0, 10.2),
+            WordSegment("c", 20.0, 20.2),
+            WordSegment("d", 30.0, 30.2),
+            WordSegment("e", 40.0, 40.2),
+            WordSegment("f", 50.0, 50.2),
+        ]
+        asr = TranscriptResult(text="abcdef", language="en", words=words)
+        blocks = merge(asr, segs)
+        assert len(blocks) >= 2
+        assert " ".join(" ".join(block.text.split()) for block in blocks) == "a b c d e f"
+
+    def test_english_words_keep_spaces(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 10.0)]
+        words = [
+            WordSegment("May", 0.0, 0.2),
+            WordSegment("I", 0.3, 0.4),
+            WordSegment("see", 0.5, 0.7),
+            WordSegment("your", 0.8, 1.0),
+            WordSegment("passport", 1.1, 1.4),
+        ]
+        asr = TranscriptResult(text="May I see your passport", language="en", words=words)
+        blocks = merge(asr, segs)
+        assert blocks[0].text == "May I see your passport."
+
+    def test_cjk_words_stay_compact(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 10.0)]
+        words = [
+            WordSegment("你好", 0.0, 0.2),
+            WordSegment("世界", 0.3, 0.5),
+        ]
+        asr = TranscriptResult(text="你好世界", language="zh", words=words)
+        blocks = merge(asr, segs)
+        assert blocks[0].text == "你好世界。"
+
+    def test_english_pause_without_existing_punctuation_splits_and_adds_periods(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 20.0)]
+        words = [
+            WordSegment("Please", 0.0, 0.2),
+            WordSegment("show", 0.2, 0.4),
+            WordSegment("me", 0.4, 0.5),
+            WordSegment("your", 0.5, 0.7),
+            WordSegment("passport", 0.7, 1.0),
+            WordSegment("thank", 1.7, 1.9),
+            WordSegment("you", 1.9, 2.1),
+            WordSegment("have", 2.1, 2.3),
+            WordSegment("a", 2.3, 2.4),
+            WordSegment("seat", 2.4, 2.6),
+        ]
+        asr = TranscriptResult(
+            text="Please show me your passport thank you have a seat",
+            language="en",
+            words=words,
+        )
+        blocks = merge(asr, segs)
+        assert len(blocks) == 2
+        assert blocks[0].text == "Please show me your passport."
+        assert blocks[1].text == "thank you have a seat."
+
+    def test_cjk_long_block_forces_sentence_break_and_adds_full_stops(self):
+        segs = [SpeakerSegment("SPEAKER_00", 0.0, 40.0)]
+        words = [
+            WordSegment("这是", 0.0, 0.2),
+            WordSegment("一个", 0.2, 0.4),
+            WordSegment("没有", 0.4, 0.6),
+            WordSegment("标点", 0.6, 0.8),
+            WordSegment("也没", 0.8, 1.0),
+            WordSegment("明显", 1.0, 1.2),
+            WordSegment("停顿", 1.2, 1.4),
+            WordSegment("但是", 1.4, 1.6),
+            WordSegment("需要", 1.6, 1.8),
+            WordSegment("基础", 1.8, 2.0),
+            WordSegment("断句", 2.0, 2.2),
+            WordSegment("的长", 2.2, 2.4),
+            WordSegment("中文", 2.4, 2.6),
+            WordSegment("片段", 2.6, 2.8),
+        ]
+        asr = TranscriptResult(
+            text="这是一个没有标点也没明显停顿但是需要基础断句的长中文片段",
+            language="zh",
+            words=words,
+        )
+        blocks = merge(asr, segs)
+        assert len(blocks) >= 2
+        assert blocks[0].text.endswith("。")
+        assert "。" in "".join(block.text for block in blocks)
 
 
 # ── to_json ───────────────────────────────────────────────────────────────────

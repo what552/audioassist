@@ -45,7 +45,8 @@ def save_turn(
     tool_events: list[dict] | None = None,
 ) -> None:
     """Append a user+assistant turn and persist, trimming to MAX_TURNS pairs."""
-    os.makedirs(output_dir, exist_ok=True)
+    path = _session_path(output_dir, job_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     session = load_session(output_dir, job_id)
     turns = session.get("turns", [])
 
@@ -87,4 +88,7 @@ def build_context_messages(session: dict) -> list[dict]:
 
 
 def _session_path(output_dir: str, job_id: str) -> str:
+    session_dir = os.path.join(output_dir, "meetings", job_id)
+    if os.path.isdir(session_dir):
+        return os.path.join(session_dir, "agent_chat.json")
     return os.path.join(output_dir, f"{job_id}_agent_chat.json")

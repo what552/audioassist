@@ -25,10 +25,11 @@ def env(tmp_path):
         yield API(), tmp_path
 
 
-def _fake_pipeline(audio_path, output_dir, job_id, **_kwargs):
+def _fake_pipeline(audio_path, output_dir, job_id=None, output_stem=None, **_kwargs):
     """Minimal pipeline stub: writes a JSON with basename 'audio' field."""
-    json_path = os.path.join(output_dir, f"{job_id}.json")
-    md_path   = os.path.join(output_dir, f"{job_id}.md")
+    stem = output_stem or job_id or "transcript"
+    json_path = os.path.join(output_dir, f"{stem}.json")
+    md_path   = os.path.join(output_dir, f"{stem}.md")
     data = {
         "audio":      os.path.basename(audio_path),
         "filename":   os.path.basename(audio_path),
@@ -55,8 +56,8 @@ class TestAudioCopy:
             api.transcribe(str(src), {})
             _wait()
 
-        copies = list(out_dir.glob("*_audio.mp3"))
-        assert len(copies) == 1, "Expected exactly one _audio.mp3 copy"
+        copies = list(out_dir.rglob("source_audio.mp3"))
+        assert len(copies) == 1, "Expected exactly one source_audio.mp3 copy"
 
     def test_copy_has_same_content_as_source(self, env, tmp_path):
         api, out_dir = env
@@ -69,7 +70,7 @@ class TestAudioCopy:
             api.transcribe(str(src), {})
             _wait()
 
-        copy = next(out_dir.glob("*_audio.mp3"))
+        copy = next(out_dir.rglob("source_audio.mp3"))
         assert copy.read_bytes() == content
 
     def test_copy_extension_matches_source(self, env, tmp_path):
@@ -82,7 +83,7 @@ class TestAudioCopy:
             api.transcribe(str(src), {})
             _wait()
 
-        assert list(out_dir.glob("*_audio.m4a")), "Expected *_audio.m4a copy"
+        assert list(out_dir.rglob("source_audio.m4a")), "Expected source_audio.m4a copy"
 
 
 # ── JSON audio field ──────────────────────────────────────────────────────────
@@ -91,7 +92,7 @@ class TestJsonAudioField:
     def _run_and_get_json(self, api, out_dir, src):
         job_ids = []
 
-        def _capture_pipeline(audio_path, output_dir, job_id, **kw):
+        def _capture_pipeline(audio_path, output_dir, job_id=None, **kw):
             job_ids.append(job_id)
             return _fake_pipeline(audio_path, output_dir, job_id, **kw)
 
@@ -100,7 +101,8 @@ class TestJsonAudioField:
             api.transcribe(str(src), {})
             _wait()
 
-        json_path = out_dir / f"{job_ids[0]}.json"
+        # F6: JSON is now at meetings/{job_id}/transcript.json
+        json_path = out_dir / "meetings" / job_ids[0] / "transcript.json"
         return json.loads(json_path.read_text(encoding="utf-8"))
 
     def test_audio_field_is_absolute_path(self, env, tmp_path):
@@ -117,7 +119,7 @@ class TestJsonAudioField:
         src = tmp_path / "talk.mp3"
         src.write_bytes(b"x")
         data = self._run_and_get_json(api, out_dir, src)
-        assert data["audio"].endswith("_audio.mp3")
+        assert data["audio"].endswith("source_audio.mp3")
         assert os.path.isfile(data["audio"])
 
     def test_filename_field_keeps_original_basename(self, env, tmp_path):
@@ -127,6 +129,68 @@ class TestJsonAudioField:
         data = self._run_and_get_json(api, out_dir, src)
         # filename should remain the display name, not the internal copy name
         assert data["filename"] == "interview.mp3"
+
+    def test_session_meta_filename_is_promoted_to_transcript_and_obsidian(self, env, tmp_path):
+        from src.obsidian import sync_job
+
+        api, out_dir = env
+        job_id = "upload-job-001"
+        session_dir = out_dir / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        src = tmp_path / "source_audio.wav"
+        src.write_bytes(b"RIFF")
+
+        ok = api.rename_session(job_id, "测试-上传")
+        assert ok is True
+
+        with patch("src.pipeline.run", side_effect=_fake_pipeline), \
+             patch.object(app_module, "_push"):
+            api.transcribe(str(src), {}, job_id=job_id)
+            _wait()
+
+        json_path = session_dir / "transcript.json"
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        assert data["filename"] == "测试-上传"
+
+        obs_dir = tmp_path / "obsidian"
+        dest = sync_job(job_id, str(out_dir), str(obs_dir))
+        assert os.path.basename(dest).endswith("测试-上传.md")
+
+    def test_existing_transcript_filename_wins_over_stale_meta_on_same_job_rerun(self, env, tmp_path):
+        from src.obsidian import sync_job
+
+        api, out_dir = env
+        job_id = "upload-job-002"
+        session_dir = out_dir / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        src = tmp_path / "source_audio.wav"
+        src.write_bytes(b"RIFF")
+
+        transcript_path = session_dir / "transcript.json"
+        transcript_path.write_text(json.dumps({
+            "job_id": job_id,
+            "filename": "重命名后的标题",
+            "audio": str(src),
+            "language": "zh",
+            "created_at": "2026-03-25 12:00",
+            "segments": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        (session_dir / "meta.json").write_text(
+            json.dumps({"filename": "旧的-meta-标题"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with patch("src.pipeline.run", side_effect=_fake_pipeline), \
+             patch.object(app_module, "_push"):
+            api.transcribe(str(src), {}, job_id=job_id)
+            _wait()
+
+        data = json.loads(transcript_path.read_text(encoding="utf-8"))
+        assert data["filename"] == "重命名后的标题"
+
+        obs_dir = tmp_path / "obsidian"
+        dest = sync_job(job_id, str(out_dir), str(obs_dir))
+        assert os.path.basename(dest).endswith("重命名后的标题.md")
 
 
 # ── Resilience ────────────────────────────────────────────────────────────────

@@ -23,6 +23,8 @@ import logging
 import os
 from typing import Any, Callable
 
+from .session_paths import resolve_summary_path, resolve_transcript_path
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -246,6 +248,12 @@ class MeetingAgent:
 
     # ── Tool execution ──────────────────────────────────────────────────────
 
+    def _transcript_path(self, job_id: str) -> str | None:
+        return resolve_transcript_path(self._output_dir, job_id)
+
+    def _summary_path(self, job_id: str) -> str:
+        return resolve_summary_path(self._output_dir, job_id)
+
     def _execute_tool(self, name: str, args: dict, default_job_id: str) -> Any:
         # Always use the session's job_id — never trust the model-supplied value
         # to prevent prompt-injection attacks that could read/write other sessions.
@@ -266,8 +274,8 @@ class MeetingAgent:
             return {"error": f"Unknown tool: {name}"}
 
     def _tool_get_transcript(self, job_id: str, max_chars: int = 6000) -> dict:
-        path = os.path.join(self._output_dir, f"{job_id}.json")
-        if not os.path.exists(path):
+        path = self._transcript_path(job_id)
+        if not path:
             return {"error": "Transcript not found"}
         try:
             with open(path, encoding="utf-8") as f:
@@ -289,7 +297,7 @@ class MeetingAgent:
             return {"error": str(e)}
 
     def _tool_get_current_summary(self, job_id: str) -> dict:
-        path = os.path.join(self._output_dir, f"{job_id}_summary.json")
+        path = self._summary_path(job_id)
         if not os.path.exists(path):
             return {"summary": "", "version_count": 0}
         try:
@@ -302,7 +310,7 @@ class MeetingAgent:
             return {"error": str(e)}
 
     def _tool_get_summary_versions(self, job_id: str) -> dict:
-        path = os.path.join(self._output_dir, f"{job_id}_summary.json")
+        path = self._summary_path(job_id)
         if not os.path.exists(path):
             return {"versions": []}
         try:
@@ -327,8 +335,8 @@ class MeetingAgent:
         try:
             import time as _time
 
-            os.makedirs(self._output_dir, exist_ok=True)
-            path = os.path.join(self._output_dir, f"{job_id}_summary.json")
+            path = self._summary_path(job_id)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             versions: list[dict] = []
             if os.path.exists(path):
                 try:

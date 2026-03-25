@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import app as app_module
 from app import API, _DEFAULT_OUTPUT_DIR
+from src.session_paths import resolve_summary_path, resolve_transcript_path
 
 
 @pytest.fixture
@@ -147,3 +148,151 @@ def test_resolve_output_dir_ignores_nonexistent_stored_path(tmp_path):
     with patch.object(app_module, "CONFIG_PATH", config_path):
         result = _resolve_output_dir()
     assert result == _DEFAULT_OUTPUT_DIR
+
+
+# ── New session-per-directory layout tests (F6) ───────────────────────────────
+
+def _setup_new_layout_session(output_dir, job_id, extra=None):
+    """Create a new-layout session dir with transcript.json."""
+    session_dir = os.path.join(output_dir, "meetings", job_id)
+    os.makedirs(session_dir, exist_ok=True)
+    data = {
+        "job_id": job_id,
+        "filename": f"test_{job_id}.mp3",
+        "segments": [{"speaker": "S1", "start": 0.0, "end": 10.0, "text": "hello", "words": []}],
+        "language": "en",
+        "created_at": "2026-03-24T10:00:00",
+        "audio": os.path.join(session_dir, "source_audio.mp3"),
+    }
+    if extra:
+        data.update(extra)
+    with open(os.path.join(session_dir, "transcript.json"), "w") as f:
+        json.dump(data, f)
+    return session_dir
+
+
+def test_get_history_finds_new_layout_sessions(api):
+    instance, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    with patch.object(app_module, "OUTPUT_DIR", output_dir):
+        _setup_new_layout_session(output_dir, "new-job-001")
+        history = instance.get_history()
+    assert any(h["job_id"] == "new-job-001" for h in history)
+
+
+def test_resolve_transcript_path_prefers_new_layout(api):
+    _, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    _setup_new_layout_session(output_dir, "pref-job")
+    with open(os.path.join(output_dir, "pref-job.json"), "w") as f:
+        json.dump({"segments": []}, f)
+    path = resolve_transcript_path(output_dir, "pref-job")
+    assert path == os.path.join(output_dir, "meetings", "pref-job", "transcript.json")
+
+
+def test_resolve_summary_path_prefers_new_layout_when_session_dir_exists(api):
+    _, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    session_dir = _setup_new_layout_session(output_dir, "sum-pref-job")
+    with open(os.path.join(output_dir, "sum-pref-job_summary.json"), "w") as f:
+        json.dump([{"text": "legacy"}], f)
+    path = resolve_summary_path(output_dir, "sum-pref-job")
+    assert path == os.path.join(session_dir, "summary.json")
+
+
+def test_resolve_summary_path_falls_back_to_legacy_without_session_dir(api):
+    _, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    path = resolve_summary_path(output_dir, "legacy-only-job")
+    assert path == os.path.join(output_dir, "legacy-only-job_summary.json")
+
+
+def test_get_history_finds_legacy_sessions(api):
+    instance, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    # Create legacy flat JSON
+    legacy_data = {
+        "filename": "legacy.mp3",
+        "segments": [{"speaker": "S1", "start": 0.0, "end": 5.0, "text": "hi", "words": []}],
+        "language": "zh",
+        "created_at": "2026-01-01T00:00:00",
+    }
+    with open(os.path.join(output_dir, "legacy-job.json"), "w") as f:
+        json.dump(legacy_data, f)
+    with patch.object(app_module, "OUTPUT_DIR", output_dir):
+        history = instance.get_history()
+    assert any(h["job_id"] == "legacy-job" for h in history)
+
+
+def test_delete_session_new_uses_rmtree(api):
+    instance, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    session_dir = _setup_new_layout_session(output_dir, "del-new-job")
+    with patch.object(app_module, "OUTPUT_DIR", output_dir):
+        ok = instance.delete_session("del-new-job")
+    assert ok is True
+    assert not os.path.exists(session_dir)
+
+
+def test_delete_session_legacy_per_file(api):
+    instance, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    job_id = "del-legacy-job"
+    json_path = os.path.join(output_dir, f"{job_id}.json")
+    summary_path = os.path.join(output_dir, f"{job_id}_summary.json")
+    with open(json_path, "w") as f:
+        json.dump({"filename": "x.mp3"}, f)
+    with open(summary_path, "w") as f:
+        json.dump([], f)
+    with patch.object(app_module, "OUTPUT_DIR", output_dir):
+        ok = instance.delete_session(job_id)
+    assert ok is True
+    assert not os.path.exists(json_path)
+    assert not os.path.exists(summary_path)
+
+
+def test_rename_session_new_layout(api):
+    instance, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    session_dir = _setup_new_layout_session(output_dir, "rename-new-job")
+    with patch.object(app_module, "OUTPUT_DIR", output_dir):
+        ok = instance.rename_session("rename-new-job", "My Meeting")
+    assert ok is True
+    transcript_path = os.path.join(session_dir, "transcript.json")
+    with open(transcript_path) as f:
+        data = json.load(f)
+    assert data["filename"] == "My Meeting"
+
+
+def test_summary_versions_new_layout(api):
+    instance, tmp_path = api
+    output_dir = str(tmp_path / "output")
+    session_dir = _setup_new_layout_session(output_dir, "sum-new-job")
+    with patch.object(app_module, "OUTPUT_DIR", output_dir):
+        ok = instance.save_summary_version("sum-new-job", "My summary text")
+        assert ok is True
+        versions = instance.get_summary_versions("sum-new-job")
+    assert len(versions) == 1
+    assert versions[0]["text"] == "My summary text"
+    # Summary file should be inside session dir
+    assert os.path.exists(os.path.join(session_dir, "summary.json"))
+
+
+def test_agent_chat_path_new_layout(tmp_path):
+    """agent_store._session_path() should use new layout when session dir exists."""
+    from src.agent_store import _session_path
+    output_dir = str(tmp_path)
+    job_id = "agent-new-job"
+    session_dir = os.path.join(output_dir, "meetings", job_id)
+    os.makedirs(session_dir, exist_ok=True)
+    path = _session_path(output_dir, job_id)
+    assert path == os.path.join(session_dir, "agent_chat.json")
+
+
+def test_agent_chat_path_legacy_layout(tmp_path):
+    """agent_store._session_path() should use legacy layout when no session dir."""
+    from src.agent_store import _session_path
+    output_dir = str(tmp_path)
+    job_id = "agent-legacy-job"
+    path = _session_path(output_dir, job_id)
+    assert path == os.path.join(output_dir, f"{job_id}_agent_chat.json")

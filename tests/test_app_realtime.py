@@ -12,6 +12,12 @@ def _wait(timeout=0.5):
     time.sleep(timeout)
 
 
+@pytest.fixture(autouse=True)
+def _output_dir(tmp_path):
+    with patch.object(app_module, "OUTPUT_DIR", str(tmp_path)):
+        yield
+
+
 # ── Return values ─────────────────────────────────────────────────────────────
 
 class TestReturnValues:
@@ -74,6 +80,29 @@ class TestJSEvents:
             started[0],
         )
         assert '.wav"' in started[0]
+
+    def test_start_uses_unique_realtime_wav_name(self):
+        import re
+        api = API()
+        captured = {}
+
+        def capture_init(*args, **kwargs):
+            captured["output_path"] = kwargs.get("output_path")
+            inst = MagicMock()
+            inst.start.return_value = None
+            return inst
+
+        with patch("src.realtime.RealtimeTranscriber", side_effect=capture_init), \
+             patch.object(app_module, "_push"):
+            api.start_realtime()
+            _wait(0.3)
+
+        output_path = captured["output_path"]
+        basename = os.path.basename(output_path)
+        parent = os.path.basename(os.path.dirname(output_path))
+        match = re.fullmatch(r"realtime_recording_([0-9a-f]{8})\.wav", basename)
+        assert match, basename
+        assert parent.startswith(match.group(1))
 
     def test_start_exception_pushes_onRealtimeError(self):
         api = API()
