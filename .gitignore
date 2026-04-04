@@ -37,6 +37,9 @@ htmlcov/
 *.dmg
 *.app
 
+# Swift Package Manager build output
+native/**/.build/
+
 # Model files (large binaries)
 *.bin
 *.safetensors
