@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.13 — r02-b5)
+## Features (v0.14 — r02-b6-c01)
 
 - **Session-per-directory storage (F6)** — each job lives in `meetings/{job_id}/` inside the output directory (`transcript.json`, `summary.json`, `agent_chat.json`, `source_audio.*`); legacy flat-file sessions are read transparently for backward compatibility; session delete uses `shutil.rmtree` for new layout
 - **Local-only model inference (F1)** — `pipeline.run()` and `run_realtime_segments()` never auto-download models; if a required model is not present, `ModelNotReadyError` is raised immediately with a clear message pointing to the Model Library; no silent network calls during transcription
@@ -31,6 +31,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Export summary** — "Export ▾" button in the summary panel exports the current summary as `.txt` or `.md` via a native Save dialog
 - **Markdown rendering** — summary text and Summary Agent replies are rendered as Markdown (bold, headings, lists, code blocks) using `marked.js` + `DOMPurify`; raw `**` symbols are never shown to the user
 - **Obsidian vault sync** — configure a target vault folder in Settings; every time a transcript is saved or a summary is generated the corresponding session is automatically written as `YYYY-MM-DD display_name.md` with YAML frontmatter (date, duration, speakers, source, job_id) plus summary and transcript sections; session renames propagate to the vault filename; on first launch all existing sessions are back-filled (see Settings → Obsidian Sync)
+- **System audio capture (r02-b6-c01)** — new `capture_mode: "system"` option in `start_realtime()`; uses `AudioAssistCaptureHelper` (Swift + ScreenCaptureKit) to capture all macOS system audio (Zoom, browser meetings, etc.) and stream 16 kHz / mono / float32 PCM via named pipe to the existing VAD + ASR pipeline; helper writes a simultaneous PCM16 WAV to the session directory; `preflight_capture(mode)` checks macOS 13.0+ and helper binary presence before start; pause/resume via SIGUSR1/SIGUSR2; `mic` mode unchanged (requires macOS 13.0)
 - **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the pipeline runs speaker diarization only (ASR already done live) to produce the final transcript (see [Realtime transcription](#realtime-transcription))
 - **Realtime timestamps** — each live utterance records absolute `start`/`end` times (seconds from session start); displayed as `[MM:SS]` prefix in the live panel and passed to the diarizer for accurate speaker labelling
 - **Finish → diarize only + background refine** — when a realtime session ends, the already-transcribed segments are used for instant diarize-only output; simultaneously a full high-accuracy ASR pipeline runs in the background (30-minute timeout); when it completes the transcript is silently replaced and a "正在进行高精度转写…" banner at the top of the transcript area notifies the user while the background job is in flight
@@ -48,6 +49,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 
 - Python 3.12.2 (see `.python-version`)
 - ffmpeg + ffprobe installed and in PATH
+- **System audio capture (`system` / `mix` mode) requires macOS 13.0+** and the compiled `AudioAssistCaptureHelper` binary (see [Build the Swift helper](#build-the-swift-helper) below)
 
 ### Install ffmpeg
 
@@ -81,6 +83,54 @@ pip install faster-whisper
 > The Whisper backends (`mlx-whisper` / `faster-whisper`) are optional add-ons
 > and are **not** included in `requirements.txt` because the correct choice is
 > platform-dependent. Skip step 3 entirely if you only use the Qwen3-ASR engine.
+
+## Build the Swift helper
+
+The `system` and `mix` capture modes require the native helper to be compiled first.
+This is **macOS-only** and requires macOS 13.0+.
+
+### 1. Install Xcode Command Line Tools
+
+```bash
+xcode-select --install
+```
+
+Verify the installation:
+
+```bash
+swift --version   # should print Swift 5.9 or later
+```
+
+> If you have Xcode installed but `swift` is still not found, run:
+> `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`
+
+### 2. Build the helper
+
+```bash
+cd native/AudioAssistCaptureHelper
+swift build -c release
+```
+
+The compiled binary is placed at:
+
+```
+native/AudioAssistCaptureHelper/.build/release/AudioAssistCaptureHelper
+```
+
+`NativeCaptureHelper` in `src/native_capture.py` resolves this path automatically.
+No additional installation step is needed — just build once before using `system` or `mix` mode.
+
+### 3. Grant Screen Recording permission
+
+On first use, macOS will prompt for **Screen Recording** permission.
+If the prompt does not appear, open:
+
+```
+System Settings → Privacy & Security → Screen Recording
+```
+
+and enable the permission for AudioAssist (or your terminal if running from the command line).
+Some macOS versions require a full app restart after granting the permission.
 
 ## Run
 
