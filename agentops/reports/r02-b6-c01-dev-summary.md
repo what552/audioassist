@@ -57,7 +57,7 @@ WAV 输出：PCM16，16 kHz，mono，session 目录下
 
 ```
 tests/test_native_capture.py  33 passed
-全量门禁（不含 webview 缺失的 export/obsidian 测试）  552 passed
+全量门禁（不含 webview 缺失的 export/obsidian 测试）  557 passed（Gate fix 后）
 预存失败（webview 未安装）  13 failed  ← 与本 c01 无关，无回归
 ```
 
@@ -65,9 +65,22 @@ Swift build: `Build complete!` (macOS 13.0, release, arm64)
 
 ---
 
+## Gate No-Go 修复（Gate Commit: ca346dd）
+
+| 问题 | 级别 | 修复 |
+|------|------|------|
+| mix 模式退化到 mic-only | P1 | `app.py` capture_mode `in ("system", "mix")` 均走 NativeCaptureHelper |
+| README 缺 macOS 13.0+/Xcode CLT/swift build 步骤 | P1 | 新增"Build the Swift helper"章节 |
+| start() 异常路径 FIFO fd + worker thread 泄漏 | P2 | try/except 包裹，异常时 close fd、unlink FIFO、清零 worker_thread |
+| Swift `didStopWithError` 不触发 stopSemaphore | P2 | 注入 `onFatalError` 回调，异常退出时 signal stopSemaphore |
+
+新增测试 +5：mix 模式路由 ×3、start() 清理 ×2，共 38 个测试全通过。
+
+---
+
 ## 当前未覆盖（留 c02）
 
-- mix 模式（系统音频 + 麦克风）
+- mix 模式麦克风采集（NativeCaptureHelper mode="mix" 目前仅路由，helper 侧 mix 实现留 c02）
 - UI 模式选择控件（前端 capture_mode 下拉/分段按钮）
 - 权限引导弹窗（preflight 结果反馈到前端）
 - meta.json 写入 capture_mode / capture_backend 字段
@@ -80,3 +93,5 @@ Swift build: `Build complete!` (macOS 13.0, release, arm64)
 |-----|------|
 | `adbfa9a` | `feat(r02-b6-c01)`: 主交付物 |
 | `bd04d0f` | `chore`: gitignore Swift .build 产物 |
+| `7744f20` | `docs(dev)`: dev summary 初版 |
+| `ca346dd` | `fix(r02-b6-c01)`: Gate No-Go 修复（mix 路由、README、泄漏、异常退出）|
