@@ -468,3 +468,108 @@ class TestPreflightCapture:
         with patch("platform.mac_ver", return_value=("14.2.1", ("", "", ""), "")):
             result = api.preflight_capture("mic")
         assert result["os_version"] == "14.2.1"
+
+
+# ── mix 模式路由（P1 修复验证）────────────────────────────────────────────────
+
+class TestMixModeRouting:
+    def test_mix_mode_uses_native_capture_helper(self):
+        """mix 模式必须走 NativeCaptureHelper，不能退化到 mic-only。"""
+        import app as app_module
+        from app import API
+
+        api = API()
+        captured = {}
+
+        def capture_nch_init(*args, **kwargs):
+            captured["backend"] = "NativeCaptureHelper"
+            captured["mode"]    = kwargs.get("mode")
+            inst = MagicMock()
+            inst.start.return_value = None
+            inst._output_path = "/tmp/mix_test.wav"
+            return inst
+
+        with patch("src.native_capture.NativeCaptureHelper", side_effect=capture_nch_init), \
+             patch.object(app_module, "_push"), \
+             patch.object(app_module, "OUTPUT_DIR", "/tmp"):
+            api.start_realtime({"capture_mode": "mix"})
+            time.sleep(0.3)
+
+        assert captured.get("backend") == "NativeCaptureHelper"
+        assert captured.get("mode") == "mix"
+
+    def test_mix_mode_does_not_use_realtime_transcriber(self):
+        """mix 模式下 RealtimeTranscriber 不应被实例化。"""
+        import app as app_module
+        from app import API
+
+        api = API()
+        rt_called = []
+
+        def capture_nch_init(*args, **kwargs):
+            inst = MagicMock()
+            inst.start.return_value = None
+            inst._output_path = "/tmp/mix_test2.wav"
+            return inst
+
+        with patch("src.native_capture.NativeCaptureHelper", side_effect=capture_nch_init), \
+             patch("src.realtime.RealtimeTranscriber",
+                   side_effect=lambda *a, **k: rt_called.append(True)) as mock_rt, \
+             patch.object(app_module, "_push"), \
+             patch.object(app_module, "OUTPUT_DIR", "/tmp"):
+            api.start_realtime({"capture_mode": "mix"})
+            time.sleep(0.3)
+
+        assert rt_called == [], "RealtimeTranscriber should not be called in mix mode"
+
+    def test_mix_mode_preflight_check(self):
+        """preflight_capture('mix') 同样检查 macOS 版本和 helper。"""
+        from app import API
+        api = API()
+        with patch("platform.mac_ver", return_value=("12.5.0", ("", "", ""), "")):
+            result = api.preflight_capture("mix")
+        assert result["supported"] is False
+        assert result["reason"] == "screencapturekit_requires_macos_13_0"
+
+
+# ── start() 异常路径清理（P2 修复验证）────────────────────────────────────────
+
+class TestStartCleanupOnError:
+    def test_fifo_cleaned_up_when_popen_raises(self):
+        """Popen 失败时，已创建的 FIFO 文件和 fd 不应泄漏。"""
+        unlinked = []
+        closed_fds = []
+
+        h = _helper()
+
+        with patch.object(NativeCaptureHelper, "_load_models"), \
+             patch("os.mkfifo"), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.open", return_value=7), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("os.close", side_effect=lambda fd: closed_fds.append(fd)), \
+             patch("os.unlink", side_effect=lambda p: unlinked.append(p)), \
+             patch("subprocess.Popen", side_effect=OSError("binary not found")):
+            with pytest.raises(OSError, match="binary not found"):
+                h.start()
+
+        # FIFO fd must have been closed
+        assert 7 in closed_fds
+        # FIFO path must have been unlinked
+        assert len(unlinked) >= 1
+
+    def test_worker_thread_not_left_running_when_popen_raises(self):
+        """Popen 失败后 worker thread 应被清理，不留在 _worker_thread。"""
+        h = _helper()
+
+        with patch.object(NativeCaptureHelper, "_load_models"), \
+             patch("os.mkfifo"), \
+             patch("os.path.exists", return_value=False), \
+             patch("os.open", return_value=7), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("os.close"), \
+             patch("subprocess.Popen", side_effect=OSError("fail")):
+            with pytest.raises(OSError):
+                h.start()
+
+        assert h._worker_thread is None

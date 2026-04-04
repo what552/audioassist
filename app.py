@@ -795,10 +795,10 @@ class API:
                 os.makedirs(rt_session_dir, exist_ok=True)
                 output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
 
-                if capture_mode == "system":
+                if capture_mode in ("system", "mix"):
                     from src.native_capture import NativeCaptureHelper
                     rt = NativeCaptureHelper(
-                        mode="system",
+                        mode=capture_mode,
                         engine=engine,
                         output_path=output_path,
                         on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),

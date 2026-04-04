@@ -49,6 +49,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 
 - Python 3.12.2 (see `.python-version`)
 - ffmpeg + ffprobe installed and in PATH
+- **System audio capture (`system` / `mix` mode) requires macOS 13.0+** and the compiled `AudioAssistCaptureHelper` binary (see [Build the Swift helper](#build-the-swift-helper) below)
 
 ### Install ffmpeg
 
@@ -82,6 +83,54 @@ pip install faster-whisper
 > The Whisper backends (`mlx-whisper` / `faster-whisper`) are optional add-ons
 > and are **not** included in `requirements.txt` because the correct choice is
 > platform-dependent. Skip step 3 entirely if you only use the Qwen3-ASR engine.
+
+## Build the Swift helper
+
+The `system` and `mix` capture modes require the native helper to be compiled first.
+This is **macOS-only** and requires macOS 13.0+.
+
+### 1. Install Xcode Command Line Tools
+
+```bash
+xcode-select --install
+```
+
+Verify the installation:
+
+```bash
+swift --version   # should print Swift 5.9 or later
+```
+
+> If you have Xcode installed but `swift` is still not found, run:
+> `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`
+
+### 2. Build the helper
+
+```bash
+cd native/AudioAssistCaptureHelper
+swift build -c release
+```
+
+The compiled binary is placed at:
+
+```
+native/AudioAssistCaptureHelper/.build/release/AudioAssistCaptureHelper
+```
+
+`NativeCaptureHelper` in `src/native_capture.py` resolves this path automatically.
+No additional installation step is needed — just build once before using `system` or `mix` mode.
+
+### 3. Grant Screen Recording permission
+
+On first use, macOS will prompt for **Screen Recording** permission.
+If the prompt does not appear, open:
+
+```
+System Settings → Privacy & Security → Screen Recording
+```
+
+and enable the permission for AudioAssist (or your terminal if running from the command line).
+Some macOS versions require a full app restart after granting the permission.
 
 ## Run
 

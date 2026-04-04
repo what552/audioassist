@@ -167,7 +167,12 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         emit(["event": "error", "message": error.localizedDescription])
+        // Signal the main thread to begin shutdown so the process doesn't hang
+        onFatalError?(error.localizedDescription)
     }
+
+    /// Called when the stream stops unexpectedly; injected after stopSemaphore is created.
+    var onFatalError: ((String) -> Void)?
 
     // MARK: SCStreamOutput
 
@@ -416,6 +421,9 @@ emit(["event": "started", "sample_rate": sampleRate, "channels": 1, "mode": mode
 // Signal handling (all on a background queue so main thread can block)
 let sigQueue = DispatchQueue(label: "signal.q")
 let stopSemaphore = DispatchSemaphore(value: 0)
+
+// Wire up fatal-error callback so an unexpected SCStream stop signals shutdown
+processor.onFatalError = { _ in stopSemaphore.signal() }
 
 signal(SIGUSR1, SIG_IGN)
 signal(SIGUSR2, SIG_IGN)

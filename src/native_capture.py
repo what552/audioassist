@@ -106,6 +106,9 @@ class NativeCaptureHelper:
         """Load models, create FIFO, launch helper, start reader threads."""
         self._load_models()
 
+        if not self._output_path:
+            raise ValueError("output_path must be set before calling start()")
+
         # Create FIFO
         self._fifo_path = os.path.join(
             tempfile.gettempdir(),
@@ -115,39 +118,56 @@ class NativeCaptureHelper:
             os.unlink(self._fifo_path)
         os.mkfifo(self._fifo_path)
 
-        if not self._output_path:
-            raise ValueError("output_path must be set before calling start()")
+        try:
+            # Open FIFO read-end BEFORE launching the helper so the helper's
+            # blocking O_WRONLY open completes immediately.
+            self._fifo_fd = os.open(self._fifo_path, os.O_RDONLY | os.O_NONBLOCK)
+            # Switch to blocking reads for the PCM reader thread.
+            fl = fcntl.fcntl(self._fifo_fd, fcntl.F_GETFL)
+            fcntl.fcntl(self._fifo_fd, fcntl.F_SETFL, fl & ~os.O_NONBLOCK)
 
-        # Open FIFO read-end BEFORE launching the helper so the helper's
-        # blocking O_WRONLY open completes immediately.
-        self._fifo_fd = os.open(self._fifo_path, os.O_RDONLY | os.O_NONBLOCK)
-        # Switch to blocking reads for the PCM reader thread.
-        fl = fcntl.fcntl(self._fifo_fd, fcntl.F_GETFL)
-        fcntl.fcntl(self._fifo_fd, fcntl.F_SETFL, fl & ~os.O_NONBLOCK)
+            # Start serial ASR worker
+            self._worker_thread = threading.Thread(
+                target=self._transcription_worker,
+                daemon=True,
+                name="native-transcribe-worker",
+            )
+            self._worker_thread.start()
 
-        # Start serial ASR worker
-        self._worker_thread = threading.Thread(
-            target=self._transcription_worker,
-            daemon=True,
-            name="native-transcribe-worker",
-        )
-        self._worker_thread.start()
+            # Launch helper subprocess
+            cmd = [
+                self._helper_path, "stream",
+                "--mode",        self._mode,
+                "--pcm-fifo",    self._fifo_path,
+                "--wav-out",     self._output_path,
+                "--sample-rate", str(SAMPLE_RATE),
+                "--channels",    "1",
+            ]
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except Exception:
+            # Clean up FIFO fd and worker thread on any startup failure
+            if self._fifo_fd is not None:
+                try:
+                    os.close(self._fifo_fd)
+                except OSError:
+                    pass
+                self._fifo_fd = None
+            if self._fifo_path and os.path.exists(self._fifo_path):
+                try:
+                    os.unlink(self._fifo_path)
+                except OSError:
+                    pass
+                self._fifo_path = None
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                self._transcribe_queue.put(None)
+            self._worker_thread = None
+            raise
 
-        # Launch helper subprocess
-        cmd = [
-            self._helper_path, "stream",
-            "--mode",        self._mode,
-            "--pcm-fifo",    self._fifo_path,
-            "--wav-out",     self._output_path,
-            "--sample-rate", str(SAMPLE_RATE),
-            "--channels",    "1",
-        ]
-        self._process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
         self._running = True
 
         # Event reader thread (parses stdout NDJSON)
