@@ -684,6 +684,53 @@ class API:
 
     # ── Realtime ───────────────────────────────────────────────────────────────
 
+    def preflight_capture(self, mode: str) -> dict:
+        """
+        Check capture prerequisites for the given mode.
+
+        Returns a structured dict:
+          {
+            "supported": bool,
+            "missing_permissions": [...],
+            "os_version": str,
+            "reason": str | None,
+          }
+
+        For "mic" mode this always returns supported=True (existing path).
+        For "system" / "mix" modes it checks macOS version and helper binary.
+        """
+        import platform
+
+        os_version = platform.mac_ver()[0]
+        result: dict = {
+            "supported":           True,
+            "missing_permissions": [],
+            "os_version":          os_version,
+            "reason":              None,
+        }
+
+        if mode in ("system", "mix"):
+            # macOS version gate
+            try:
+                parts = [int(x) for x in os_version.split(".")]
+                if (parts[0], parts[1] if len(parts) > 1 else 0) < (13, 0):
+                    result["supported"] = False
+                    result["reason"]    = "screencapturekit_requires_macos_13_0"
+                    return result
+            except (ValueError, IndexError):
+                pass  # cannot parse version — proceed
+
+            # Helper binary check
+            from src.native_capture import _default_helper_path
+            helper = _default_helper_path()
+            if not os.path.isfile(helper) or not os.access(helper, os.X_OK):
+                result["supported"]   = False
+                result["reason"]      = "helper_not_found"
+                result["helper_path"] = helper
+                return result
+
+        return result
+
     # ── Screen-sleep prevention (macOS caffeinate) ─────────────────────────────
 
     def _caffeinate_start(self) -> None:
@@ -737,6 +784,8 @@ class API:
             if _info:
                 engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
+        capture_mode = options.get("capture_mode", "mic")
+
         def _run():
             try:
                 import uuid
@@ -746,13 +795,24 @@ class API:
                 os.makedirs(rt_session_dir, exist_ok=True)
                 output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
 
-                from src.realtime import RealtimeTranscriber
-                rt = RealtimeTranscriber(
-                    engine=engine,
-                    output_path=output_path,
-                    on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
-                    on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
-                )
+                if capture_mode == "system":
+                    from src.native_capture import NativeCaptureHelper
+                    rt = NativeCaptureHelper(
+                        mode="system",
+                        engine=engine,
+                        output_path=output_path,
+                        on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
+                        on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
+                    )
+                else:
+                    # Default: mic mode — existing sounddevice path unchanged
+                    from src.realtime import RealtimeTranscriber
+                    rt = RealtimeTranscriber(
+                        engine=engine,
+                        output_path=output_path,
+                        on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
+                        on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
+                    )
                 rt.start()
                 # Race: stop_realtime() may have cleared self._realtime while
                 # models were loading. If so, shut down immediately and return.
