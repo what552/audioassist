@@ -573,3 +573,114 @@ class TestStartCleanupOnError:
                 h.start()
 
         assert h._worker_thread is None
+
+
+# ── mix 模式：--mode 标志传递 ─────────────────────────────────────────────────
+
+class TestMixModeHelperCommand:
+    """NativeCaptureHelper 以 mix/system mode 启动时，正确将 --mode 传给子进程。"""
+
+    def _start_and_capture_cmd(self, mode: str) -> list:
+        h = NativeCaptureHelper(
+            mode=mode,
+            output_path="/tmp/capture_test.wav",
+            helper_path="/fake/helper",
+        )
+        captured_cmd: list = []
+        proc = _FakeProcess()
+
+        def fake_popen(cmd, **kw):
+            captured_cmd.extend(cmd)
+            return proc
+
+        with patch.object(NativeCaptureHelper, "_load_models"), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", return_value=b""), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("os.kill"), \
+             patch("subprocess.Popen", side_effect=fake_popen):
+            h.start()
+            h.stop()
+
+        return captured_cmd
+
+    def test_mix_mode_passes_mix_flag(self):
+        cmd = self._start_and_capture_cmd("mix")
+        assert "--mode" in cmd
+        idx = cmd.index("--mode")
+        assert cmd[idx + 1] == "mix"
+
+    def test_system_mode_passes_system_flag(self):
+        cmd = self._start_and_capture_cmd("system")
+        assert "--mode" in cmd
+        idx = cmd.index("--mode")
+        assert cmd[idx + 1] == "system"
+
+
+# ── app.py: open_privacy_settings ────────────────────────────────────────────
+
+class TestWarningEventHandling:
+    """warning イベントが正しく処理されることを確認する。"""
+
+    def _make_helper_with_cb(self):
+        errors = []
+        h = _helper(on_error=lambda m: errors.append(m))
+        return h, errors
+
+    def _fire_event(self, helper, event: dict):
+        """_handle_event を直接呼んでイベントを注入する。"""
+        helper._handle_event(event)
+
+    def test_mic_unavailable_fires_mic_degraded(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "mic_unavailable"})
+        assert len(errors) == 1
+        assert errors[0].startswith("mic_degraded:")
+
+    def test_mic_converter_failed_fires_mic_degraded(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "mic_converter_failed"})
+        assert errors[0].startswith("mic_degraded:")
+
+    def test_mic_capture_failed_fires_mic_degraded(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "mic_capture_failed"})
+        assert errors[0].startswith("mic_degraded:")
+
+    def test_unknown_warning_does_not_fire_on_error(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "some_other_warning"})
+        assert errors == []
+
+    def test_mic_degraded_message_contains_reason(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "mic_unavailable"})
+        assert "mic_unavailable" in errors[0]
+
+
+class TestOpenPrivacySettings:
+    def test_calls_open_with_screen_capture_url(self):
+        from app import API
+        api = API()
+        called_cmds: list = []
+
+        def fake_popen(cmd, **kw):
+            called_cmds.append(cmd)
+            return MagicMock()
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            result = api.open_privacy_settings()
+
+        assert result["status"] == "ok"
+        assert any("Privacy_ScreenCapture" in str(c) for c in called_cmds)
+
+    def test_returns_error_dict_on_failure(self):
+        from app import API
+        api = API()
+        with patch("subprocess.Popen", side_effect=OSError("no open binary")):
+            result = api.open_privacy_settings()
+
+        assert result["status"] == "error"
+        assert "message" in result

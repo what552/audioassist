@@ -309,6 +309,13 @@ class NativeCaptureHelper:
         elif ev == "permission_required":
             perm = event.get("permission", "unknown")
             self._on_error(f"permission_required:{perm}")
+        elif ev == "warning":
+            reason = event.get("reason", "")
+            logger.warning("Helper warning: reason=%s", reason)
+            # Mic-related warnings are non-fatal; notify the frontend so it can
+            # show a degradation notice while the session continues in system-only mode.
+            if reason in ("mic_unavailable", "mic_converter_failed", "mic_capture_failed"):
+                self._on_error(f"mic_degraded:{reason}")
         elif ev == "started":
             logger.info("Helper stream started: sr=%s ch=%s",
                         event.get("sample_rate"), event.get("channels"))

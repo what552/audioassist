@@ -1284,3 +1284,45 @@ select { font-family: inherit; }
 /* ── History session status badges (F3/F5) ───────────────────────────────── */
 .history-item-queued .history-item-name::before { content: '⏳ '; }
 .history-item-interrupted .history-item-name::before { content: '⚠ '; }
+
+/* ── Capture mode selector ───────────────────────────────────────────────── */
+#capture-mode-row {
+  display: flex;
+  gap: 4px;
+}
+.btn-mode {
+  flex: 1;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 2px;
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.btn-mode:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+.btn-mode.active {
+  background: var(--bg-active);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn-mode:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Capture permission notice ───────────────────────────────────────────── */
+#capture-perm-notice {
+  background: rgba(232, 160, 69, 0.08);
+  border: 1px solid rgba(232, 160, 69, 0.3);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--warn);
+  line-height: 1.4;
+}
+#capture-perm-notice p { margin-bottom: 4px; }

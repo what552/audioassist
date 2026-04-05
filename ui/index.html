@@ -30,6 +30,17 @@
       <div id="history-list"></div>
       <div id="history-footer">
         <button id="btn-upload" class="btn-sidebar">📁 Upload File</button>
+        <!-- Capture mode selector -->
+        <div id="capture-mode-row" aria-label="Capture mode">
+          <button class="btn-mode active" data-mode="mic"    title="Microphone">🎙 Mic</button>
+          <button class="btn-mode"        data-mode="system" title="System Audio">🔊 System</button>
+          <button class="btn-mode"        data-mode="mix"    title="Microphone + System">⊕ Mix</button>
+        </div>
+        <!-- Permission / preflight notice -->
+        <div id="capture-perm-notice" hidden>
+          <p id="capture-perm-text"></p>
+          <button id="btn-open-privacy" class="btn-link btn-sm" hidden>Open System Settings →</button>
+        </div>
         <button id="btn-start-recording" class="btn-sidebar btn-sidebar-record">🎙 Start Recording</button>
       </div>
     </nav>

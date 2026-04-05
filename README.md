@@ -215,7 +215,35 @@ If both models are already present (subsequent launches), the setup panel is ski
 
 ## Realtime transcription
 
-Click **🎙 Start Recording** in the history sidebar footer to start live microphone transcription.
+Click **🎙 Start Recording** in the history sidebar footer to start live transcription.
+
+### Capture modes
+
+Three recording modes are available via the segmented control above the **Start Recording** button:
+
+| Mode | Icon | Audio source | When to use |
+|------|------|-------------|-------------|
+| **Mic** | 🎙 | Microphone only | Default. Works on all macOS versions. Use for in-person meetings, dictation, or any scenario where only your voice needs to be captured. |
+| **System** | 🔊 | Mac's speaker output (system audio) | Online calls (Zoom, Meet, Teams), media playback, or any app-routed audio — without needing a physical speaker in the room. Requires macOS 13.0+ and Screen Recording permission. |
+| **Mix** | ⊕ | Microphone + system audio (mixed) | Online calls where you want to capture both your own voice and the remote participant. Requires macOS 13.0+ and Screen Recording permission. |
+
+#### macOS 13.0+ requirement
+
+System and Mix modes use **ScreenCaptureKit** (`SCStreamOutputType.audio`), which requires macOS 13.0 Ventura or later. Selecting System or Mix on an older OS shows an inline notice and blocks the session from starting.
+
+#### Screen Recording permission
+
+macOS requires the Screen Recording permission for System and Mix modes:
+
+1. Open **System Settings → Privacy & Security → Screen Recording**.
+2. Enable the toggle next to **AudioAssist** (or the terminal / IDE you use to run it).
+3. Relaunch AudioAssist if prompted.
+
+Alternatively, click **Open System Settings →** in the permission notice that appears inside the app.
+
+#### Microphone degradation (Mix mode)
+
+If the microphone is unavailable when Mix mode starts (no mic connected, or microphone permission denied), AudioAssist automatically falls back to system-audio-only capture and shows an inline notice without stopping the session.
 
 ### How it works
 

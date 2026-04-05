@@ -1,8 +1,8 @@
-// AudioAssistCaptureHelper — system-audio capture via ScreenCaptureKit.
+// AudioAssistCaptureHelper — system-audio (and mix) capture via ScreenCaptureKit.
 //
 // CLI contract:
 //   AudioAssistCaptureHelper stream \
-//     --mode system \
+//     --mode system|mix \
 //     --pcm-fifo /tmp/audioassist-<session>.fifo \
 //     --wav-out  /path/to/session/realtime_recording.wav \
 //     [--sample-rate 16000] [--channels 1]
@@ -16,6 +16,11 @@
 //   SIGUSR1 → pause  (stop writing to pipe/WAV, keep stream open)
 //   SIGUSR2 → resume
 //   SIGTERM / SIGINT → flush WAV, close everything, exit 0
+//
+// Mix mode adds AVAudioEngine mic capture.  Both streams are converted to
+// 16 kHz / mono / float32, then mixed sample-by-sample (clamped to [-1, 1]).
+// Mic capture failures are non-fatal: a "warning" event is emitted and the
+// session continues with system audio only.
 
 import Foundation
 import AVFoundation
@@ -101,17 +106,79 @@ private extension Data {
     }
 }
 
+// MARK: - Audio mixer (mix mode only)
+
+/// Ring-buffer mixer for system + microphone audio.
+/// Not thread-safe — must be accessed from a single serial queue (writeQueue).
+///
+/// Mixing contract:
+///   - Both streams accumulate independently in their own ring buffers.
+///   - `drain(chunkSize:)` removes exactly `chunkSize` samples from each buffer
+///     (zero-padding the shorter one) and returns the mixed chunk.  Samples
+///     beyond `chunkSize` are *kept* in each buffer for the next call.
+///   - This prevents either stream from forcing the other to skip ahead: if
+///     system audio delivers early, its excess stays buffered until mic catches up.
+///   - `drainRemaining()` mixes and flushes whatever is left (used on shutdown).
+final class AudioMixer {
+    private var systemBuf: [Float] = []
+    private var micBuf:    [Float] = []
+
+    var systemCount: Int { systemBuf.count }
+    var micCount:    Int { micBuf.count    }
+
+    func appendSystem(_ samples: [Float]) { systemBuf += samples }
+    func appendMic(_ samples: [Float])    { micBuf    += samples }
+
+    /// Drain exactly `chunkSize` aligned samples.
+    /// Returns nil when neither buffer has reached `chunkSize` yet.
+    /// The shorter buffer is zero-padded; neither buffer is over-drained.
+    func drain(chunkSize: Int = 512) -> [Float]? {
+        let maxAvailable = max(systemBuf.count, micBuf.count)
+        guard maxAvailable >= chunkSize else { return nil }
+
+        var mixed = [Float](repeating: 0, count: chunkSize)
+        for i in 0..<chunkSize {
+            let s: Float = i < systemBuf.count ? systemBuf[i] : 0.0
+            let m: Float = i < micBuf.count    ? micBuf[i]    : 0.0
+            mixed[i] = max(-1.0, min(1.0, s + m))
+        }
+        // Remove at most chunkSize samples from each buffer independently
+        let sysRemove = min(chunkSize, systemBuf.count)
+        if sysRemove > 0 { systemBuf.removeFirst(sysRemove) }
+        let micRemove = min(chunkSize, micBuf.count)
+        if micRemove > 0 { micBuf.removeFirst(micRemove) }
+
+        return mixed
+    }
+
+    /// Drain any leftover samples after the main loop (shutdown flush).
+    /// Zero-pads the shorter buffer.  Returns nil if both buffers are empty.
+    func drainRemaining() -> [Float]? {
+        let count = max(systemBuf.count, micBuf.count)
+        guard count > 0 else { return nil }
+        var mixed = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            let s: Float = i < systemBuf.count ? systemBuf[i] : 0.0
+            let m: Float = i < micBuf.count    ? micBuf[i]    : 0.0
+            mixed[i] = max(-1.0, min(1.0, s + m))
+        }
+        systemBuf.removeAll(keepingCapacity: true)
+        micBuf.removeAll(keepingCapacity: true)
+        return mixed
+    }
+}
+
 // MARK: - Audio processor / SCStream delegate
 
 final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
     // Configuration
     let targetSampleRate: Double
     let wavWriter: WAVWriter?
+    let mode: String
 
     // FIFO file descriptor (opened asynchronously)
     private var fifoFD: Int32 = -1
     private let fifoPath: String
-    private let fifoQueue = DispatchQueue(label: "audio.fifo")
     private var fifoReady = false
 
     // State (guarded by stateQueue)
@@ -123,22 +190,27 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
     func setPaused(_ v: Bool)  { stateQueue.async { self._paused  = v } }
     func setStopped(_ v: Bool) { stateQueue.async { self._stopped = v } }
 
-    // Audio converter (created once on first buffer)
+    // SCStream audio converter (lazily created on first buffer)
     private var converter: AVAudioConverter?
     private var srcFormat: AVAudioFormat?
     let dstFormat: AVAudioFormat
+
+    // Mix mode
+    private var mixBuffer: AudioMixer?
+    private var micEngine: AVAudioEngine?
 
     // Stats
     private var _droppedFrames = 0
     var droppedFrames: Int { stateQueue.sync { _droppedFrames } }
 
-    // Write queue (serial — prevents concurrent WAV / FIFO writes)
+    // Write queue — serialises all WAV / FIFO / mixer operations
     private let writeQueue = DispatchQueue(label: "audio.write", qos: .userInitiated)
 
-    init(targetSampleRate: Int, wavWriter: WAVWriter?, fifoPath: String) {
+    init(targetSampleRate: Int, wavWriter: WAVWriter?, fifoPath: String, mode: String) {
         self.targetSampleRate = Double(targetSampleRate)
         self.wavWriter = wavWriter
         self.fifoPath  = fifoPath
+        self.mode      = mode
         self.dstFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: Double(targetSampleRate),
@@ -147,12 +219,15 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
         )!
         super.init()
 
+        if mode == "mix" {
+            mixBuffer = AudioMixer()
+        }
+
         // Open FIFO write-end in background (blocks until Python reader connects)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             let fd = Darwin.open(fifoPath, O_WRONLY)
             if fd >= 0 {
-                // Non-blocking writes so audio callbacks never stall
                 let flags = fcntl(fd, F_GETFL)
                 _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
                 self.stateQueue.async { self.fifoFD = fd; self.fifoReady = true }
@@ -161,17 +236,21 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
                 fputs("warning: could not open fifo \(fifoPath)\n", stderr)
             }
         }
+
+        // Mix mode: start mic capture immediately so it's ready alongside SCStream
+        if mode == "mix" {
+            startMicCapture()
+        }
     }
 
     // MARK: SCStreamDelegate
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         emit(["event": "error", "message": error.localizedDescription])
-        // Signal the main thread to begin shutdown so the process doesn't hang
         onFatalError?(error.localizedDescription)
     }
 
-    /// Called when the stream stops unexpectedly; injected after stopSemaphore is created.
+    /// Injected after stopSemaphore is created so unexpected stream stops trigger shutdown.
     var onFatalError: ((String) -> Void)?
 
     // MARK: SCStreamOutput
@@ -182,15 +261,14 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
         of outputType: SCStreamOutputType
     ) {
         guard outputType == .audio, !paused, !stopped else { return }
-        processBuffer(sampleBuffer)
+        processSystemBuffer(sampleBuffer)
     }
 
-    // MARK: - Audio processing
+    // MARK: - System audio processing (SCStream → convert → write/mix)
 
-    private func processBuffer(_ sb: CMSampleBuffer) {
+    private func processSystemBuffer(_ sb: CMSampleBuffer) {
         let numFrames = CMSampleBufferGetNumSamples(sb)
         guard numFrames > 0 else { return }
-
         guard let fmtDesc = CMSampleBufferGetFormatDescription(sb) else { return }
 
         // Lazily create the converter from the actual input format
@@ -198,14 +276,15 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
             guard let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(fmtDesc) else { return }
             var asbd = asbdPtr.pointee
             guard let inFmt = AVAudioFormat(streamDescription: &asbd) else { return }
-            srcFormat  = inFmt
-            converter  = AVAudioConverter(from: inFmt, to: dstFormat)
+            srcFormat = inFmt
+            converter = AVAudioConverter(from: inFmt, to: dstFormat)
         }
         guard let conv = converter, let inFmt = srcFormat else { return }
 
         // Copy CMSampleBuffer audio into AVAudioPCMBuffer
-        guard let inputBuf = copyToAVAudioPCMBuffer(sb, format: inFmt, frameCount: AVAudioFrameCount(numFrames))
-        else { return }
+        guard let inputBuf = copyToAVAudioPCMBuffer(
+            sb, format: inFmt, frameCount: AVAudioFrameCount(numFrames)
+        ) else { return }
 
         // Calculate output capacity
         let ratio = dstFormat.sampleRate / inFmt.sampleRate
@@ -226,29 +305,118 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         guard convError == nil, let floatData = outputBuf.floatChannelData?[0] else { return }
         let frames = Int(outputBuf.frameLength)
+        guard frames > 0 else { return }
 
-        // Write on serial queue to protect WAV writer and FIFO handle
-        let pcmData = Data(bytes: floatData, count: frames * MemoryLayout<Float>.size)
+        // Copy into a Swift array so the closure outlives the buffer
+        let samples = Array(UnsafeBufferPointer(start: floatData, count: frames))
+
         writeQueue.async { [weak self] in
             guard let self = self, !self.stopped else { return }
+            if let mixer = self.mixBuffer {
+                mixer.appendSystem(samples)
+                self.tryFlushMix()
+            } else {
+                self.writeSamples(samples)
+            }
+        }
+    }
 
-            // FIFO write (non-blocking; drop if full)
-            let fd = self.stateQueue.sync { self.fifoFD }
+    // MARK: - Mix mode: microphone capture via AVAudioEngine
+
+    private func startMicCapture() {
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        guard inputFormat.sampleRate > 0 else {
+            fputs("warning: no microphone available (sampleRate = 0)\n", stderr)
+            emit(["event": "warning", "reason": "mic_unavailable"])
+            return
+        }
+
+        guard let conv = AVAudioConverter(from: inputFormat, to: dstFormat) else {
+            fputs("warning: could not create mic audio converter\n", stderr)
+            emit(["event": "warning", "reason": "mic_converter_failed"])
+            return
+        }
+
+        // Capture a local copy for the tap closure (avoids retaining self strongly)
+        let dstFmt = dstFormat
+
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+            guard let self = self, !self.paused, !self.stopped else { return }
+            let ratio = dstFmt.sampleRate / inputFormat.sampleRate
+            let outCap = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 128
+            guard let outBuf = AVAudioPCMBuffer(pcmFormat: dstFmt, frameCapacity: outCap) else { return }
+            var provideOnce = false
+            _ = conv.convert(to: outBuf, error: nil) { _, status in
+                if !provideOnce { provideOnce = true; status.pointee = .haveData; return buffer }
+                status.pointee = .noDataNow; return nil
+            }
+            guard let floats = outBuf.floatChannelData?[0], outBuf.frameLength > 0 else { return }
+            let samples = Array(UnsafeBufferPointer(start: floats, count: Int(outBuf.frameLength)))
+            self.writeQueue.async { [weak self] in
+                guard let self = self, !self.stopped, let mb = self.mixBuffer else { return }
+                mb.appendMic(samples)
+                self.tryFlushMix()
+            }
+        }
+
+        do {
+            try engine.start()
+            micEngine = engine
+            fputs("debug: mic capture started (mix mode)\n", stderr)
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            fputs("warning: mic capture start failed: \(error.localizedDescription)\n", stderr)
+            emit(["event": "warning", "reason": "mic_capture_failed",
+                  "message": error.localizedDescription])
+        }
+    }
+
+    private func stopMicEngine() {
+        guard let engine = micEngine else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        micEngine = nil
+        fputs("debug: mic engine stopped\n", stderr)
+    }
+
+    // MARK: - Mix flush (called on writeQueue)
+
+    /// Drain all complete 512-sample chunks and write them.
+    /// Each drain() call removes exactly 512 samples from each buffer independently
+    /// (zero-padding the shorter one); excess samples stay for the next flush.
+    private func tryFlushMix() {
+        guard let mixer = mixBuffer else { return }
+        while let chunk = mixer.drain() {
+            writeSamples(chunk)
+        }
+    }
+
+    // MARK: - Common write path (called on writeQueue)
+
+    private func writeSamples(_ samples: [Float]) {
+        let byteCount = samples.count * MemoryLayout<Float>.size
+        samples.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return }
+
+            // FIFO write (non-blocking; drop frame if buffer full)
+            let fd = stateQueue.sync { fifoFD }
             if fd >= 0 {
-                let written = pcmData.withUnsafeBytes { ptr -> Int in
-                    Darwin.write(fd, ptr.baseAddress!, pcmData.count)
-                }
+                let written = Darwin.write(fd, base, byteCount)
                 if written < 0 && errno != EAGAIN && errno != EWOULDBLOCK {
-                    self.stateQueue.async { self._droppedFrames += 1 }
+                    stateQueue.async { self._droppedFrames += 1 }
                 }
             }
 
             // WAV write (int16)
-            self.wavWriter?.write(floats: floatData, count: frames)
+            wavWriter?.write(floats: base, count: samples.count)
         }
     }
 
-    /// Copy audio data from CMSampleBuffer into a freshly-allocated AVAudioPCMBuffer.
+    // MARK: - CMSampleBuffer → AVAudioPCMBuffer
+
     private func copyToAVAudioPCMBuffer(
         _ sb: CMSampleBuffer,
         format: AVAudioFormat,
@@ -257,7 +425,6 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
         guard let dst = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
         dst.frameLength = frameCount
 
-        // Get AudioBufferList size needed
         var ablSize = 0
         CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
             sb,
@@ -282,16 +449,13 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
             blockBufferOut: &blockBuf
         ) == noErr else { return nil }
 
-        // Copy channel data into the destination PCM buffer
         let ablPtr = UnsafeMutableAudioBufferListPointer(abl)
         if format.isInterleaved {
-            // Single buffer, all channels interleaved
             if ablPtr.count >= 1, let src = ablPtr[0].mData,
                let dstPtr = dst.floatChannelData?[0] {
                 memcpy(dstPtr, src, Int(ablPtr[0].mDataByteSize))
             }
         } else {
-            // Non-interleaved: one buffer per channel
             for ch in 0..<Int(format.channelCount) {
                 guard ch < ablPtr.count,
                       let src = ablPtr[ch].mData,
@@ -303,6 +467,18 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func closeFIFO() {
+        // Stop mic engine first so its tap no longer posts to writeQueue
+        stopMicEngine()
+
+        // Drain any remaining mixed samples (chunks first, then partial tail)
+        writeQueue.sync {
+            if let mixer = self.mixBuffer {
+                while let chunk = mixer.drain() { self.writeSamples(chunk) }
+                if let tail = mixer.drainRemaining() { self.writeSamples(tail) }
+            }
+        }
+
+        // Close FIFO fd
         stateQueue.sync {
             if fifoFD >= 0 {
                 Darwin.close(fifoFD)
@@ -317,7 +493,7 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
 private func parseArgs() -> (mode: String, pcmFifo: String, wavOut: String, sampleRate: Int) {
     var args = Array(CommandLine.arguments.dropFirst())
     guard args.first == "stream" else {
-        fputs("Usage: AudioAssistCaptureHelper stream --mode system --pcm-fifo <path> --wav-out <path>\n", stderr)
+        fputs("Usage: AudioAssistCaptureHelper stream --mode system|mix --pcm-fifo <path> --wav-out <path>\n", stderr)
         exit(1)
     }
     args.removeFirst()
@@ -361,8 +537,13 @@ guard let wavWriter = WAVWriter(path: wavOut, sampleRate: UInt32(sampleRate)) el
     exit(1)
 }
 
-// Audio processor (opens FIFO async)
-let processor = AudioProcessor(targetSampleRate: sampleRate, wavWriter: wavWriter, fifoPath: pcmFifo)
+// Audio processor — opens FIFO asynchronously; starts mic if mode == "mix"
+let processor = AudioProcessor(
+    targetSampleRate: sampleRate,
+    wavWriter: wavWriter,
+    fifoPath: pcmFifo,
+    mode: mode
+)
 
 // Get shareable content and start SCStream
 let startSemaphore = DispatchSemaphore(value: 0)
@@ -388,19 +569,21 @@ SCShareableContent.getWithCompletionHandler { content, error in
     config.capturesAudio = true
     config.excludesCurrentProcessAudio = true
 
-    // Configure output format — sampleRate/channelCount available in macOS 13+
+    // macOS 13+ direct format configuration
     config.sampleRate = sampleRate
     config.channelCount = 1
 
-    // Minimal video params (SCStream requires them even for audio-only)
+    // Minimal video params (SCStream requires even for audio-only)
     config.width = 2
     config.height = 2
     config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
 
     let s = SCStream(filter: filter, configuration: config, delegate: processor)
     do {
-        try s.addStreamOutput(processor, type: .audio,
-                              sampleHandlerQueue: DispatchQueue(label: "audio.capture", qos: .userInitiated))
+        try s.addStreamOutput(
+            processor, type: .audio,
+            sampleHandlerQueue: DispatchQueue(label: "audio.capture", qos: .userInitiated)
+        )
         try s.startCapture()
         captureStream = s
     } catch {
@@ -419,7 +602,7 @@ if let err = startErrorMessage {
 emit(["event": "started", "sample_rate": sampleRate, "channels": 1, "mode": mode])
 
 // Signal handling (all on a background queue so main thread can block)
-let sigQueue = DispatchQueue(label: "signal.q")
+let sigQueue     = DispatchQueue(label: "signal.q")
 let stopSemaphore = DispatchSemaphore(value: 0)
 
 // Wire up fatal-error callback so an unexpected SCStream stop signals shutdown
