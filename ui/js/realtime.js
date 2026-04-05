@@ -162,6 +162,14 @@ const Realtime = (() => {
   }
 
   function onError(message) {
+    // Non-fatal: mic degradation in mix mode — show an inline notice but keep
+    // recording; the session continues in system-audio-only mode.
+    if (typeof message === 'string' && message.startsWith('mic_degraded:')) {
+      _showPermNotice({ reason: 'mic_capture_failed' });
+      return;
+    }
+
+    // Fatal errors: reset the recording state
     _recording = false;
     _setLoading(false);
     _disableModeButtons(false);

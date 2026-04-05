@@ -621,6 +621,45 @@ class TestMixModeHelperCommand:
 
 # ── app.py: open_privacy_settings ────────────────────────────────────────────
 
+class TestWarningEventHandling:
+    """warning イベントが正しく処理されることを確認する。"""
+
+    def _make_helper_with_cb(self):
+        errors = []
+        h = _helper(on_error=lambda m: errors.append(m))
+        return h, errors
+
+    def _fire_event(self, helper, event: dict):
+        """_handle_event を直接呼んでイベントを注入する。"""
+        helper._handle_event(event)
+
+    def test_mic_unavailable_fires_mic_degraded(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "mic_unavailable"})
+        assert len(errors) == 1
+        assert errors[0].startswith("mic_degraded:")
+
+    def test_mic_converter_failed_fires_mic_degraded(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "mic_converter_failed"})
+        assert errors[0].startswith("mic_degraded:")
+
+    def test_mic_capture_failed_fires_mic_degraded(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "mic_capture_failed"})
+        assert errors[0].startswith("mic_degraded:")
+
+    def test_unknown_warning_does_not_fire_on_error(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "some_other_warning"})
+        assert errors == []
+
+    def test_mic_degraded_message_contains_reason(self):
+        h, errors = self._make_helper_with_cb()
+        self._fire_event(h, {"event": "warning", "reason": "mic_unavailable"})
+        assert "mic_unavailable" in errors[0]
+
+
 class TestOpenPrivacySettings:
     def test_calls_open_with_screen_capture_url(self):
         from app import API

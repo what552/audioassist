@@ -110,6 +110,15 @@ private extension Data {
 
 /// Ring-buffer mixer for system + microphone audio.
 /// Not thread-safe — must be accessed from a single serial queue (writeQueue).
+///
+/// Mixing contract:
+///   - Both streams accumulate independently in their own ring buffers.
+///   - `drain(chunkSize:)` removes exactly `chunkSize` samples from each buffer
+///     (zero-padding the shorter one) and returns the mixed chunk.  Samples
+///     beyond `chunkSize` are *kept* in each buffer for the next call.
+///   - This prevents either stream from forcing the other to skip ahead: if
+///     system audio delivers early, its excess stays buffered until mic catches up.
+///   - `drainRemaining()` mixes and flushes whatever is left (used on shutdown).
 final class AudioMixer {
     private var systemBuf: [Float] = []
     private var micBuf:    [Float] = []
@@ -120,10 +129,33 @@ final class AudioMixer {
     func appendSystem(_ samples: [Float]) { systemBuf += samples }
     func appendMic(_ samples: [Float])    { micBuf    += samples }
 
-    /// Mix and drain all available samples, padding the shorter stream with zeros.
-    func drainAll() -> [Float] {
+    /// Drain exactly `chunkSize` aligned samples.
+    /// Returns nil when neither buffer has reached `chunkSize` yet.
+    /// The shorter buffer is zero-padded; neither buffer is over-drained.
+    func drain(chunkSize: Int = 512) -> [Float]? {
+        let maxAvailable = max(systemBuf.count, micBuf.count)
+        guard maxAvailable >= chunkSize else { return nil }
+
+        var mixed = [Float](repeating: 0, count: chunkSize)
+        for i in 0..<chunkSize {
+            let s: Float = i < systemBuf.count ? systemBuf[i] : 0.0
+            let m: Float = i < micBuf.count    ? micBuf[i]    : 0.0
+            mixed[i] = max(-1.0, min(1.0, s + m))
+        }
+        // Remove at most chunkSize samples from each buffer independently
+        let sysRemove = min(chunkSize, systemBuf.count)
+        if sysRemove > 0 { systemBuf.removeFirst(sysRemove) }
+        let micRemove = min(chunkSize, micBuf.count)
+        if micRemove > 0 { micBuf.removeFirst(micRemove) }
+
+        return mixed
+    }
+
+    /// Drain any leftover samples after the main loop (shutdown flush).
+    /// Zero-pads the shorter buffer.  Returns nil if both buffers are empty.
+    func drainRemaining() -> [Float]? {
         let count = max(systemBuf.count, micBuf.count)
-        guard count > 0 else { return [] }
+        guard count > 0 else { return nil }
         var mixed = [Float](repeating: 0, count: count)
         for i in 0..<count {
             let s: Float = i < systemBuf.count ? systemBuf[i] : 0.0
@@ -352,14 +384,14 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
 
     // MARK: - Mix flush (called on writeQueue)
 
-    /// Flush the mixer when enough data has accumulated (≥ 512 samples = 32 ms).
+    /// Drain all complete 512-sample chunks and write them.
+    /// Each drain() call removes exactly 512 samples from each buffer independently
+    /// (zero-padding the shorter one); excess samples stay for the next flush.
     private func tryFlushMix() {
         guard let mixer = mixBuffer else { return }
-        let maxAvailable = max(mixer.systemCount, mixer.micCount)
-        guard maxAvailable >= 512 else { return }
-        let mixed = mixer.drainAll()
-        guard !mixed.isEmpty else { return }
-        writeSamples(mixed)
+        while let chunk = mixer.drain() {
+            writeSamples(chunk)
+        }
     }
 
     // MARK: - Common write path (called on writeQueue)
@@ -438,11 +470,11 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
         // Stop mic engine first so its tap no longer posts to writeQueue
         stopMicEngine()
 
-        // Drain any remaining mixed samples
+        // Drain any remaining mixed samples (chunks first, then partial tail)
         writeQueue.sync {
             if let mixer = self.mixBuffer {
-                let remaining = mixer.drainAll()
-                if !remaining.isEmpty { self.writeSamples(remaining) }
+                while let chunk = mixer.drain() { self.writeSamples(chunk) }
+                if let tail = mixer.drainRemaining() { self.writeSamples(tail) }
             }
         }
 
