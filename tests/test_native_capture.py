@@ -573,3 +573,75 @@ class TestStartCleanupOnError:
                 h.start()
 
         assert h._worker_thread is None
+
+
+# ── mix 模式：--mode 标志传递 ─────────────────────────────────────────────────
+
+class TestMixModeHelperCommand:
+    """NativeCaptureHelper 以 mix/system mode 启动时，正确将 --mode 传给子进程。"""
+
+    def _start_and_capture_cmd(self, mode: str) -> list:
+        h = NativeCaptureHelper(
+            mode=mode,
+            output_path="/tmp/capture_test.wav",
+            helper_path="/fake/helper",
+        )
+        captured_cmd: list = []
+        proc = _FakeProcess()
+
+        def fake_popen(cmd, **kw):
+            captured_cmd.extend(cmd)
+            return proc
+
+        with patch.object(NativeCaptureHelper, "_load_models"), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", return_value=b""), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("os.kill"), \
+             patch("subprocess.Popen", side_effect=fake_popen):
+            h.start()
+            h.stop()
+
+        return captured_cmd
+
+    def test_mix_mode_passes_mix_flag(self):
+        cmd = self._start_and_capture_cmd("mix")
+        assert "--mode" in cmd
+        idx = cmd.index("--mode")
+        assert cmd[idx + 1] == "mix"
+
+    def test_system_mode_passes_system_flag(self):
+        cmd = self._start_and_capture_cmd("system")
+        assert "--mode" in cmd
+        idx = cmd.index("--mode")
+        assert cmd[idx + 1] == "system"
+
+
+# ── app.py: open_privacy_settings ────────────────────────────────────────────
+
+class TestOpenPrivacySettings:
+    def test_calls_open_with_screen_capture_url(self):
+        from app import API
+        api = API()
+        called_cmds: list = []
+
+        def fake_popen(cmd, **kw):
+            called_cmds.append(cmd)
+            return MagicMock()
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            result = api.open_privacy_settings()
+
+        assert result["status"] == "ok"
+        assert any("Privacy_ScreenCapture" in str(c) for c in called_cmds)
+
+    def test_returns_error_dict_on_failure(self):
+        from app import API
+        api = API()
+        with patch("subprocess.Popen", side_effect=OSError("no open binary")):
+            result = api.open_privacy_settings()
+
+        assert result["status"] == "error"
+        assert "message" in result

@@ -731,6 +731,18 @@ class API:
 
         return result
 
+    def open_privacy_settings(self) -> dict:
+        """Open macOS System Settings → Privacy & Security → Screen Recording."""
+        try:
+            subprocess.Popen([
+                "open",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            ])
+            return {"status": "ok"}
+        except Exception as e:
+            logger.warning("open_privacy_settings failed: %s", e)
+            return {"status": "error", "message": str(e)}
+
     # ── Screen-sleep prevention (macOS caffeinate) ─────────────────────────────
 
     def _caffeinate_start(self) -> None:
