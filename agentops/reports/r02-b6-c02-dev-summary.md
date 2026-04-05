@@ -129,8 +129,23 @@ Swift build: `Build complete!` (macOS 13.0, release, arm64)
 
 ---
 
+---
+
+## Gate No-Go 修复（Gate Commit: 7e16724）
+
+| 问题 | 级别 | 修复 |
+|------|------|------|
+| mix 混音逻辑错误：`drainAll()` 强制清空双路，导致串行输出 | P1 | 改为 `drain(chunkSize: 512)` 分块截断，各路独立缓冲，多余样本保留到下次 flush |
+| README 缺三模式说明 | P1 | 新增 "Capture modes" 章节：模式表、macOS 13.0+ 门槛、Screen Recording 权限步骤、麦克风降级说明 |
+| 麦克风降级静默（mix 模式 mic 不可用时无前端提示） | P2 | `native_capture.py` 处理 `warning` 事件 → `_on_error("mic_degraded:*")`；`realtime.js` 中 `mic_degraded:*` 非致命，录音继续并展示 inline 提示 |
+
+新增测试 +5：`TestWarningEventHandling`（mic_unavailable/mic_converter_failed/mic_capture_failed/unknown_warning/reason_in_message），共 47 个测试全通过。
+
+---
+
 ## Commits
 
 | SHA | 说明 |
 |-----|------|
 | `3d9acf5` | `feat(r02-b6-c02)`: mix mode, UI capture mode selector, permission guidance |
+| `7e16724` | `fix(r02-b6-c02)`: Gate No-Go 修复（混音逻辑、README、mic 降级）|
