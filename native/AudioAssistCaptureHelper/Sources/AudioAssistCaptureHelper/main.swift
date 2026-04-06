@@ -190,9 +190,6 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
     func setPaused(_ v: Bool)  { stateQueue.async { self._paused  = v } }
     func setStopped(_ v: Bool) { stateQueue.async { self._stopped = v } }
 
-    // SCStream audio converter (lazily created on first buffer)
-    private var converter: AVAudioConverter?
-    private var srcFormat: AVAudioFormat?
     let dstFormat: AVAudioFormat
 
     // Mix mode
@@ -264,59 +261,88 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
         processSystemBuffer(sampleBuffer)
     }
 
-    // MARK: - System audio processing (SCStream → convert → write/mix)
+    // MARK: - System audio processing (SCStream → downsample → write/mix)
 
     private func processSystemBuffer(_ sb: CMSampleBuffer) {
         let numFrames = CMSampleBufferGetNumSamples(sb)
         guard numFrames > 0 else { return }
         guard let fmtDesc = CMSampleBufferGetFormatDescription(sb) else { return }
+        guard let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(fmtDesc) else { return }
+        let asbd = asbdPtr.pointee
+        let inSampleRate  = asbd.mSampleRate           // e.g. 48000
+        let numChannels   = Int(asbd.mChannelsPerFrame) // e.g. 2
+        let isFloat       = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        guard isFloat, numChannels >= 1 else { return }
 
-        // Lazily create the converter from the actual input format
-        if converter == nil {
-            guard let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(fmtDesc) else { return }
-            var asbd = asbdPtr.pointee
-            guard let inFmt = AVAudioFormat(streamDescription: &asbd) else { return }
-            srcFormat = inFmt
-            converter = AVAudioConverter(from: inFmt, to: dstFormat)
-        }
-        guard let conv = converter, let inFmt = srcFormat else { return }
+        // ── Extract raw Float32 samples from CMSampleBuffer ────────────────────
+        var ablSize = 0
+        CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sb, bufferListSizeNeededOut: &ablSize,
+            bufferListOut: nil, bufferListSize: 0,
+            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
+            flags: 0, blockBufferOut: nil)
+        guard ablSize > 0 else { return }
 
-        // Copy CMSampleBuffer audio into AVAudioPCMBuffer
-        guard let inputBuf = copyToAVAudioPCMBuffer(
-            sb, format: inFmt, frameCount: AVAudioFrameCount(numFrames)
-        ) else { return }
+        let ablMem = UnsafeMutableRawPointer.allocate(byteCount: ablSize, alignment: 16)
+        defer { ablMem.deallocate() }
+        let abl = ablMem.assumingMemoryBound(to: AudioBufferList.self)
+        var blockBuf: CMBlockBuffer?
+        guard CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sb, bufferListSizeNeededOut: nil,
+            bufferListOut: abl, bufferListSize: ablSize,
+            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            blockBufferOut: &blockBuf) == noErr else { return }
 
-        // Calculate output capacity
-        let ratio = dstFormat.sampleRate / inFmt.sampleRate
-        let outCapacity = AVAudioFrameCount(Double(numFrames) * ratio) + 128
-        guard let outputBuf = AVAudioPCMBuffer(pcmFormat: dstFormat, frameCapacity: outCapacity) else { return }
+        let ablPtr = UnsafeMutableAudioBufferListPointer(abl)
+        let isInterleaved = (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0
 
-        // Convert (sample-rate + channel reduction)
-        var convError: NSError?
-        var provided = false
-        _ = conv.convert(to: outputBuf, error: &convError) { _, outStatus in
-            if !provided {
-                provided = true
-                outStatus.pointee = .haveData
-                return inputBuf
+        // ── Mix channels → mono Float32 ─────────────────────────────────────────
+        var mono = [Float](repeating: 0, count: numFrames)
+        if isInterleaved {
+            // interleaved: [L0, R0, L1, R1, ...]
+            guard ablPtr.count >= 1, let src = ablPtr[0].mData else { return }
+            let ptr = src.assumingMemoryBound(to: Float.self)
+            let invN = Float(numChannels)
+            for i in 0..<numFrames {
+                var sum: Float = 0
+                for ch in 0..<numChannels { sum += ptr[i * numChannels + ch] }
+                mono[i] = sum / invN
             }
-            outStatus.pointee = .noDataNow
-            return nil
+        } else {
+            // non-interleaved: one AudioBuffer per channel
+            let chCount = min(numChannels, ablPtr.count)
+            let invN = Float(chCount)
+            for ch in 0..<chCount {
+                guard let src = ablPtr[ch].mData else { continue }
+                let ptr = src.assumingMemoryBound(to: Float.self)
+                for i in 0..<numFrames { mono[i] += ptr[i] / invN }
+            }
         }
-        guard convError == nil, let floatData = outputBuf.floatChannelData?[0] else { return }
-        let frames = Int(outputBuf.frameLength)
-        guard frames > 0 else { return }
 
-        // Copy into a Swift array so the closure outlives the buffer
-        let samples = Array(UnsafeBufferPointer(start: floatData, count: frames))
+        // ── Decimate inSampleRate → targetSampleRate ────────────────────────────
+        // Simple integer-ratio decimation (48000/16000 = 3, 44100/16000 ≈ 3).
+        // Anti-aliasing is omitted; speech energy is well below the 8 kHz Nyquist.
+        let factor = max(1, Int(round(inSampleRate / targetSampleRate)))
+        let decimated: [Float]
+        if factor == 1 {
+            decimated = mono
+        } else {
+            var d = [Float]()
+            d.reserveCapacity(numFrames / factor + 1)
+            var i = 0
+            while i < numFrames { d.append(mono[i]); i += factor }
+            decimated = d
+        }
+        guard !decimated.isEmpty else { return }
 
         writeQueue.async { [weak self] in
             guard let self = self, !self.stopped else { return }
             if let mixer = self.mixBuffer {
-                mixer.appendSystem(samples)
+                mixer.appendSystem(decimated)
                 self.tryFlushMix()
             } else {
-                self.writeSamples(samples)
+                self.writeSamples(decimated)
             }
         }
     }
@@ -413,57 +439,6 @@ final class AudioProcessor: NSObject, SCStreamOutput, SCStreamDelegate {
             // WAV write (int16)
             wavWriter?.write(floats: base, count: samples.count)
         }
-    }
-
-    // MARK: - CMSampleBuffer → AVAudioPCMBuffer
-
-    private func copyToAVAudioPCMBuffer(
-        _ sb: CMSampleBuffer,
-        format: AVAudioFormat,
-        frameCount: AVAudioFrameCount
-    ) -> AVAudioPCMBuffer? {
-        guard let dst = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
-        dst.frameLength = frameCount
-
-        var ablSize = 0
-        CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sb,
-            bufferListSizeNeededOut: &ablSize,
-            bufferListOut: nil, bufferListSize: 0,
-            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
-            flags: 0, blockBufferOut: nil
-        )
-        guard ablSize > 0 else { return nil }
-
-        let ablMem = UnsafeMutableRawPointer.allocate(byteCount: ablSize, alignment: 16)
-        defer { ablMem.deallocate() }
-        let abl = ablMem.assumingMemoryBound(to: AudioBufferList.self)
-
-        var blockBuf: CMBlockBuffer?
-        guard CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sb,
-            bufferListSizeNeededOut: nil,
-            bufferListOut: abl, bufferListSize: ablSize,
-            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
-            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
-            blockBufferOut: &blockBuf
-        ) == noErr else { return nil }
-
-        let ablPtr = UnsafeMutableAudioBufferListPointer(abl)
-        if format.isInterleaved {
-            if ablPtr.count >= 1, let src = ablPtr[0].mData,
-               let dstPtr = dst.floatChannelData?[0] {
-                memcpy(dstPtr, src, Int(ablPtr[0].mDataByteSize))
-            }
-        } else {
-            for ch in 0..<Int(format.channelCount) {
-                guard ch < ablPtr.count,
-                      let src = ablPtr[ch].mData,
-                      let dstPtr = dst.floatChannelData?[ch] else { continue }
-                memcpy(dstPtr, src, Int(ablPtr[ch].mDataByteSize))
-            }
-        }
-        return dst
     }
 
     func closeFIFO() {
