@@ -130,10 +130,16 @@ final class AudioMixer {
     func appendMic(_ samples: [Float])    { micBuf    += samples }
 
     /// Drain exactly `chunkSize` aligned samples.
-    /// Returns nil when neither buffer has reached `chunkSize` yet.
-    /// The shorter buffer is zero-padded; neither buffer is over-drained.
-    func drain(chunkSize: Int = 512) -> [Float]? {
+    /// Waits for BOTH buffers to reach `chunkSize` before draining so system and
+    /// mic audio stay time-aligned and neither stream is doubled.
+    /// Safety valve: if one buffer grows beyond `overflowThreshold` (e.g. mic is
+    /// unavailable) we drain with zero-padding to avoid unbounded buffering.
+    func drain(chunkSize: Int = 512, overflowThreshold: Int = 4800) -> [Float]? {
+        let minAvailable = min(systemBuf.count, micBuf.count)
         let maxAvailable = max(systemBuf.count, micBuf.count)
+        // Normal path: both streams have enough samples.
+        // Overflow path: one stream is far ahead (e.g. mic degraded) — drain anyway.
+        guard minAvailable >= chunkSize || maxAvailable >= overflowThreshold else { return nil }
         guard maxAvailable >= chunkSize else { return nil }
 
         var mixed = [Float](repeating: 0, count: chunkSize)
