@@ -178,6 +178,13 @@ class NativeCaptureHelper:
         )
         self._event_thread.start()
 
+        # Stderr drain thread — prevents helper from blocking when stderr pipe fills.
+        threading.Thread(
+            target=self._stderr_reader,
+            daemon=True,
+            name="native-stderr-reader",
+        ).start()
+
         # PCM reader thread (reads FIFO, runs VAD + ASR)
         self._pcm_thread = threading.Thread(
             target=self._pcm_reader,
@@ -299,6 +306,19 @@ class NativeCaptureHelper:
                 self._handle_event(event)
         except Exception:
             logger.exception("NativeCaptureHelper event reader error")
+
+    def _stderr_reader(self) -> None:
+        """Drain helper stderr so the pipe never fills and blocks the helper."""
+        proc = self._process
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            for line in proc.stderr:
+                line = line.rstrip()
+                if line:
+                    logger.debug("helper stderr: %s", line)
+        except Exception:
+            pass
 
     def _handle_event(self, event: dict) -> None:
         ev = event.get("event", "")
