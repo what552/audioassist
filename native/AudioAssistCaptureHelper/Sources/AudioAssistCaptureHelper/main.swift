@@ -569,8 +569,11 @@ SCShareableContent.getWithCompletionHandler { content, error in
     config.capturesAudio = true
     config.excludesCurrentProcessAudio = true
 
-    // macOS 13+ direct format configuration
-    config.sampleRate = sampleRate
+    // Let SCKit deliver at its native rate (typically 48 kHz).
+    // Setting sampleRate=16000 can cause SCKit to label the format descriptor as
+    // 16 kHz while the actual samples remain at 48 kHz; the lazy AVAudioConverter
+    // then treats it as a pass-through and writes 48 kHz data into a 16 kHz WAV,
+    // making playback 3× too slow.  We rely on AVAudioConverter for downsampling.
     config.channelCount = 1
 
     // Minimal video params (SCStream requires even for audio-only)
