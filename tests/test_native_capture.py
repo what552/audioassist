@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import io
 import os
+import queue
 import signal
+import threading
 import time
 from unittest.mock import MagicMock, patch, call
 
@@ -68,6 +70,9 @@ def _start_mocked(helper, proc, *, kill_fn=None):
     stack.enter_context(patch("os.read", return_value=b""))  # PCM EOF immediately
     stack.enter_context(patch("os.close"))
     stack.enter_context(patch("fcntl.fcntl", return_value=0))
+    # Report fd as immediately ready so _pcm_reader's select() doesn't block on the fake fd
+    stack.enter_context(patch("select.select",
+                              side_effect=lambda rlist, *a, **k: (rlist, [], [])))
     if kill_fn:
         stack.enter_context(patch("os.kill", side_effect=kill_fn))
     else:
@@ -105,6 +110,7 @@ class TestStart:
              patch("os.read", return_value=b""), \
              patch("os.close"), \
              patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
              patch("os.kill"), \
              patch.object(NativeCaptureHelper, "_load_models"):
             h.start()
@@ -128,6 +134,7 @@ class TestStart:
              patch("os.read", return_value=b""), \
              patch("os.close"), \
              patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
              patch("os.kill"), \
              patch.object(NativeCaptureHelper, "_load_models"):
             h.start()
@@ -193,6 +200,7 @@ class TestStop:
              patch("os.read", return_value=b""), \
              patch("os.close"), \
              patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
              patch("os.kill"), \
              patch("os.path.exists", return_value=True), \
              patch("os.unlink", side_effect=lambda p: unlinked.append(p)), \
@@ -599,6 +607,7 @@ class TestMixModeHelperCommand:
              patch("os.read", return_value=b""), \
              patch("os.close"), \
              patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
              patch("os.kill"), \
              patch("subprocess.Popen", side_effect=fake_popen):
             h.start()
@@ -658,6 +667,318 @@ class TestWarningEventHandling:
         h, errors = self._make_helper_with_cb()
         self._fire_event(h, {"event": "warning", "reason": "mic_unavailable"})
         assert "mic_unavailable" in errors[0]
+
+
+# ── stop() drain 时序 ─────────────────────────────────────────────────────────
+
+class TestStopDrainTiming:
+    """Verify that stop() drains the FIFO tail before flushing speech buffer."""
+
+    def test_pcm_reader_exits_on_eof_not_running_flag(self):
+        """_pcm_reader must exit when os.read returns b'' (EOF), not on _running."""
+        import numpy as np
+
+        h = _helper()
+        # Simulate two full chunks then EOF
+        chunk_bytes = 512 * 4
+        fake_chunk = (np.zeros(512, dtype=np.float32)).tobytes()
+        read_sequence = [fake_chunk, fake_chunk, b""]
+        read_iter = iter(read_sequence)
+
+        proc = _FakeProcess()
+
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", side_effect=lambda fd, n: next(read_iter)), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
+             patch("os.kill"), \
+             patch.object(NativeCaptureHelper, "_load_models"), \
+             patch.object(NativeCaptureHelper, "_process_audio_chunk") as mock_proc:
+            h.start()
+            # Give pcm thread time to drain
+            time.sleep(0.2)
+            h.stop()
+
+        # Both non-empty chunks should have been processed
+        assert mock_proc.call_count == 2
+
+    def test_stop_joins_pcm_thread_before_flush(self):
+        """stop() must join _pcm_thread before flushing speech buffer."""
+        import numpy as np
+
+        h = _helper()
+        # Single shared timeline so we can compare relative ordering
+        timeline = []
+
+        original_flush = NativeCaptureHelper._flush_speech
+        original_join  = threading.Thread.join
+
+        def tracking_flush(self_inner):
+            timeline.append("flush")
+            original_flush(self_inner)
+
+        def tracking_join(t_self, timeout=None):
+            if "pcm" in (t_self.name or ""):
+                timeline.append("pcm_join")
+            original_join(t_self, timeout=timeout)
+
+        proc = _FakeProcess()
+
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", return_value=b""), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
+             patch("os.kill"), \
+             patch.object(NativeCaptureHelper, "_load_models"), \
+             patch.object(NativeCaptureHelper, "_flush_speech", tracking_flush), \
+             patch.object(threading.Thread, "join", tracking_join):
+            h.start()
+            time.sleep(0.05)  # let pcm thread reach EOF and exit
+            # Put enough chunks in speech buffer to survive MIN_SPEECH_CHUNKS check
+            h._speech_buffer = [np.zeros(512, dtype=np.float32)] * 10
+            h._in_speech = True
+            h.stop()
+
+        # pcm_join must appear in timeline before flush
+        assert "pcm_join" in timeline, "pcm_thread.join() was never called"
+        assert "flush" in timeline, "_flush_speech() was never called"
+        assert timeline.index("pcm_join") < timeline.index("flush"), (
+            f"Expected pcm_join before flush, got: {timeline}"
+        )
+
+    def test_sentinel_sent_after_flush(self):
+        """Sentinel (None) must be queued after speech buffer is flushed."""
+        import numpy as np
+
+        h = _helper()
+        queue_items = []
+        original_put = queue.Queue.put
+
+        def tracking_put(q_self, item):
+            queue_items.append(item)
+            original_put(q_self, item)
+
+        proc = _FakeProcess()
+
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", return_value=b""), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
+             patch("os.kill"), \
+             patch.object(NativeCaptureHelper, "_load_models"), \
+             patch.object(queue.Queue, "put", tracking_put):
+            h.start()
+            # Add enough chunks to pass MIN_SPEECH_CHUNKS check
+            h._speech_buffer = [np.zeros(512, dtype=np.float32)] * 10
+            h._in_speech = True
+            h.stop()
+
+        # A non-None item (the speech segment) must appear before the sentinel
+        non_sentinel = [i for i, v in enumerate(queue_items) if v is not None]
+        sentinel     = [i for i, v in enumerate(queue_items) if v is None]
+        assert sentinel, "Sentinel was never sent"
+        if non_sentinel:
+            assert non_sentinel[-1] < sentinel[0], (
+                "Sentinel must be sent after all speech segments"
+            )
+
+    def test_chunks_read_counter_updated(self):
+        """_chunks_read must reflect the number of full chunks processed."""
+        import numpy as np
+
+        h = _helper()
+        chunk_bytes = 512 * 4
+        fake_chunk = (np.zeros(512, dtype=np.float32)).tobytes()
+        read_sequence = [fake_chunk, fake_chunk, fake_chunk, b""]
+        read_iter = iter(read_sequence)
+
+        proc = _FakeProcess()
+
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", side_effect=lambda fd, n: next(read_iter, b"")), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
+             patch("os.kill"), \
+             patch.object(NativeCaptureHelper, "_load_models"), \
+             patch.object(NativeCaptureHelper, "_process_audio_chunk"):
+            h.start()
+            time.sleep(0.2)
+            h.stop()
+
+        assert h._chunks_read == 3
+
+    def test_stop_running_false_after_complete(self):
+        """_running must be False after stop() completes."""
+        h = _helper()
+        proc = _FakeProcess()
+        stack = _start_mocked(h, proc)
+        h.stop()
+        stack.__exit__(None, None, None)
+        assert h._running is False
+
+    def test_pcm_thread_join_timeout_skips_flush_and_drain(self):
+        """If pcm_thread is still alive after join timeout, stop() must NOT flush or send sentinel."""
+        import numpy as np
+
+        h = _helper()
+        flush_called = []
+        sentinel_sent = []
+
+        original_flush = NativeCaptureHelper._flush_speech
+        def tracking_flush(self_inner):
+            flush_called.append(True)
+            original_flush(self_inner)
+
+        original_put = queue.Queue.put
+        def tracking_put(q_self, item):
+            if item is None:
+                sentinel_sent.append(True)
+            original_put(q_self, item)
+
+        # Fake a pcm_thread that appears alive even after join (simulates timeout)
+        class _StuckThread:
+            name = "native-pcm-reader"
+            def join(self, timeout=None): pass
+            def is_alive(self): return True
+
+        proc = _FakeProcess()
+
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", return_value=b""), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
+             patch("os.kill"), \
+             patch.object(NativeCaptureHelper, "_load_models"), \
+             patch.object(NativeCaptureHelper, "_flush_speech", tracking_flush), \
+             patch.object(queue.Queue, "put", tracking_put):
+            h.start()
+            h._speech_buffer = [np.zeros(512, dtype=np.float32)] * 10
+            h._in_speech = True
+            # Swap in the stuck thread so stop() sees is_alive() == True
+            h._pcm_thread = _StuckThread()
+            h.stop()
+
+        assert flush_called == [], "flush must not run when pcm_thread is still alive (fatal path)"
+        # Best-effort sentinel IS sent so the worker can drain already-queued items
+        assert sentinel_sent == [True], "best-effort sentinel must be sent in fatal path"
+
+    def test_partial_tail_zero_padded(self):
+        """EOF with a partial buffer should zero-pad to CHUNK_SIZE and call _process_audio_chunk."""
+        import numpy as np
+
+        h = _helper()
+        # 100 bytes = 25 float32 samples (well under the 512-sample chunk)
+        partial = (np.zeros(25, dtype=np.float32)).tobytes()
+        read_iter = iter([partial, b""])  # partial bytes then EOF
+
+        proc = _FakeProcess()
+
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", side_effect=lambda fd, n: next(read_iter, b"")), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", side_effect=lambda rlist, *a, **k: (rlist, [], [])), \
+             patch("os.kill"), \
+             patch.object(NativeCaptureHelper, "_load_models"), \
+             patch.object(NativeCaptureHelper, "_process_audio_chunk") as mock_proc:
+            h.start()
+            time.sleep(0.2)
+            h.stop()
+
+        # Exactly one call for the zero-padded tail chunk
+        assert mock_proc.call_count == 1
+        # The chunk passed must be exactly CHUNK_SIZE samples
+        chunk_arg = mock_proc.call_args[0][0]
+        assert chunk_arg.shape == (512,), f"Expected (512,) got {chunk_arg.shape}"
+
+    def test_stop_event_exits_reader(self):
+        """Setting _stop_event causes _pcm_reader to exit within a few select timeouts."""
+        h = _helper()
+        proc = _FakeProcess()
+
+        # select never returns data — reader will loop checking _stop_event
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("os.mkfifo"), \
+             patch("os.open", return_value=5), \
+             patch("os.read", return_value=b""), \
+             patch("os.close"), \
+             patch("fcntl.fcntl", return_value=0), \
+             patch("select.select", return_value=([], [], [])), \
+             patch("os.kill"), \
+             patch.object(NativeCaptureHelper, "_load_models"):
+            h.start()
+            pcm_thread = h._pcm_thread
+            assert pcm_thread is not None
+
+            h._stop_event.set()
+            pcm_thread.join(timeout=1.0)
+
+        assert not pcm_thread.is_alive(), "pcm_thread should have exited after _stop_event was set"
+
+
+# ── MAX_SEGMENT_SECONDS 强制切段 ──────────────────────────────────────────────
+
+class TestMaxSegmentForceFlush:
+    """Tests for MAX_SEGMENT_SECONDS force-flush via real _process_audio_chunk.
+
+    torch is not installed in this test environment, so we inject a mock via
+    sys.modules so the `import torch` inside _process_audio_chunk resolves to
+    a MagicMock that always returns speech_prob=1.0 from the VAD.
+    """
+
+    def _make_mock_torch(self):
+        import sys
+        mock_torch = MagicMock()
+        mock_chunk_t = MagicMock()
+        mock_torch.from_numpy.return_value = mock_chunk_t
+        mock_chunk_t.float.return_value = mock_chunk_t
+        return mock_torch
+
+    def _run_chunks_until_flush(self, h, n_chunks):
+        import sys
+        import numpy as np
+        mock_torch = self._make_mock_torch()
+        h._transcribe_queue.put = MagicMock()
+        h._vad = MagicMock(return_value=MagicMock(item=lambda: 1.0))  # always speech
+        chunk = np.zeros(512, dtype=np.float32)
+        with patch.dict(sys.modules, {"torch": mock_torch}):
+            for _ in range(n_chunks):
+                h._process_audio_chunk(chunk)
+                if h._flush_count > 0:
+                    break
+
+    def test_force_flush_when_segment_exceeds_max(self):
+        """Continuous speech beyond MAX_SEGMENT_SECONDS triggers a force-flush."""
+        from src.native_capture import MAX_SEGMENT_SECONDS, SAMPLE_RATE, CHUNK_SIZE
+        h = _helper()
+        chunks_needed = (MAX_SEGMENT_SECONDS * SAMPLE_RATE) // CHUNK_SIZE + 2
+        self._run_chunks_until_flush(h, chunks_needed)
+        assert h._flush_count >= 1, "Force-flush did not trigger"
+
+    def test_force_flush_resets_speech_buffer(self):
+        """After a force-flush, speech buffer should be cleared."""
+        from src.native_capture import MAX_SEGMENT_SECONDS, SAMPLE_RATE, CHUNK_SIZE
+        h = _helper()
+        chunks_needed = (MAX_SEGMENT_SECONDS * SAMPLE_RATE) // CHUNK_SIZE + 2
+        self._run_chunks_until_flush(h, chunks_needed)
+        assert h._speech_buffer == [], "Speech buffer was not cleared after force-flush"
 
 
 class TestOpenPrivacySettings:
