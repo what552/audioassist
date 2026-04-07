@@ -132,6 +132,7 @@ const App = (() => {
         _setView('file-done');
         dom.refineHint.hidden = false;
         dom.refineHint.textContent = '正在进行高精度转写…';
+        dom.btnHighAccuracy.hidden = true;
         if (session._data) {
           _showFileDone(session);
         } else {
@@ -139,6 +140,7 @@ const App = (() => {
         }
       } else { // done
         _setView('file-done');
+        dom.btnHighAccuracy.hidden = !session.refineAvailable;
         if (session._data) {
           _showFileDone(session);
         } else {
@@ -192,6 +194,7 @@ const App = (() => {
     dom.progressPanel.hidden      = state !== 'transcribing';
     dom.errorPanel.hidden         = state !== 'error';
     dom.transcriptHeader.hidden   = state !== 'file-done';
+    dom.btnHighAccuracy.hidden    = true;  // controlled separately per render
     dom.refineHint.hidden         = true;  // controlled separately per render
     dom.transcriptList.hidden     = state !== 'file-done';
     dom.realtimePanel.hidden      =
@@ -277,7 +280,7 @@ const App = (() => {
         if (rtId) window.pywebview.api.delete_session(rtId).catch(() => {});
         _render();
       } else if (wavPath) {
-        (async () => { await _startTranscription(wavPath, rtName); })();
+        (async () => { await _startTranscription(wavPath, rtName, { refineAvailable: true }); })();
       } else {
         _render();
       }
@@ -374,7 +377,7 @@ const App = (() => {
     }
   }
 
-  async function _startTranscription(filePath, displayName) {
+  async function _startTranscription(filePath, displayName, opts = {}) {
     if (_activeRealtimeId !== null) {
       alert('A recording is in progress. Please finish it before uploading a file.');
       return;
@@ -389,6 +392,7 @@ const App = (() => {
       _sessions.set(job_id, {
         id: job_id, type: 'file', status: 'transcribing',
         filename, created_at: _now(), audioPath: filePath,
+        refineAvailable: opts.refineAvailable || false,
       });
       _selectedId = job_id;
       _setProgress(0, 'Starting…');
@@ -473,7 +477,7 @@ const App = (() => {
     if (!_sessions.has(jobId)) return;
     const s = _sessions.get(jobId);
     s._data = null;  // force JSON reload
-    _updateSession(jobId, { status: 'done' });
+    _updateSession(jobId, { status: 'done', refineAvailable: false });
   }
 
   function onTranscribeError(jobId, message) {
@@ -529,6 +533,7 @@ const App = (() => {
       btnRetry:           document.getElementById('btn-retry'),
       transcriptHeader:   document.getElementById('transcript-header'),
       transcriptMeta:     document.getElementById('transcript-meta'),
+      btnHighAccuracy:    document.getElementById('btn-high-accuracy'),
       refineHint:         document.getElementById('refine-hint'),
       transcriptList:     document.getElementById('transcript-list'),
       realtimePanel:      document.getElementById('realtime-panel'),
@@ -573,6 +578,20 @@ const App = (() => {
       e.preventDefault();
       if (!dom.playerBar.hidden) {
         if (dom.audioEl.paused) Player.play(); else Player.pause();
+      }
+    });
+
+    dom.btnHighAccuracy.addEventListener('click', async () => {
+      if (!_selectedId) return;
+      const s = _sessions.get(_selectedId);
+      if (!s || !s.refineAvailable) return;
+      dom.btnHighAccuracy.hidden = true;
+      _updateSession(_selectedId, { status: 'refining', refineAvailable: false });
+      try {
+        await window.pywebview.api.refine(_selectedId);
+      } catch (err) {
+        console.error('[App] refine error:', err);
+        _updateSession(_selectedId, { status: 'done' });
       }
     });
 

@@ -227,17 +227,13 @@ def _transcript_to_md(segments: list) -> str:
     return "\n".join(lines)
 
 
-# Maximum wall-clock seconds allowed for the background refine thread.
-# If exceeded, onTranscribeRefined is pushed immediately so the UI unblocks
-# and the user sees the realtime draft instead of spinning forever.
-REFINE_TIMEOUT = 1800  # 30 minutes
-
-
 class API:
     def __init__(self):
         self._realtime = None  # RealtimeTranscriber instance when active
         # Pre-collected realtime segments keyed by wav_path — consumed by transcribe()
         self._rt_segments: dict[str, list] = {}
+        # Options stored after Phase 1 (realtime), consumed by manual refine()
+        self._refine_options: dict = {}
         self._caffeinate_proc = None  # caffeinate subprocess (macOS only)
 
     # ── File selection ─────────────────────────────────────────────────────────
@@ -423,95 +419,21 @@ class API:
                 except Exception:
                     logger.warning("transcribe: failed to write WAV meta", exc_info=True)
 
-                # Notify frontend — include hasRefine flag so JS can enter
-                # the 'refining' status while the background re-transcription runs.
-                has_refine = bool(rt_segments)
+                # Store options for optional manual high-accuracy refine (realtime only).
+                if rt_segments:
+                    self._refine_options[job_id] = {
+                        "path": path, "s_dir": s_dir, "engine": engine,
+                        "model_id": model_id, "hf_token": hf_token,
+                        "num_speakers": num_speakers, "audio_copy": audio_copy,
+                        "json_path": json_path,
+                    }
+
+                # Notify frontend — hasRefine is always False; manual refine via refine().
+                has_refine = False
                 _push(
                     f"onTranscribeComplete({json.dumps(job_id)}, "
                     f"{json.dumps(json_path)}, {json.dumps(has_refine)})"
                 )
-
-                # Phase 2 (realtime only) — full ASR re-transcription in background.
-                # Runs silently; on success overwrites JSON and notifies JS.
-                if rt_segments:
-                    _ac = audio_copy  # capture for closure
-
-                    def _refine():
-                        # Guard events — ensure onTranscribeRefined is pushed
-                        # exactly once regardless of which path (success/timeout) wins.
-                        _succeeded = threading.Event()
-                        _timed_out = threading.Event()
-
-                        def _on_timeout():
-                            if not _succeeded.is_set():
-                                _timed_out.set()
-                                logger.warning(
-                                    "Refine ASR timed out after %ds for job %s; "
-                                    "falling back to realtime draft",
-                                    REFINE_TIMEOUT, job_id,
-                                )
-                                _push(f"onTranscribeRefined({json.dumps(job_id)})")
-
-                        timer = threading.Timer(REFINE_TIMEOUT, _on_timeout)
-                        timer.daemon = True
-                        timer.start()
-                        try:
-                            from src.pipeline import run as pipeline_run
-                            logger.info("Refine ASR started for job %s", job_id)
-                            lock = _get_transcript_lock(job_id)
-                            preserved_filename = None
-                            preserved_job_id = job_id
-                            if os.path.exists(json_path):
-                                with lock:
-                                    current = _read_json_file(json_path, {})
-                                if isinstance(current, dict):
-                                    preserved_filename = current.get("filename") or None
-                                    preserved_job_id = current.get("job_id") or job_id
-                            refined_json, _ = pipeline_run(
-                                audio_path=path,
-                                output_dir=s_dir,
-                                hf_token=hf_token,
-                                engine=engine,
-                                asr_model_id=model_id,
-                                num_speakers=num_speakers,
-                                job_id=job_id,  # same id → overwrites draft
-                                output_stem="transcript",
-                                session_dir=s_dir,
-                                progress_callback=lambda p, m: logger.debug(
-                                    "[refine %d%%] %s", int(p * 100), m
-                                ),
-                            )
-                            # Re-patch durable metadata after pipeline overwrite.
-                            with lock:
-                                try:
-                                    rdata = _read_json_file(refined_json, {})
-                                    if _ac:
-                                        rdata["audio"] = _ac
-                                    rdata["job_id"] = preserved_job_id
-                                    if preserved_filename:
-                                        rdata["filename"] = preserved_filename
-                                    _write_json_atomic(refined_json, rdata)
-                                except Exception:
-                                    logger.warning(
-                                        "refine: failed to patch audio/write JSON", exc_info=True
-                                    )
-                            _succeeded.set()
-                            timer.cancel()
-                            if not _timed_out.is_set():
-                                _push(f"onTranscribeRefined({json.dumps(job_id)})")
-                                logger.info("Refine ASR complete for job %s", job_id)
-                            else:
-                                logger.info(
-                                    "Refine ASR finished after timeout for job %s "
-                                    "(result on disk; UI already unblocked)",
-                                    job_id,
-                                )
-                        except Exception:
-                            logger.exception("Refine ASR failed for job %s", job_id)
-                            _succeeded.set()
-                            timer.cancel()
-
-                    threading.Thread(target=_refine, daemon=True).start()
 
             except _TranscriptionCancelled:
                 logger.info("Transcription cancelled: %s", job_id)
@@ -530,6 +452,79 @@ class API:
             finally:
                 with _cancel_flags_mutex:
                     _cancel_flags.pop(job_id, None)
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"job_id": job_id}
+
+    def refine(self, job_id: str) -> dict:
+        """
+        Trigger manual high-accuracy re-transcription for a realtime session (Phase 2).
+        Called from the UI when the user clicks "高精度转写".
+
+        Pops the stored options from _refine_options (so duplicate calls are no-ops).
+        Returns {"job_id": str} immediately; progress is pushed via onTranscribeProgress.
+        Pushes onTranscribeRefined(jobId) on completion (success or error).
+        """
+        opts = self._refine_options.pop(job_id, None)
+        if opts is None:
+            return {"error": "no_refine_options"}
+
+        path         = opts["path"]
+        s_dir        = opts["s_dir"]
+        engine       = opts["engine"]
+        model_id     = opts["model_id"]
+        hf_token     = opts["hf_token"]
+        num_speakers = opts["num_speakers"]
+        audio_copy   = opts.get("audio_copy")
+        json_path    = opts["json_path"]
+
+        def _run():
+            try:
+                def _progress(pct: float, msg: str):
+                    js = f"onTranscribeProgress({json.dumps(job_id)}, {pct:.4f}, {json.dumps(msg)})"
+                    _push(js)
+
+                from src.pipeline import run as pipeline_run
+                logger.info("Refine ASR started for job %s", job_id)
+                lock = _get_transcript_lock(job_id)
+                preserved_filename = None
+                preserved_job_id   = job_id
+                if os.path.exists(json_path):
+                    with lock:
+                        current = _read_json_file(json_path, {})
+                    if isinstance(current, dict):
+                        preserved_filename = current.get("filename") or None
+                        preserved_job_id   = current.get("job_id") or job_id
+
+                refined_json, _ = pipeline_run(
+                    audio_path=path,
+                    output_dir=s_dir,
+                    hf_token=hf_token,
+                    engine=engine,
+                    asr_model_id=model_id,
+                    num_speakers=num_speakers,
+                    job_id=job_id,
+                    output_stem="transcript",
+                    session_dir=s_dir,
+                    progress_callback=_progress,
+                )
+                with lock:
+                    try:
+                        rdata = _read_json_file(refined_json, {})
+                        if audio_copy:
+                            rdata["audio"] = audio_copy
+                        rdata["job_id"] = preserved_job_id
+                        if preserved_filename:
+                            rdata["filename"] = preserved_filename
+                        _write_json_atomic(refined_json, rdata)
+                    except Exception:
+                        logger.warning("refine: failed to patch metadata", exc_info=True)
+
+                _push(f"onTranscribeRefined({json.dumps(job_id)})")
+                logger.info("Refine ASR complete for job %s", job_id)
+            except Exception:
+                logger.exception("Refine ASR failed for job %s", job_id)
+                _push(f"onTranscribeRefined({json.dumps(job_id)})")
 
         threading.Thread(target=_run, daemon=True).start()
         return {"job_id": job_id}
