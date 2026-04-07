@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import queue
+import select
 import signal
 import subprocess
 import tempfile
@@ -33,6 +34,7 @@ CHUNK_SIZE         = 512       # samples per VAD frame
 VAD_THRESHOLD      = 0.5
 SILENCE_CHUNKS     = 15
 MIN_SPEECH_CHUNKS  = 5
+MAX_SEGMENT_SECONDS = 10       # force-flush when a single utterance exceeds this
 
 
 def _default_helper_path() -> str:
@@ -82,6 +84,7 @@ class NativeCaptureHelper:
         # Runtime state
         self._running = False
         self._paused  = False
+        self._stop_event = threading.Event()
 
         # VAD accumulation state (PCM thread only — no locking needed)
         self._speech_buffer: list       = []
@@ -96,6 +99,10 @@ class NativeCaptureHelper:
         # Serial ASR worker — prevents concurrent Metal/GPU calls
         self._transcribe_queue: queue.Queue = queue.Queue()
 
+        # Telemetry counters (populated during a session)
+        self._flush_count:  int = 0
+        self._chunks_read:  int = 0
+
         # Lazy-loaded models
         self._vad = None
         self._asr = None
@@ -104,6 +111,7 @@ class NativeCaptureHelper:
 
     def start(self) -> None:
         """Load models, create FIFO, launch helper, start reader threads."""
+        self._stop_event.clear()
         self._load_models()
 
         if not self._output_path:
@@ -223,15 +231,9 @@ class NativeCaptureHelper:
         logger.info("NativeCaptureHelper resumed")
 
     def stop(self) -> None:
-        """Stop capture: terminate helper, drain ASR queue, clean up FIFO."""
-        self._running = False
-
-        # Flush any partial utterance before draining
-        if self._speech_buffer:
-            self._flush_speech()
-
-        # Terminate helper — this closes the FIFO write-end, causing the PCM
-        # reader to receive EOF and exit its loop naturally.
+        """Stop capture: terminate helper, drain FIFO, flush ASR queue, clean up."""
+        # Step 1: Terminate helper — closes the FIFO write end so _pcm_reader
+        # gets EOF and exits naturally.
         proc = self._process
         self._process = None
         if proc is not None and proc.poll() is None:
@@ -242,7 +244,45 @@ class NativeCaptureHelper:
                 proc.kill()
                 proc.wait()
 
-        # Close FIFO read-end (belt-and-suspenders: unblocks reader if needed)
+        # Step 2: Belt-and-suspenders signal — wakes the reader out of its
+        # select() poll if the write-end EOF hasn't arrived yet.
+        self._stop_event.set()
+
+        # Step 3: Wait for the PCM reader to finish draining and exit.
+        pcm_drained = True
+        if self._pcm_thread is not None:
+            self._pcm_thread.join(timeout=10)
+            if self._pcm_thread.is_alive():
+                logger.critical(
+                    "NativeCaptureHelper: pcm_thread still alive after 10 s — "
+                    "skipping flush and ASR drain to avoid deadlock"
+                )
+                pcm_drained = False
+                # Best-effort: send sentinel so worker can still drain whatever
+                # was already queued before the reader got stuck.
+                if self._worker_thread is not None and self._worker_thread.is_alive():
+                    try:
+                        self._transcribe_queue.put(None)
+                    except Exception:
+                        pass
+            self._pcm_thread = None
+
+        if pcm_drained:
+            # Step 4: Flush any speech remaining in the buffer (reader has fully exited).
+            if self._speech_buffer:
+                self._flush_speech()
+
+            # Step 5: Drain the ASR worker.
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                self._transcribe_queue.put(None)  # sentinel
+                self._worker_thread.join(timeout=30)
+                if self._worker_thread.is_alive():
+                    logger.error(
+                        "NativeCaptureHelper: worker thread did not exit within 30 s timeout"
+                    )
+            self._worker_thread = None
+
+        # Step 6: Close FIFO read-end.
         fd = self._fifo_fd
         self._fifo_fd = None
         if fd is not None:
@@ -251,13 +291,7 @@ class NativeCaptureHelper:
             except OSError:
                 pass
 
-        # Drain serial ASR worker
-        if self._worker_thread is not None and self._worker_thread.is_alive():
-            self._transcribe_queue.put(None)  # sentinel
-            self._worker_thread.join()
-            self._worker_thread = None
-
-        # Remove FIFO from filesystem
+        # Step 7: Remove FIFO from filesystem.
         if self._fifo_path and os.path.exists(self._fifo_path):
             try:
                 os.unlink(self._fifo_path)
@@ -265,7 +299,14 @@ class NativeCaptureHelper:
                 pass
             self._fifo_path = None
 
-        logger.info("NativeCaptureHelper stopped")
+        self._running = False
+
+        logger.info(
+            "NativeCaptureHelper stopped: segments=%d flush=%d chunks_read=%d",
+            len(self._segments),
+            self._flush_count,
+            self._chunks_read,
+        )
 
     def get_segments(self) -> list:
         """Return a copy of accumulated realtime transcription segments."""
@@ -353,7 +394,12 @@ class NativeCaptureHelper:
     # ── PCM reader (FIFO → VAD → ASR) ─────────────────────────────────────────
 
     def _pcm_reader(self) -> None:
-        """Read float32 PCM chunks from FIFO, run VAD + ASR."""
+        """Read float32 PCM chunks from FIFO, run VAD + ASR.
+
+        Uses select() with a 50 ms timeout so _stop_event can interrupt a
+        stalled read. Exits on EOF (write end closed), OSError, or when
+        _stop_event is set while the FIFO is idle.
+        """
         import numpy as np
 
         fd = self._fifo_fd
@@ -361,24 +407,47 @@ class NativeCaptureHelper:
             return
 
         chunk_bytes = CHUNK_SIZE * 4  # float32 = 4 bytes/sample
-
+        chunks_read = 0
         buf = b""
-        while self._running:
+
+        while True:
+            try:
+                ready, _, _ = select.select([fd], [], [], 0.05)
+            except (OSError, ValueError):
+                break  # fd is invalid
+
+            if not ready:
+                # No data in this 50 ms window — check for stop signal.
+                if self._stop_event.is_set():
+                    break
+                continue
+
             try:
                 data = os.read(fd, chunk_bytes - len(buf))
             except OSError:
-                break  # fd closed or error
+                break
             if not data:
-                break  # EOF — helper exited
+                break  # EOF — write end closed
 
             buf += data
             if len(buf) >= chunk_bytes:
                 chunk = np.frombuffer(buf[:chunk_bytes], dtype=np.float32).copy()
                 buf = buf[chunk_bytes:]
+                chunks_read += 1
                 if not self._paused:
                     self._process_audio_chunk(chunk)
 
-        logger.debug("NativeCaptureHelper PCM reader exited")
+        # Zero-pad and process any partial tail left in buf after EOF/stop.
+        # The Swift helper's drainRemaining() may produce a non-chunk-aligned tail.
+        if buf:
+            tail = buf + b"\x00" * (chunk_bytes - len(buf))
+            chunk = np.frombuffer(tail, dtype=np.float32).copy()
+            chunks_read += 1
+            if not self._paused:
+                self._process_audio_chunk(chunk)
+
+        self._chunks_read = chunks_read
+        logger.debug("NativeCaptureHelper PCM reader exited (chunks_read=%d)", chunks_read)
 
     def _process_audio_chunk(self, chunk) -> None:
         """Run Silero VAD on one chunk; flush utterance to ASR when done."""
@@ -399,6 +468,10 @@ class NativeCaptureHelper:
             self._silence_count = 0
             self._in_speech     = True
             self._speech_buffer.append(chunk)
+            # Force-flush if the current utterance has grown too long
+            speech_samples = len(self._speech_buffer) * CHUNK_SIZE
+            if speech_samples >= MAX_SEGMENT_SECONDS * SAMPLE_RATE:
+                self._flush_speech()
         elif self._in_speech:
             self._silence_count += 1
             self._speech_buffer.append(chunk)
@@ -416,6 +489,7 @@ class NativeCaptureHelper:
         self._in_speech     = False
         if len(buf) < MIN_SPEECH_CHUNKS:
             return
+        self._flush_count += 1
         self._transcribe_queue.put((buf, start_sec, end_sec))
 
     def _transcription_worker(self) -> None:
