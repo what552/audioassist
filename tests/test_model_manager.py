@@ -238,6 +238,17 @@ class TestDownload:
 
         assert calls == [pytest.approx(1.0)]
 
+    def test_community_1_download_uses_no_token(self, isolated_data_dir):
+        """snapshot_download must be called with token=False for community-1 (no auth)."""
+        mm = _make_manager(isolated_data_dir)
+        with patch("huggingface_hub.snapshot_download") as mock_snap:
+            mm.download("pyannote-diarization-community-1")
+        call_kwargs = mock_snap.call_args[1]
+        assert call_kwargs.get("token") is False, (
+            "Community-1 download should use token=False (anonymous) "
+            "to prevent a stale HF credential from blocking the download"
+        )
+
     def test_unknown_model_raises(self, isolated_data_dir):
         mm = _make_manager(isolated_data_dir)
         with pytest.raises(ValueError, match="Unknown model"):

@@ -299,6 +299,11 @@ class ModelManager:
             repo_id=info.repo_id,
             local_dir=app_local,
             endpoint=hf_endpoint,
+            # token=False forces anonymous access for public models so that a
+            # stale or invalid HF credential never blocks the download.
+            # For gated models (requires_token=True) we leave token=None so
+            # huggingface_hub can pick up HF_TOKEN from the environment.
+            token=False if not info.requires_token else None,
         )
 
         if progress_callback:
