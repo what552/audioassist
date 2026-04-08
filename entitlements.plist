@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Microphone access — required for live mic transcription -->
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+
+    <!-- Audio input device access (broader entitlement covering mic) -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Screen recording — required for system-audio and mix capture modes
+         (ScreenCaptureKit SCContentFilter captures system audio).
+         The user will be prompted by macOS the first time this is exercised. -->
+    <key>com.apple.security.screen-recording</key>
+    <true/>
+</dict>
+</plist>

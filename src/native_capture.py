@@ -21,6 +21,7 @@ import queue
 import select
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import wave
@@ -38,12 +39,29 @@ MAX_SEGMENT_SECONDS = 10       # force-flush when a single utterance exceeds thi
 
 
 def _default_helper_path() -> str:
-    """Return the expected path to the compiled AudioAssistCaptureHelper binary."""
+    """Return the expected path to the compiled AudioAssistCaptureHelper binary.
+
+    Supports two environments:
+    - Frozen (PyInstaller): binary is bundled alongside the executable in the
+      _MEIPASS temp tree or next to sys.executable (onedir builds).
+    - Development: binary lives at native/AudioAssistCaptureHelper/.build/release/
+      relative to the project root (inferred from this source file's location).
+    """
+    binary_name = "AudioAssistCaptureHelper"
+
+    # ── Frozen (PyInstaller) ──────────────────────────────────────────────────
+    if getattr(sys, "frozen", False):
+        # _MEIPASS is the unpacked temp dir for onefile builds; for onedir
+        # builds sys.executable's directory works for both.
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+        return os.path.join(base, binary_name)
+
+    # ── Development ───────────────────────────────────────────────────────────
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(
         project_root,
         "native", "AudioAssistCaptureHelper",
-        ".build", "release", "AudioAssistCaptureHelper",
+        ".build", "release", binary_name,
     )
 
 

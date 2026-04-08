@@ -18,7 +18,14 @@ from app import API
 
 def main():
     api = API()
-    ui_path = os.path.join(os.path.dirname(__file__), "ui", "index.html")
+    # Resolve UI path for both development and PyInstaller frozen builds.
+    # In frozen mode, bundled resources land in sys._MEIPASS (onefile) or
+    # next to sys.executable (onedir).
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    ui_path = os.path.join(base, "ui", "index.html")
 
     window = webview.create_window(
         "AudioAssist",
