@@ -40,4 +40,8 @@ def main():
 
 
 if __name__ == "__main__":
+    # Required for PyInstaller + multiprocessing on macOS (spawn mode).
+    # Without this, spawned subprocesses re-run main() and open extra windows.
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

@@ -10,6 +10,7 @@ Outputs:
 """
 
 import os
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
 
@@ -35,6 +36,14 @@ a = Analysis(
         # Bundle the native Swift helper next to the executable so
         # _default_helper_path() can find it via sys._MEIPASS / sys.executable.
         (HELPER_BIN, "."),
+        # Bundle ffmpeg and ffprobe so audio_utils.py works without system install.
+        ("/opt/homebrew/bin/ffmpeg",  "."),
+        ("/opt/homebrew/bin/ffprobe", "."),
+        # torchcodec core dylibs (exclude .dylibs/libpython3.12.dylib to avoid conflict)
+        *[
+            (str(p), "torchcodec")
+            for p in __import__('pathlib').Path(SITE, "torchcodec").glob("*.dylib")
+        ],
     ],
     datas=[
         # UI assets (HTML / JS / CSS / images)
@@ -48,15 +57,30 @@ a = Analysis(
         (os.path.join(SITE, "silero_vad"), "silero_vad"),
 
         # ── mlx_whisper ───────────────────────────────────────────────────────
-        # mlx_whisper loads mel_filters.npz and tiktoken vocab files from its
-        # assets/ directory at transcription start.
-        (os.path.join(SITE, "mlx_whisper", "assets"), os.path.join("mlx_whisper", "assets")),
+        # Include the full mlx_whisper package (Python files + assets).
+        (os.path.join(SITE, "mlx_whisper"), "mlx_whisper"),
 
-        # ── pyannote.audio ────────────────────────────────────────────────────
-        # pyannote.audio loads telemetry/config.yaml at import time via
-        # importlib.resources; include the whole telemetry directory.
-        (os.path.join(SITE, "pyannote", "audio", "telemetry"),
-         os.path.join("pyannote", "audio", "telemetry")),
+        # ── mlx ──────────────────────────────────────────────────────────────
+        # MLX Apple-Silicon framework: contains compiled .so / Metal shaders.
+        # PyInstaller collects the .so binaries but misses data files.
+        (os.path.join(SITE, "mlx"), "mlx"),
+
+        # ── pyannote ──────────────────────────────────────────────────────────
+        # pyannote is a namespace package; include the full pyannote/ tree so
+        # that pyannote.audio, pyannote.core, pyannote.database, etc. are all
+        # available at runtime (importlib.resources paths, config files, etc.).
+        (os.path.join(SITE, "pyannote"), "pyannote"),
+
+        # ── nagisa ────────────────────────────────────────────────────────────
+        # nagisa loads its dict/model files from nagisa/data/ at import time
+        # via __file__-relative paths; include the entire nagisa package dir.
+        (os.path.join(SITE, "nagisa"), "nagisa"),
+
+        # ── qwen_asr ─────────────────────────────────────────────────────────
+        # qwen_asr loads inference/assets/korean_dict_jieba.dict at runtime
+        # via __file__-relative paths.
+        (os.path.join(SITE, "qwen_asr"), "qwen_asr"),
+
     ],
     hiddenimports=[
         # pywebview backend on macOS
@@ -68,13 +92,21 @@ a = Analysis(
         # and is not discovered by static analysis
         "silero_vad",
         "silero_vad.data",
-        # pyannote namespace packages (implicit namespace, no __init__.py)
-        "pyannote",
-        "pyannote.audio",
-        "pyannote.audio.pipelines",
-        "pyannote.audio.pipelines.speaker_diarization",
-        # mlx_whisper
-        "mlx_whisper",
+        # scienceplots — required by torchmetrics/utilities/plot.py at import time
+        "scienceplots",
+        # torchcodec — pyannote.audio/core/io.py imports AudioDecoder at module level
+        # Use hiddenimports (not datas) to avoid bundling .dylibs/libpython3.12.dylib
+        # which conflicts with the app's own libpython and causes SIGSEGV.
+        *collect_submodules("torchcodec"),
+        # pyannote — namespace package, collect all submodules explicitly
+        *collect_submodules("pyannote.audio"),
+        *collect_submodules("pyannote.core"),
+        *collect_submodules("pyannote.database"),
+        *collect_submodules("pyannote.pipeline"),
+        # mlx_whisper — collect all submodules
+        *collect_submodules("mlx_whisper"),
+        # nagisa — bare imports in train.py need submodules collected
+        *collect_submodules("nagisa"),
     ],
     excludes=[
         "tests",
@@ -82,7 +114,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[os.path.join(ROOT, "scripts", "hook_runtime_metadata.py")],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

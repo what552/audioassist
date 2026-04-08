@@ -3,6 +3,7 @@ Audio preprocessing: convert any format to 16kHz mono WAV via ffmpeg.
 """
 from __future__ import annotations
 import os
+import sys
 import subprocess
 import tempfile
 import logging
@@ -10,6 +11,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 CHUNK_SECONDS = 300  # 5 minutes per chunk
+
+
+def _find_bin(name: str) -> str:
+    """Return path to ffmpeg/ffprobe: bundle-local first, then PATH."""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+        candidate = os.path.join(base, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return name  # fall back to PATH
 
 
 def to_wav(audio_path: str) -> tuple[str, bool]:
@@ -32,7 +43,7 @@ def to_wav(audio_path: str) -> tuple[str, bool]:
 
     logger.info(f"Converting {ext} → WAV: {os.path.basename(audio_path)}")
     cmd = [
-        "ffmpeg", "-y", "-i", audio_path,
+        _find_bin("ffmpeg"), "-y", "-i", audio_path,
         "-ar", "16000",
         "-ac", "1",
         "-f", "wav",
@@ -51,7 +62,7 @@ def _wav_needs_conversion(wav_path: str) -> bool:
     """Return True if WAV is not 16kHz mono."""
     result = subprocess.run(
         [
-            "ffprobe", "-v", "quiet",
+            _find_bin("ffprobe"), "-v", "quiet",
             "-show_entries", "stream=sample_rate,channels",
             "-of", "csv=p=0", wav_path,
         ],
@@ -70,7 +81,7 @@ def get_duration(audio_path: str) -> float:
     """Return audio duration in seconds."""
     result = subprocess.run(
         [
-            "ffprobe", "-v", "quiet",
+            _find_bin("ffprobe"), "-v", "quiet",
             "-show_entries", "format=duration",
             "-of", "csv=p=0", audio_path,
         ],
@@ -107,7 +118,7 @@ def split_to_chunks(wav_path: str, chunk_sec: int = CHUNK_SECONDS) -> list[tuple
             tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             tmp.close()
             cmd = [
-                "ffmpeg", "-y", "-i", wav_path,
+                _find_bin("ffmpeg"), "-y", "-i", wav_path,
                 "-ss", str(start), "-t", str(chunk_sec),
                 "-ar", "16000", "-ac", "1",
                 tmp.name,

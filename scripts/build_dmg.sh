@@ -71,6 +71,37 @@ if [ ! -d "$APP_PATH" ]; then
   exit 1
 fi
 
+# ── Step 2.5: Sign helper with required entitlements ─────────────────────────
+echo "==> [2.5/3] Signing helper with TCC entitlements…"
+HELPER_IN_BUNDLE="${APP_PATH}/Contents/Frameworks/AudioAssistCaptureHelper"
+HELPER_ENTITLEMENTS="${ROOT}/entitlements_helper.plist"
+
+if [ ! -f "$HELPER_ENTITLEMENTS" ]; then
+  cat > "$HELPER_ENTITLEMENTS" << 'ENTEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+    <key>com.apple.security.screen-recording</key>
+    <true/>
+</dict>
+</plist>
+ENTEOF
+fi
+
+if [ -f "$HELPER_IN_BUNDLE" ]; then
+  codesign --force --sign - \
+    --entitlements "$HELPER_ENTITLEMENTS" \
+    "$HELPER_IN_BUNDLE"
+  echo "    Helper signed: $HELPER_IN_BUNDLE"
+else
+  echo "    WARNING: helper not found in bundle at $HELPER_IN_BUNDLE"
+fi
+
 # ── Step 3: Package as DMG ────────────────────────────────────────────────────
 echo "==> [3/3] Creating DMG…"
 
