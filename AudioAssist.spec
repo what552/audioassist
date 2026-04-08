@@ -111,6 +111,12 @@ a = Analysis(
     excludes=[
         "tests",
         "agentops",
+        # torchcodec is intentionally excluded: its custom_ops dylib embeds a
+        # hard link to libpython3.12.dylib that causes SIGSEGV when loaded
+        # inside a PyInstaller bundle.  diarize.py passes {"waveform": tensor,
+        # "sample_rate": int} to the pyannote pipeline instead of a raw file
+        # path, bypassing torchcodec entirely.
+        "torchcodec",
     ],
     hookspath=[],
     hooksconfig={},

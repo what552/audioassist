@@ -97,8 +97,18 @@ class DiarizationEngine:
         if self.num_speakers:
             kwargs["num_speakers"] = self.num_speakers
 
+        # Load audio via torchaudio and pass a waveform dict instead of a raw
+        # file path.  This bypasses torchcodec (the default file-decoding
+        # backend used by pyannote), whose custom-ops dylib embeds a hard
+        # reference to libpython3.12.dylib that causes SIGSEGV in a
+        # PyInstaller bundle.  pyannote accepts {"waveform": tensor,
+        # "sample_rate": int} natively (channels-first float32 tensor).
+        import torchaudio
+        waveform, sample_rate = torchaudio.load(audio_path)
+        audio_input = {"waveform": waveform, "sample_rate": sample_rate}
+
         logger.info(f"Diarizing: {audio_path}")
-        result = self._pipeline(audio_path, **kwargs)
+        result = self._pipeline(audio_input, **kwargs)
 
         # pyannote 4.x returns DiarizeOutput; 3.x returns Annotation directly
         annotation = (
