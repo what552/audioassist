@@ -20,6 +20,13 @@ HELPER_BIN = os.path.join(
     ".build", "release", "AudioAssistCaptureHelper",
 )
 
+# Virtual-env site-packages used at build time.
+# PyInstaller resolves imports from the active Python env, but data files
+# (model weights, assets) that are loaded via open() / pkg_resources /
+# importlib.resources must be declared explicitly.
+VENV = "/Users/feifei/programing/local asr/.venv"
+SITE = os.path.join(VENV, "lib", "python3.12", "site-packages")
+
 # ── Analysis ───────────────────────────────────────────────────────────────────
 a = Analysis(
     [os.path.join(ROOT, "run.py")],
@@ -32,6 +39,24 @@ a = Analysis(
     datas=[
         # UI assets (HTML / JS / CSS / images)
         (os.path.join(ROOT, "ui"), "ui"),
+
+        # ── silero_vad ────────────────────────────────────────────────────────
+        # silero_vad loads model weights from its own data/ directory at runtime
+        # (silero_vad.data sub-package with .jit / .onnx / .safetensors files).
+        # PyInstaller does not collect these automatically because they are not
+        # imported — they are opened via importlib.resources / __file__ paths.
+        (os.path.join(SITE, "silero_vad"), "silero_vad"),
+
+        # ── mlx_whisper ───────────────────────────────────────────────────────
+        # mlx_whisper loads mel_filters.npz and tiktoken vocab files from its
+        # assets/ directory at transcription start.
+        (os.path.join(SITE, "mlx_whisper", "assets"), os.path.join("mlx_whisper", "assets")),
+
+        # ── pyannote.audio ────────────────────────────────────────────────────
+        # pyannote.audio loads telemetry/config.yaml at import time via
+        # importlib.resources; include the whole telemetry directory.
+        (os.path.join(SITE, "pyannote", "audio", "telemetry"),
+         os.path.join("pyannote", "audio", "telemetry")),
     ],
     hiddenimports=[
         # pywebview backend on macOS
@@ -39,6 +64,17 @@ a = Analysis(
         # common transitive imports that PyInstaller may miss
         "platformdirs",
         "huggingface_hub",
+        # silero_vad — the data sub-package is accessed via importlib.resources
+        # and is not discovered by static analysis
+        "silero_vad",
+        "silero_vad.data",
+        # pyannote namespace packages (implicit namespace, no __init__.py)
+        "pyannote",
+        "pyannote.audio",
+        "pyannote.audio.pipelines",
+        "pyannote.audio.pipelines.speaker_diarization",
+        # mlx_whisper
+        "mlx_whisper",
     ],
     excludes=[
         "tests",
