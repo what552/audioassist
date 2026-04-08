@@ -36,6 +36,13 @@ AudioAssist is built to make transcription a first-class input for AI agents.
 - Windows: local transcription and microphone recording are supported
 - Local system audio capture on Windows is not finished yet
 
+## Performance Guidance
+
+- Qwen3-ASR is substantially heavier than Whisper and is better suited to higher-memory Apple Silicon machines or PCs with a dedicated GPU
+- On macOS, Apple Silicon is recommended; 16GB unified memory is workable, while 32GB or more is noticeably safer for long recordings and high-accuracy runs
+- On Windows/Linux, local Qwen3-ASR is best paired with an NVIDIA GPU; 8GB VRAM is a practical starting point, and 12GB or more is more comfortable
+- 8GB-memory machines can still run the app, but Whisper or a future cloud ASR option is the safer default
+
 ## Who It's For
 
 - People who attend many meetings and need better notes
