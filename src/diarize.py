@@ -97,14 +97,18 @@ class DiarizationEngine:
         if self.num_speakers:
             kwargs["num_speakers"] = self.num_speakers
 
-        # Load audio via torchaudio and pass a waveform dict instead of a raw
-        # file path.  This bypasses torchcodec (the default file-decoding
-        # backend used by pyannote), whose custom-ops dylib embeds a hard
-        # reference to libpython3.12.dylib that causes SIGSEGV in a
-        # PyInstaller bundle.  pyannote accepts {"waveform": tensor,
-        # "sample_rate": int} natively (channels-first float32 tensor).
-        import torchaudio
-        waveform, sample_rate = torchaudio.load(audio_path)
+        # Load audio via soundfile (not torchaudio.load) and pass a waveform
+        # dict to pyannote.  torchaudio 2.9+ defaults torchaudio.load() to
+        # load_with_torchcodec(), which fails in a PyInstaller bundle because
+        # torchcodec is excluded (its dylib embeds a conflicting libpython).
+        # soundfile reads WAV/FLAC/OGG natively without torchcodec.
+        # pyannote accepts {"waveform": tensor, "sample_rate": int} where
+        # waveform is a channels-first float32 tensor.
+        import soundfile as sf
+        import torch
+        data, sample_rate = sf.read(audio_path, dtype="float32", always_2d=True)
+        # soundfile returns (frames, channels); pyannote needs (channels, frames)
+        waveform = torch.from_numpy(data.T)
         audio_input = {"waveform": waveform, "sample_rate": sample_rate}
 
         logger.info(f"Diarizing: {audio_path}")
