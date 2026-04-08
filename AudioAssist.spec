@@ -39,11 +39,10 @@ a = Analysis(
         # Bundle ffmpeg and ffprobe so audio_utils.py works without system install.
         ("/opt/homebrew/bin/ffmpeg",  "."),
         ("/opt/homebrew/bin/ffprobe", "."),
-        # torchcodec core dylibs (exclude .dylibs/libpython3.12.dylib to avoid conflict)
-        *[
-            (str(p), "torchcodec")
-            for p in __import__('pathlib').Path(SITE, "torchcodec").glob("*.dylib")
-        ],
+        # torchcodec dylibs intentionally NOT bundled — torchcodec embeds its own
+        # libpython3.12.dylib which conflicts with the app's libpython and causes
+        # SIGSEGV on startup.  diarize.py bypasses torchcodec by passing a waveform
+        # dict directly to pyannote, so none of these dylibs are needed at runtime.
     ],
     datas=[
         # UI assets (HTML / JS / CSS / images)
