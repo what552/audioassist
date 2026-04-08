@@ -30,6 +30,12 @@ AudioAssist is built to make transcription a first-class input for AI agents.
 - Local transcript storage for agent workflows
 - Direct sync to Obsidian Vault for Claude Code + Obsidian workflows
 
+## Platform Support
+
+- macOS: local transcription, microphone recording, and system audio capture are supported
+- Windows: local transcription and microphone recording are supported
+- Local system audio capture on Windows is not finished yet
+
 ## Who It's For
 
 - People who attend many meetings and need better notes
@@ -44,7 +50,7 @@ AudioAssist is built to make transcription a first-class input for AI agents.
 
 ## Roadmap
 
-- Windows support
+- Complete local system audio capture support on Windows
 - Cloud ASR API support for lower-performance devices
 - Better echo cancellation in mix mode
 - A more stable end-user distribution
