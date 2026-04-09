@@ -4,6 +4,7 @@ This directory contains the first stage of the Windows release pipeline:
 
 - a `PyInstaller` onedir spec
 - a PowerShell build script
+- an `Inno Setup` installer script
 - runtime dependency manifests for production builds
 
 ## Scope
@@ -23,9 +24,9 @@ model caches into distributable builds.
 ## Current output
 
 Running the build script produces a PyInstaller `onedir` bundle suitable for
-local installer work. It does **not** create the final installer yet.
+local installer work.
 
-The planned next step is an installer layer, e.g. `Inno Setup`, to handle:
+The repository also includes an `Inno Setup` layer to handle:
 
 - app install / uninstall
 - shortcuts
@@ -52,4 +53,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1 `
 powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1 `
   -FfmpegBinDir C:\ffmpeg\bin `
   -TorchVariant cpu
+```
+
+## Installer build example
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_installer.ps1 `
+  -DistDir .\dist\AudioAssist `
+  -OutputDir .\release `
+  -DownloadWebView2
 ```

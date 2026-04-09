@@ -73,7 +73,10 @@ if (-not [string]::IsNullOrWhiteSpace($FfmpegBinDir)) {
 }
 
 Invoke-Step "Running PyInstaller" {
-    & $VenvPython -m PyInstaller --noconfirm --clean $SpecPath
+    & $VenvPython -m PyInstaller --noconfirm --clean `
+        --distpath $DistPath `
+        --workpath $BuildPath `
+        $SpecPath
 }
 
 if ($DryRun) {
