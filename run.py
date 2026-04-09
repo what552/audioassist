@@ -34,6 +34,7 @@ def main():
         width=1280,
         height=800,
         min_size=(900, 600),
+        text_select=True,
     )
     _app_module._window = window
     webview.start(debug="--debug" in sys.argv)
