@@ -943,7 +943,7 @@ class API:
                     data = json.load(f)
                 text = " ".join(seg.get("text", "") for seg in data.get("segments", []))
 
-                cfg = self._load_config().get("api", {})
+                cfg = self._load_api_config()
                 base_url = cfg.get("base_url", "")
                 api_key  = cfg.get("api_key", "")
                 model    = cfg.get("model", "")
@@ -987,7 +987,7 @@ class API:
         """
         def _run():
             try:
-                cfg = self._load_config().get("api", {})
+                cfg = self._load_api_config()
                 from src.agent_store import (
                     build_context_messages,
                     load_session,
@@ -1386,9 +1386,11 @@ class API:
         Returns: {
             "asr_ready":      bool,  # any recommended ASR model downloaded
             "diarizer_ready": bool,  # any recommended diarizer downloaded
+            "runtime":        dict,  # CUDA/CPU preflight status
         }
         """
         from src.model_manager import ModelManager, CATALOG
+        from src.runtime_env import get_runtime_status
         mm = ModelManager()
         asr_ready = any(
             mm.is_downloaded(m.id) for m in CATALOG if m.role == "asr" and m.recommended
@@ -1396,7 +1398,46 @@ class API:
         diarizer_ready = any(
             mm.is_downloaded(m.id) for m in CATALOG if m.role == "diarizer" and m.recommended
         )
-        return {"asr_ready": asr_ready, "diarizer_ready": diarizer_ready}
+        return {
+            "asr_ready": asr_ready,
+            "diarizer_ready": diarizer_ready,
+            "runtime": get_runtime_status(),
+        }
+
+    def get_runtime_status(self) -> dict:
+        """Return CUDA/CPU runtime diagnostics for the current Python environment."""
+        from src.runtime_env import get_runtime_status
+
+        return get_runtime_status(refresh=True)
+
+    def install_cuda_torch(self) -> dict:
+        """
+        Install an official CUDA-enabled PyTorch build for the current interpreter.
+
+        Returns {"status": "started"} immediately and reports completion/error to JS.
+        """
+        with _cancel_flags_mutex:
+            if _cancel_flags:
+                return {
+                    "status": "busy",
+                    "error": "Finish or cancel the current transcription before installing CUDA PyTorch.",
+                }
+
+        def _run():
+            try:
+                from src.runtime_env import install_cuda_torch
+
+                _push("onRuntimeTorchInstallStarted()")
+                status = install_cuda_torch()
+                _push(
+                    f"onRuntimeTorchInstallComplete({json.dumps(status)}, true)"
+                )
+            except Exception as exc:
+                logger.exception("CUDA torch install failed")
+                _push(f"onRuntimeTorchInstallError({json.dumps(str(exc))})")
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "started"}
 
     def get_models(self) -> list[dict]:
         """Return model catalog with download status."""
@@ -1442,15 +1483,63 @@ class API:
 
     # ── Config ─────────────────────────────────────────────────────────────────
 
+    def _load_api_config(self) -> dict:
+        from src.llm_api import normalize_api_config
+
+        return normalize_api_config(self._load_config().get("api", {}))
+
     def save_api_config(self, config: dict) -> bool:
+        from src.llm_api import normalize_api_config
+
         os.makedirs(APP_DATA_DIR, exist_ok=True)
         cfg = self._load_config()
-        cfg["api"] = config
+        normalized = normalize_api_config(config)
+        cfg["api"] = {
+            "base_url": normalized["base_url"],
+            "api_key": normalized["api_key"],
+            "model": normalized["model"],
+        }
         self._save_config(cfg)
         return True
 
     def get_api_config(self) -> dict:
-        return self._load_config().get("api", {})
+        return self._load_api_config()
+
+    def get_remote_models(self, config: Optional[dict] = None) -> dict:
+        """
+        Return available remote LLM models for the supplied OpenAI-compatible config.
+
+        Returns {
+            "provider": str,
+            "base_url": str,
+            "model": str,
+            "models": [{"id": str, "name": str}],
+            "error": str | omitted,
+        }
+        """
+        from src.llm_api import list_available_models, normalize_api_config
+
+        normalized = normalize_api_config(config or self._load_config().get("api", {}))
+        try:
+            models = list_available_models(
+                normalized["base_url"],
+                normalized["api_key"],
+            )
+            return {
+                "provider": normalized["provider"],
+                "base_url": normalized["base_url"],
+                "model": normalized["model"],
+                "models": models,
+            }
+        except Exception as exc:
+            logger.warning("Remote model lookup failed: %s", exc)
+            return {
+                "provider": normalized["provider"],
+                "base_url": normalized["base_url"],
+                "model": normalized["model"],
+                "models": [],
+                "error": str(exc),
+            }
 
     # ── Storage config ──────────────────────────────────────────────────────────
 

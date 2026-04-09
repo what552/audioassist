@@ -58,6 +58,9 @@ const App = (() => {
   // ── Export menu (shared by transcript + summary export buttons) ────────────
   let _exportMenuEl  = null;
   let _toastTimer    = null;
+  let _runtimeStatus = null;
+  let _runtimePromptDismissed = false;
+  let _runtimeInstallInFlight = false;
 
   function _startTimer() {
     _timerInterval = setInterval(() => { _timerSeconds++; _updateTimer(); }, 1000);
@@ -209,7 +212,6 @@ const App = (() => {
     dom.rcBtnPause.textContent = isPaused ? '▶' : '⏸';
     dom.rcBtnPause.title       = isPaused ? 'Resume' : 'Pause';
     dom.rcBtnPause.disabled    = false;
-    dom.rcBtnPlay.disabled     = !isPaused;
   }
 
   // ── Control bar actions ────────────────────────────────────────────────────
@@ -224,12 +226,6 @@ const App = (() => {
       dom.rcBtnPause.disabled = true;
       await window.pywebview.api.resume_realtime();
     }
-  }
-
-  function _onPlayRecording() {
-    const s = _sessions.get(_activeRealtimeId);
-    if (!s || s.status !== 'paused') return;
-    Player.load(s.audioPath || '');
   }
 
   async function _onFinishRecording() {
@@ -503,8 +499,14 @@ const App = (() => {
 
   function init() {
     dom = {
+      runtimeBanner:      document.getElementById('runtime-banner'),
+      runtimeBannerText:  document.getElementById('runtime-banner-text'),
+      runtimeBannerActions: document.getElementById('runtime-banner-actions'),
+      btnRuntimeInstall:  document.getElementById('btn-runtime-install'),
+      btnRuntimeContinue: document.getElementById('btn-runtime-continue'),
       centerPanel:        document.getElementById('center-panel'),
       setupPanel:         document.getElementById('setup-panel'),
+      setupRuntimeNote:   document.getElementById('setup-runtime-note'),
       setupAsrBadge:      document.getElementById('setup-asr-badge'),
       setupAsrProgress:   document.getElementById('setup-asr-progress'),
       setupAsrBar:        document.getElementById('setup-asr-bar'),
@@ -546,7 +548,6 @@ const App = (() => {
       rcSessionName:      document.getElementById('rc-session-name'),
       rcTimer:            document.getElementById('rc-timer'),
       rcBtnPause:         document.getElementById('rc-btn-pause'),
-      rcBtnPlay:          document.getElementById('rc-btn-play'),
       rcBtnFinish:        document.getElementById('rc-btn-finish'),
     };
 
@@ -588,7 +589,6 @@ const App = (() => {
     dom.btnUpload.addEventListener('click', _onUpload);
 
     dom.rcBtnPause.addEventListener('click', _onPauseResume);
-    dom.rcBtnPlay.addEventListener('click', _onPlayRecording);
     dom.rcBtnFinish.addEventListener('click', _onFinishRecording);
 
     // Models modal
@@ -601,6 +601,8 @@ const App = (() => {
     // Setup panel — download buttons
     dom.btnSetupAsr.addEventListener('click', () => _setupDownload('asr'));
     dom.btnSetupDiarizer.addEventListener('click', () => _setupDownload('diarizer'));
+    dom.btnRuntimeInstall?.addEventListener('click', _installRuntimeTorch);
+    dom.btnRuntimeContinue?.addEventListener('click', _dismissRuntimeWarning);
 
     // Cancel transcription
     dom.btnCancelTranscribe.addEventListener('click', () => {
@@ -645,6 +647,7 @@ const App = (() => {
   async function _checkSetup() {
     try {
       const status = await window.pywebview.api.get_setup_status();
+      _applyRuntimeStatus(status.runtime || null);
       _applySetupStatus(status);
       if (status.asr_ready && status.diarizer_ready) {
         _setView('idle');
@@ -662,6 +665,109 @@ const App = (() => {
   function _applySetupStatus(status) {
     _setSetupItem('asr', status.asr_ready);
     _setSetupItem('diarizer', status.diarizer_ready);
+  }
+
+  function _applyRuntimeStatus(runtime) {
+    if (!runtime) return;
+
+    _runtimeStatus = runtime;
+    const message = runtime.message || '';
+    const severity = runtime.severity || 'info';
+    const showBanner = severity === 'warning' || severity === 'error';
+    const actionable = !!runtime.needs_cuda_torch;
+    const suppressed = actionable && _runtimePromptDismissed && !_runtimeInstallInFlight;
+
+    if (dom.setupRuntimeNote) {
+      dom.setupRuntimeNote.hidden = !message || suppressed;
+      dom.setupRuntimeNote.textContent = message;
+      dom.setupRuntimeNote.className = `setup-runtime-note setup-runtime-note-${severity}`;
+    }
+
+    if (dom.runtimeBanner && dom.runtimeBannerText) {
+      dom.runtimeBanner.hidden = !showBanner || suppressed;
+      dom.runtimeBanner.className = `runtime-banner runtime-banner-${severity}`;
+      dom.runtimeBannerText.textContent = message;
+    }
+
+    if (dom.runtimeBannerActions) {
+      dom.runtimeBannerActions.hidden = !actionable || suppressed;
+    }
+    if (dom.btnRuntimeInstall) {
+      dom.btnRuntimeInstall.disabled = !actionable || _runtimeInstallInFlight;
+      dom.btnRuntimeInstall.textContent = _runtimeInstallInFlight
+        ? 'Installing…'
+        : 'Install CUDA Torch';
+    }
+    if (dom.btnRuntimeContinue) {
+      dom.btnRuntimeContinue.disabled = _runtimeInstallInFlight;
+    }
+
+    if (dom.selEngine && runtime.needs_cuda_torch) {
+      dom.selEngine.title = message;
+    }
+  }
+
+  async function _refreshRuntimeStatus() {
+    if (!window.pywebview?.api?.get_runtime_status) return;
+    try {
+      const runtime = await window.pywebview.api.get_runtime_status();
+      _applyRuntimeStatus(runtime);
+    } catch (e) {
+      console.warn('[App] _refreshRuntimeStatus error:', e);
+    }
+  }
+
+  function _dismissRuntimeWarning() {
+    _runtimePromptDismissed = true;
+    if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
+  }
+
+  async function _installRuntimeTorch() {
+    if (!window.pywebview?.api?.install_cuda_torch || _runtimeInstallInFlight) return;
+    _runtimePromptDismissed = false;
+    _runtimeInstallInFlight = true;
+    if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
+
+    try {
+      const result = await window.pywebview.api.install_cuda_torch();
+      if (result?.status === 'busy') {
+        _runtimeInstallInFlight = false;
+        if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
+        showToast(result.error || 'Finish the current transcription first.', 4000);
+      }
+    } catch (e) {
+      _runtimeInstallInFlight = false;
+      if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
+      showToast(`CUDA torch install failed: ${e}`, 5000);
+    }
+  }
+
+  function _onRuntimeTorchInstallStarted() {
+    _runtimeInstallInFlight = true;
+    if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
+    showToast('Installing CUDA-enabled PyTorch…', 3000);
+  }
+
+  function _onRuntimeTorchInstallComplete(status, restartRequired) {
+    _runtimeInstallInFlight = false;
+    _runtimePromptDismissed = false;
+    _applyRuntimeStatus(status || _runtimeStatus);
+    if (restartRequired) {
+      showToast('CUDA torch installed. Restart AudioAssist before testing Qwen on GPU.', 6000);
+    } else {
+      showToast('CUDA torch installation finished.', 4000);
+    }
+  }
+
+  function _onRuntimeTorchInstallError(message) {
+    _runtimeInstallInFlight = false;
+    _runtimePromptDismissed = false;
+    const fallback = _runtimeStatus
+      ? { ..._runtimeStatus, severity: 'error', message: `CUDA torch install failed: ${message}` }
+      : { severity: 'error', message: `CUDA torch install failed: ${message}`, needs_cuda_torch: true };
+    _applyRuntimeStatus(fallback);
+    showToast(`CUDA torch install failed: ${message}`, 6000);
+    _refreshRuntimeStatus();
   }
 
   function _setSetupItem(key, ready) {
@@ -918,6 +1024,9 @@ const App = (() => {
 
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
            onTranscribeCancel, onTranscribeRefined,
+           onRuntimeTorchInstallStarted: _onRuntimeTorchInstallStarted,
+           onRuntimeTorchInstallComplete: _onRuntimeTorchInstallComplete,
+           onRuntimeTorchInstallError: _onRuntimeTorchInstallError,
            refreshEngineSelector: _populateEngineSelector,
            openExportMenu, showToast };
 })();
@@ -929,6 +1038,9 @@ function onTranscribeComplete(jobId, jsonPath, hasRefine) { App.onTranscribeComp
 function onTranscribeError(jobId, message)          { App.onTranscribeError(jobId, message); }
 function onTranscribeCancel(jobId)                  { App.onTranscribeCancel(jobId); }
 function onTranscribeRefined(jobId)                 { App.onTranscribeRefined(jobId); }
+function onRuntimeTorchInstallStarted()             { App.onRuntimeTorchInstallStarted(); }
+function onRuntimeTorchInstallComplete(status, restartRequired) { App.onRuntimeTorchInstallComplete(status, restartRequired); }
+function onRuntimeTorchInstallError(message)        { App.onRuntimeTorchInstallError(message); }
 
 function onModelDownloadProgress(name, percent) {
   console.log(`[model] ${name} ${(percent * 100).toFixed(0)}%`);

@@ -24,6 +24,8 @@ const Summary = (() => {
   let _agentCurrentBubble = null;
   let _streamBuffer      = '';  // summary chunk accumulator
   let _agentStreamBuffer = '';  // agent chunk accumulator
+  let _remoteModelsBusy  = false;
+  let _remoteModelsTimer = null;
   let dom = {};
   let agentDom = {};
 
@@ -62,6 +64,10 @@ const Summary = (() => {
       cfgBaseUrl:     document.getElementById('cfg-base-url'),
       cfgApiKey:      document.getElementById('cfg-api-key'),
       cfgModel:       document.getElementById('cfg-model'),
+      cfgModelPicker: document.getElementById('cfg-model-picker'),
+      cfgModelSelect: document.getElementById('cfg-model-select'),
+      cfgModelStatus: document.getElementById('cfg-model-status'),
+      btnRefreshModels:   document.getElementById('btn-refresh-models'),
       btnSaveConfig:      document.getElementById('btn-save-config'),
       btnAddTemplate:     document.getElementById('btn-add-template'),
       templateList:       document.getElementById('template-list'),
@@ -90,6 +96,10 @@ const Summary = (() => {
     dom.modal.addEventListener('click', (e) => { if (e.target === dom.modal) _closeModal(); });
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
+    dom.btnRefreshModels.addEventListener('click', () => _refreshRemoteModels());
+    dom.cfgModelSelect.addEventListener('change', _onModelPicked);
+    dom.cfgBaseUrl.addEventListener('input', _onApiConfigEdited);
+    dom.cfgApiKey.addEventListener('input', _onApiConfigEdited);
     dom.btnAddTemplate.addEventListener('click', _onAddTemplate);
     dom.btnOutputBrowse.addEventListener('click', _onOutputBrowse);
     dom.btnSaveStorage.addEventListener('click', _onSaveStorage);
@@ -179,6 +189,7 @@ const Summary = (() => {
       dom.cfgBaseUrl.value = cfg.base_url || '';
       dom.cfgApiKey.value  = cfg.api_key  || '';
       dom.cfgModel.value   = cfg.model    || '';
+      _applyModelProviderUI({ immediate: true });
     } catch (e) {
       console.warn('[Summary] _loadConfig error:', e);
     }
@@ -243,11 +254,16 @@ const Summary = (() => {
   }
 
   async function _onSaveConfig() {
+    _syncModelInput();
     const cfg = {
       base_url: dom.cfgBaseUrl.value.trim(),
       api_key:  dom.cfgApiKey.value.trim(),
       model:    dom.cfgModel.value.trim(),
     };
+    if (_isOpenRouterConfig(cfg) && !cfg.model) {
+      _setModelStatus('Select an OpenRouter model before saving.', 'error');
+      return;
+    }
     try {
       await window.pywebview.api.save_api_config(cfg);
       _closeModal();
@@ -265,6 +281,7 @@ const Summary = (() => {
     const open = !dom.modal.hidden;
     dom.modal.hidden = open;
     dom.btnSettings.classList.toggle('active', !open);
+    if (!open) _applyModelProviderUI({ immediate: true });
   }
 
   // ── Templates ──────────────────────────────────────────────────────────────
@@ -563,6 +580,154 @@ const Summary = (() => {
       dom.loading.hidden = false;
     } else {
       dom.loading.hidden = true;
+    }
+  }
+
+  function _onApiConfigEdited() {
+    _applyModelProviderUI();
+  }
+
+  function _onModelPicked() {
+    _syncModelInput();
+    if (dom.cfgModel.value) _setModelStatus('');
+  }
+
+  function _syncModelInput() {
+    if (!dom.cfgModelPicker.hidden) {
+      dom.cfgModel.value = (dom.cfgModelSelect.value || '').trim();
+    }
+  }
+
+  function _getApiConfigDraft() {
+    _syncModelInput();
+    return {
+      base_url: dom.cfgBaseUrl.value.trim(),
+      api_key: dom.cfgApiKey.value.trim(),
+      model: dom.cfgModel.value.trim(),
+    };
+  }
+
+  function _isOpenRouterConfig(cfg) {
+    const base = (cfg.base_url || '').trim().toLowerCase();
+    const key = (cfg.api_key || '').trim().toLowerCase();
+    return base.includes('openrouter.ai') || key.startsWith('sk-or-');
+  }
+
+  function _setModelStatus(message, tone = 'info') {
+    const text = (message || '').trim();
+    dom.cfgModelStatus.textContent = text;
+    dom.cfgModelStatus.hidden = !text;
+    dom.cfgModelStatus.classList.toggle('error', tone === 'error');
+  }
+
+  function _applyModelProviderUI(options = {}) {
+    const cfg = _getApiConfigDraft();
+    const isOpenRouter = _isOpenRouterConfig(cfg);
+
+    if (isOpenRouter && !cfg.base_url && cfg.api_key.toLowerCase().startsWith('sk-or-')) {
+      dom.cfgBaseUrl.value = 'https://openrouter.ai/api/v1';
+    }
+
+    dom.cfgModel.hidden = isOpenRouter;
+    dom.cfgModelPicker.hidden = !isOpenRouter;
+
+    if (!isOpenRouter) {
+      _setModelStatus('');
+      return;
+    }
+
+    if (!dom.cfgApiKey.value.trim()) {
+      _populateRemoteModels([], dom.cfgModel.value.trim());
+      _setModelStatus('Enter your OpenRouter API key to load models.');
+      return;
+    }
+
+    _setModelStatus('Loading OpenRouter models…');
+    _scheduleRemoteModelRefresh(options.immediate === true);
+  }
+
+  function _scheduleRemoteModelRefresh(immediate = false) {
+    if (_remoteModelsTimer) clearTimeout(_remoteModelsTimer);
+    if (immediate) {
+      _refreshRemoteModels();
+      return;
+    }
+    _remoteModelsTimer = setTimeout(() => {
+      _remoteModelsTimer = null;
+      _refreshRemoteModels();
+    }, 350);
+  }
+
+  function _populateRemoteModels(models, selectedModel) {
+    const current = (selectedModel || '').trim();
+    dom.cfgModelSelect.innerHTML = '';
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select an OpenRouter model…';
+    dom.cfgModelSelect.appendChild(placeholder);
+
+    if (current && !models.some(m => m.id === current)) {
+      const opt = document.createElement('option');
+      opt.value = current;
+      opt.textContent = `Current saved model: ${current}`;
+      dom.cfgModelSelect.appendChild(opt);
+    }
+
+    models.forEach((model) => {
+      const opt = document.createElement('option');
+      opt.value = model.id;
+      opt.textContent = model.name && model.name !== model.id
+        ? `${model.name} (${model.id})`
+        : model.id;
+      dom.cfgModelSelect.appendChild(opt);
+    });
+
+    dom.cfgModelSelect.value = current || '';
+    _syncModelInput();
+  }
+
+  async function _refreshRemoteModels() {
+    if (_remoteModelsBusy) return;
+
+    const cfg = _getApiConfigDraft();
+    if (!_isOpenRouterConfig(cfg)) return;
+    if (!cfg.api_key) {
+      _populateRemoteModels([], cfg.model);
+      _setModelStatus('Enter your OpenRouter API key to load models.');
+      return;
+    }
+
+    _remoteModelsBusy = true;
+    dom.btnRefreshModels.disabled = true;
+    dom.cfgModelSelect.disabled = true;
+
+    try {
+      const result = await window.pywebview.api.get_remote_models(cfg);
+      if (result.base_url && dom.cfgBaseUrl.value.trim() !== result.base_url) {
+        dom.cfgBaseUrl.value = result.base_url;
+      }
+
+      const models = result.models || [];
+      _populateRemoteModels(models, result.model || cfg.model);
+
+      if (result.error) {
+        _setModelStatus(result.error, 'error');
+        return;
+      }
+
+      if (!models.length) {
+        _setModelStatus('OpenRouter did not return any models.', 'error');
+        return;
+      }
+
+      _setModelStatus(`Loaded ${models.length} OpenRouter models.`);
+    } catch (e) {
+      _setModelStatus(String(e), 'error');
+    } finally {
+      _remoteModelsBusy = false;
+      dom.btnRefreshModels.disabled = false;
+      dom.cfgModelSelect.disabled = false;
     }
   }
 

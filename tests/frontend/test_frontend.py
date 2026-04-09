@@ -157,3 +157,42 @@ def test_pywebviewready_timing(page: Page, ui_base_url: str) -> None:
 
     assert page.locator(".history-item").count() == 2
     assert "meeting.mp3" in page.locator("#history-list").inner_text()
+
+
+def test_speaker_rename_menu_is_explicit(page: Page, ui_base_url: str) -> None:
+    """
+    Speaker rename menu should clearly separate global rename vs current segment only.
+    """
+    _inject_and_navigate(page, ui_base_url)
+    page.wait_for_selector(".history-item-body", timeout=5000)
+    page.locator(".history-item-body").first.click()
+    page.wait_for_selector(".row-speaker", timeout=5000)
+
+    page.locator(".row-speaker").first.click()
+    page.wait_for_selector(".speaker-menu", timeout=5000)
+
+    menu_text = page.locator(".speaker-menu").inner_text()
+    assert 'Rename all 2 "SPEAKER_00" labels' in menu_text
+    assert "Rename only this segment" in menu_text
+
+
+def test_start_recording_shows_loading_state(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url)
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_selector("#btn-start-recording .btn-spinner", timeout=5000)
+
+    btn_text = page.locator("#btn-start-recording").inner_text()
+    assert "Loading" in btn_text
+
+
+def test_paused_realtime_shows_only_resume_button(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url)
+
+    page.evaluate("onRealtimeStarted('rt-test-001', 'realtime.wav')")
+    page.wait_for_selector("#realtime-control-bar:not([hidden])", timeout=5000)
+    page.evaluate("onRealtimePaused()")
+    page.wait_for_timeout(50)
+
+    assert page.locator("#rc-btn-pause").inner_text() == "▶"
+    assert page.locator("#rc-btn-play").count() == 0

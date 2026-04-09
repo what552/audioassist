@@ -12,6 +12,7 @@
  */
 const Realtime = (() => {
   let _recording = false;
+  let _loading = false;
   let _captureMode = 'mic';      // 'mic' | 'system' | 'mix'
   let _onStateChange = null;
   let _canStart = null;
@@ -67,7 +68,7 @@ const Realtime = (() => {
 
   async function _onToggle() {
     if (_recording) {
-      _setLoading(true);
+      _setLoading(true, 'Stopping…');
       try {
         await window.pywebview.api.stop_realtime();
       } catch (e) {
@@ -78,10 +79,10 @@ const Realtime = (() => {
     }
 
     if (_canStart && !_canStart()) return;
+    _setLoading(true, 'Loading…');
 
     // Preflight check for system / mix modes
     if (_captureMode !== 'mic') {
-      _setLoading(true);
       _setStatus('Checking…');
       let pre;
       try {
@@ -102,7 +103,6 @@ const Realtime = (() => {
     }
 
     const model_id = document.getElementById('sel-engine').value;
-    _setLoading(true);
     _setStatus('Loading…');
     try {
       await window.pywebview.api.start_realtime({
@@ -120,6 +120,7 @@ const Realtime = (() => {
 
   function onStarted(sessionId, wavPath) {
     _recording = true;
+    _loading = false;
     _setLoading(false);
     _disableModeButtons(true);
     dom.btnToggle.textContent = '⏹ Stop Recording';
@@ -132,6 +133,7 @@ const Realtime = (() => {
 
   function onStopped() {
     _recording = false;
+    _loading = false;
     _setLoading(false);
     _disableModeButtons(false);
     dom.btnToggle.textContent = '🎙 Start Recording';
@@ -171,6 +173,7 @@ const Realtime = (() => {
 
     // Fatal errors: reset the recording state
     _recording = false;
+    _loading = false;
     _setLoading(false);
     _disableModeButtons(false);
     dom.btnToggle.textContent = '🎙 Start Recording';
@@ -232,7 +235,20 @@ const Realtime = (() => {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   function _setLoading(active) {
+    let label = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 'Loading…';
+    _loading = active;
     dom.btnToggle.disabled = active;
+    dom.btnToggle.classList.toggle('loading', active);
+    if (active) {
+      dom.btnToggle.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span>${label}`;
+      return;
+    }
+
+    if (_recording) {
+      dom.btnToggle.textContent = '⏹ Stop Recording';
+      return;
+    }
+    dom.btnToggle.textContent = '🎙 Start Recording';
   }
 
   function _setStatus(text) {

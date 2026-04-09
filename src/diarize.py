@@ -10,6 +10,8 @@ import os
 import logging
 from typing import Callable, Optional
 
+import soundfile as sf
+
 from .model_manager import ModelManager
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,29 @@ class DiarizationEngine:
         logger.info(f"Diarization running on: {device}")
         self._pipeline.to(device)
 
+    def _prepare_audio_input(self, audio_path: str) -> dict:
+        """
+        Load standardized WAV into memory before calling pyannote.
+
+        This bypasses pyannote/torchcodec file decoding, which is brittle on
+        Windows when FFmpeg shared DLLs are missing or mismatched. The pipeline
+        module already normalizes media to mono WAV via ffmpeg before this step.
+        """
+        if not os.path.isfile(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path!r}")
+
+        import torch
+
+        waveform, sample_rate = sf.read(audio_path, always_2d=True, dtype="float32")
+        if waveform.size == 0:
+            raise ValueError(f"Audio file is empty: {audio_path!r}")
+
+        return {
+            "waveform": torch.from_numpy(waveform.T.copy()),
+            "sample_rate": sample_rate,
+            "uri": os.path.basename(audio_path),
+        }
+
     def diarize(self, audio_path: str) -> list[SpeakerSegment]:
         """Return speaker segments for the audio file."""
         if self._pipeline is None:
@@ -98,7 +123,8 @@ class DiarizationEngine:
             kwargs["num_speakers"] = self.num_speakers
 
         logger.info(f"Diarizing: {audio_path}")
-        result = self._pipeline(audio_path, **kwargs)
+        audio_input = self._prepare_audio_input(audio_path)
+        result = self._pipeline(audio_input, **kwargs)
 
         # pyannote 4.x returns DiarizeOutput; 3.x returns Annotation directly
         annotation = (

@@ -8,6 +8,8 @@ can be used by supplying base_url + api_key + model.
 from __future__ import annotations
 from typing import Iterator
 
+from .llm_api import validate_chat_config
+
 
 def summarize(
     text: str,
@@ -43,7 +45,8 @@ def summarize(
             "openai package required for summary. Run: pip install openai"
         )
 
-    client = OpenAI(base_url=base_url, api_key=api_key)
+    cfg = validate_chat_config(base_url, api_key, model)
+    client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"])
     messages = [
         {"role": "system", "content": prompt},
         {"role": "user",   "content": text},
@@ -52,7 +55,7 @@ def summarize(
     if stream:
         def _stream_gen() -> Iterator[str]:
             response = client.chat.completions.create(
-                model=model,
+                model=cfg["model"],
                 messages=messages,
                 stream=True,
             )
@@ -63,7 +66,7 @@ def summarize(
         return _stream_gen()
 
     response = client.chat.completions.create(
-        model=model,
+        model=cfg["model"],
         messages=messages,
         stream=False,
     )

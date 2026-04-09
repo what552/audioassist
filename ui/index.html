@@ -21,6 +21,13 @@
       <button id="btn-summary-toggle" class="btn-toolbar" title="Toggle summary panel">Summary</button>
     </div>
   </header>
+  <div id="runtime-banner" hidden>
+    <p id="runtime-banner-text"></p>
+    <div id="runtime-banner-actions" hidden>
+      <button id="btn-runtime-install" class="btn-primary btn-sm">Install CUDA Torch</button>
+      <button id="btn-runtime-continue" class="btn-link btn-sm">Continue on CPU</button>
+    </div>
+  </div>
 
   <!-- ── Main layout (3 columns) ─────────────────────────────────────────── -->
   <main id="main">
@@ -62,6 +69,7 @@
       <div id="setup-panel" hidden>
         <div class="setup-title">Welcome to AudioAssist</div>
         <p class="setup-subtitle">Download the required models to get started.<br>No account or token needed.</p>
+        <div id="setup-runtime-note" hidden></div>
         <div class="setup-items">
 
           <div class="setup-item">
@@ -149,7 +157,6 @@
         <div class="rc-center">
           <span id="rc-timer" class="rc-timer">00:00</span>
           <button id="rc-btn-pause" class="btn-rc" title="Pause / Resume">⏸</button>
-          <button id="rc-btn-play"  class="btn-rc" title="Play recording" disabled>▶</button>
         </div>
         <div class="rc-right">
           <button id="rc-btn-finish" class="btn-primary btn-sm">Finish</button>
@@ -241,6 +248,13 @@
       <div class="config-row">
         <label for="cfg-model">Model</label>
         <input id="cfg-model" type="text" placeholder="gpt-4o-mini" />
+        <div id="cfg-model-picker" class="config-inline-row" hidden>
+          <select id="cfg-model-select">
+            <option value="">Select an OpenRouter model…</option>
+          </select>
+          <button id="btn-refresh-models" class="btn-toolbar btn-sm" type="button">Refresh</button>
+        </div>
+        <div id="cfg-model-status" class="config-hint" hidden></div>
       </div>
       <div class="config-actions">
         <button id="btn-save-config" class="btn-primary btn-sm">Save</button>

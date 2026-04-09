@@ -34,6 +34,8 @@
     language: 'zh',
     segments: [
       { speaker: 'SPEAKER_00', start: 0.0, end: 3.5, text: 'Hello world.', words: [] },
+      { speaker: 'SPEAKER_01', start: 4.0, end: 6.0, text: 'Second line.', words: [] },
+      { speaker: 'SPEAKER_00', start: 6.5, end: 9.0, text: 'Third line.', words: [] },
     ],
   };
 
@@ -43,6 +45,10 @@
     api: {
       get_history:           async function () { return HISTORY_ITEMS.slice(); },
       get_api_config:        async function () { return { base_url: '', api_key: '', model: '' }; },
+      save_api_config:       async function () { return true; },
+      get_remote_models:     async function () { return { provider: 'openrouter', base_url: 'https://openrouter.ai/api/v1', model: '', models: [] }; },
+      get_obsidian_config:   async function () { return { folder: '', enabled: false }; },
+      get_storage_config:    async function () { return { output_dir: '', default_output_dir: '' }; },
       get_summary_templates: async function () { return []; },
       get_summary_versions:  async function () { return []; },
       get_transcript:        async function (jobId) {

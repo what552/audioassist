@@ -144,30 +144,45 @@ const Transcript = (() => {
   function _openSpeakerMenu(e, speakerEl, row) {
     _closeMenu();
     const oldName = speakerEl.textContent;
+    const occurrenceCount = _segments.filter(seg => seg.speaker === oldName).length;
 
     const menu = document.createElement('div');
     menu.className = 'speaker-menu';
     _speakerMenu = menu;
 
+    if (occurrenceCount > 1) {
+      const btnAll = document.createElement('button');
+      btnAll.className = 'speaker-menu-item';
+      btnAll.textContent = `Rename all ${occurrenceCount} "${oldName}" labels`;
+      btnAll.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        _closeMenu();
+        _startSpeakerInput(speakerEl, row, true);
+      });
+      menu.appendChild(btnAll);
+    }
+
     const btnSingle = document.createElement('button');
     btnSingle.className = 'speaker-menu-item';
-    btnSingle.textContent = 'Rename this';
+    btnSingle.textContent = occurrenceCount > 1
+      ? 'Rename only this segment'
+      : 'Rename this speaker label';
     btnSingle.addEventListener('click', (ev) => {
       ev.stopPropagation();
       _closeMenu();
+      if (
+        occurrenceCount > 1 &&
+        !window.confirm(
+          `"${oldName}" appears in ${occurrenceCount} segments. ` +
+          'This action changes only the current segment. Continue?'
+        )
+      ) {
+        return;
+      }
       _startSpeakerInput(speakerEl, row, false);
     });
 
-    const btnAll = document.createElement('button');
-    btnAll.className = 'speaker-menu-item';
-    btnAll.textContent = `Rename all "${oldName}"`;
-    btnAll.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      _closeMenu();
-      _startSpeakerInput(speakerEl, row, true);
-    });
-
-    menu.append(btnSingle, btnAll);
+    menu.appendChild(btnSingle);
     document.body.appendChild(menu);
 
     // Position below the clicked element

@@ -1,6 +1,7 @@
 """Tests for src/diarize.py — DiarizationEngine local-path loading."""
 import sys
 import types
+import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -96,7 +97,7 @@ class TestTokenHandling:
         monkeypatch.delenv("HF_TOKEN", raising=False)
         engine = DiarizationEngine(
             model_id="pyannote-diarization-3.1",
-            hf_token="hf_fake_token",
+            hf_token="test-token",
         )
 
         fake_mods, mock_pipeline_cls = _fake_modules()
@@ -114,9 +115,9 @@ class TestTokenHandling:
 
     def test_hf_token_env_var_used(self, monkeypatch):
         """HF_TOKEN env var is picked up when hf_token= not passed."""
-        monkeypatch.setenv("HF_TOKEN", "hf_from_env")
+        monkeypatch.setenv("HF_TOKEN", "from-env")
         engine = DiarizationEngine(model_id="pyannote-diarization-3.1")
-        assert engine.hf_token == "hf_from_env"
+        assert engine.hf_token == "from-env"
 
 
 # ── local path loading ────────────────────────────────────────────────────────
@@ -163,6 +164,78 @@ class TestLocalPathLoading:
             engine.load()  # second call — pipeline already set
 
         assert mock_pipeline_cls.from_pretrained.call_count == 1
+
+
+class TestInMemoryAudioLoading:
+    def test_prepare_audio_input_returns_pyannote_mapping(self, tmp_path):
+        audio_path = tmp_path / "audio.wav"
+        audio_path.write_bytes(b"fake")
+
+        fake_tensor = object()
+        fake_torch = MagicMock()
+        fake_torch.from_numpy.return_value = fake_tensor
+        waveform = np.array([[0.1], [0.2], [0.3]], dtype=np.float32)
+
+        with patch("src.diarize.sf.read", return_value=(waveform, 16000)) as mock_read, \
+             patch.dict(sys.modules, {"torch": fake_torch}):
+            engine = DiarizationEngine()
+            result = engine._prepare_audio_input(str(audio_path))
+
+        mock_read.assert_called_once_with(
+            str(audio_path),
+            always_2d=True,
+            dtype="float32",
+        )
+        fake_torch.from_numpy.assert_called_once()
+        tensor_arg = fake_torch.from_numpy.call_args[0][0]
+        assert tensor_arg.shape == (1, 3)
+        assert result == {
+            "waveform": fake_tensor,
+            "sample_rate": 16000,
+            "uri": "audio.wav",
+        }
+
+    def test_diarize_uses_in_memory_audio_mapping(self, tmp_path):
+        audio_path = tmp_path / "audio.wav"
+        audio_path.write_bytes(b"fake")
+
+        class FakeAnnotation:
+            def itertracks(self, yield_label=True):
+                return [
+                    (types.SimpleNamespace(start=0.0, end=1.5), None, "SPEAKER_00")
+                ]
+
+        annotation = FakeAnnotation()
+        pipeline = MagicMock(return_value=annotation)
+
+        fake_torch = MagicMock()
+        fake_torch.from_numpy.return_value = MagicMock()
+        waveform = np.array([[0.1], [0.2], [0.3]], dtype=np.float32)
+
+        engine = DiarizationEngine()
+        engine._pipeline = pipeline
+
+        with patch("src.diarize.sf.read", return_value=(waveform, 16000)), \
+             patch.dict(sys.modules, {"torch": fake_torch}):
+            segments = engine.diarize(str(audio_path))
+
+        pipeline_arg = pipeline.call_args[0][0]
+        assert set(pipeline_arg.keys()) == {"waveform", "sample_rate", "uri"}
+        assert pipeline_arg["sample_rate"] == 16000
+        assert pipeline_arg["uri"] == "audio.wav"
+        assert segments[0].speaker == "SPEAKER_00"
+        assert segments[0].start == 0.0
+        assert segments[0].end == 1.5
+
+    def test_prepare_audio_input_rejects_empty_audio(self, tmp_path):
+        audio_path = tmp_path / "empty.wav"
+        audio_path.write_bytes(b"fake")
+
+        with patch(
+            "src.diarize.sf.read",
+            return_value=(np.empty((0, 1), dtype=np.float32), 16000),
+        ), pytest.raises(ValueError, match="Audio file is empty"):
+            DiarizationEngine()._prepare_audio_input(str(audio_path))
 
 
 # ── unknown model_id ──────────────────────────────────────────────────────────

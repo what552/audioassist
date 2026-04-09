@@ -213,6 +213,8 @@ Click **Download** for each missing model. Downloads run in the background; you 
 
 If both models are already present (subsequent launches), the setup panel is skipped entirely.
 
+Release builds and installers are expected to ship **without** bundled model weights. End users download and manage ASR / diarization models from the first-run setup panel or the **Models** library inside the app. This keeps release artifacts smaller and avoids baking machine-specific caches into distributed builds.
+
 ## Realtime transcription
 
 Click **🎙 Start Recording** in the history sidebar footer to start live transcription.
@@ -252,7 +254,6 @@ If the microphone is unavailable when Mix mode starts (no mic connected, or micr
 3. Transcribed text appears in the realtime panel sentence by sentence as you speak.
 4. Use the **control bar** (bottom of the center panel) to manage the session:
    - **⏸ / ▶ (Pause / Resume)** — suspend and resume microphone capture mid-session; the timer pauses accordingly; the partial WAV is kept open and continues filling on resume.
-   - **▶ (Play)** — available in paused state; plays back the audio recorded so far.
    - **Finish** — stops recording, closes the WAV file, and triggers a **diarize-only** pipeline on the saved WAV (ASR is skipped — text is already captured live). The result is a speaker-labelled JSON + MD transcript.
 
 ### Notes

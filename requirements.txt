@@ -20,12 +20,14 @@ pyannote.audio>=4.0
 #   macOS:   brew install ffmpeg
 #   Linux:   sudo apt install ffmpeg
 #   Windows: https://ffmpeg.org/download.html (add to PATH)
+soundfile>=0.12      # stable WAV loading before diarization
 
 # Model downloading
 huggingface-hub>=0.23
 
 # LLM summary (OpenAI-compatible API)
 openai>=1.0
+socksio>=1.0
 
 # Realtime transcription
 sounddevice>=0.4      # cross-platform microphone input

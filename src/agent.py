@@ -23,6 +23,7 @@ import logging
 import os
 from typing import Any, Callable
 
+from .llm_api import validate_chat_config
 from .session_paths import resolve_summary_path, resolve_transcript_path
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,10 @@ class MeetingAgent:
         if _OpenAI is None:
             raise ImportError("openai package required for agent. Run: pip install openai")
 
+        cfg = validate_chat_config(self._base_url, self._api_key, self._model)
+        self._base_url = cfg["base_url"]
+        self._api_key = cfg["api_key"]
+        self._model = cfg["model"]
         client = _OpenAI(base_url=self._base_url, api_key=self._api_key)
 
         system_content = (
