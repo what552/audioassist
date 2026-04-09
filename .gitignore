@@ -36,6 +36,9 @@ htmlcov/
 # Build artifacts
 *.dmg
 *.app
+.venv-build-win/
+release/
+installer-build/
 
 # Swift Package Manager build output
 native/**/.build/
