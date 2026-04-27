@@ -60,7 +60,6 @@ const App = (() => {
   let _toastTimer    = null;
   let _runtimeStatus = null;
   let _runtimePromptDismissed = false;
-  let _runtimeInstallInFlight = false;
 
   function _startTimer() {
     _timerInterval = setInterval(() => { _timerSeconds++; _updateTimer(); }, 1000);
@@ -502,7 +501,6 @@ const App = (() => {
       runtimeBanner:      document.getElementById('runtime-banner'),
       runtimeBannerText:  document.getElementById('runtime-banner-text'),
       runtimeBannerActions: document.getElementById('runtime-banner-actions'),
-      btnRuntimeInstall:  document.getElementById('btn-runtime-install'),
       btnRuntimeContinue: document.getElementById('btn-runtime-continue'),
       centerPanel:        document.getElementById('center-panel'),
       setupPanel:         document.getElementById('setup-panel'),
@@ -601,7 +599,6 @@ const App = (() => {
     // Setup panel — download buttons
     dom.btnSetupAsr.addEventListener('click', () => _setupDownload('asr'));
     dom.btnSetupDiarizer.addEventListener('click', () => _setupDownload('diarizer'));
-    dom.btnRuntimeInstall?.addEventListener('click', _installRuntimeTorch);
     dom.btnRuntimeContinue?.addEventListener('click', _dismissRuntimeWarning);
 
     // Cancel transcription
@@ -674,8 +671,8 @@ const App = (() => {
     const message = runtime.message || '';
     const severity = runtime.severity || 'info';
     const showBanner = severity === 'warning' || severity === 'error';
-    const actionable = !!runtime.needs_cuda_torch;
-    const suppressed = actionable && _runtimePromptDismissed && !_runtimeInstallInFlight;
+    const dismissible = showBanner;
+    const suppressed = dismissible && _runtimePromptDismissed;
 
     if (dom.setupRuntimeNote) {
       dom.setupRuntimeNote.hidden = !message || suppressed;
@@ -690,16 +687,10 @@ const App = (() => {
     }
 
     if (dom.runtimeBannerActions) {
-      dom.runtimeBannerActions.hidden = !actionable || suppressed;
-    }
-    if (dom.btnRuntimeInstall) {
-      dom.btnRuntimeInstall.disabled = !actionable || _runtimeInstallInFlight;
-      dom.btnRuntimeInstall.textContent = _runtimeInstallInFlight
-        ? 'Installing…'
-        : 'Install CUDA Torch';
+      dom.runtimeBannerActions.hidden = !dismissible || suppressed;
     }
     if (dom.btnRuntimeContinue) {
-      dom.btnRuntimeContinue.disabled = _runtimeInstallInFlight;
+      dom.btnRuntimeContinue.disabled = false;
     }
 
     if (dom.selEngine && runtime.needs_cuda_torch) {
@@ -720,54 +711,6 @@ const App = (() => {
   function _dismissRuntimeWarning() {
     _runtimePromptDismissed = true;
     if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
-  }
-
-  async function _installRuntimeTorch() {
-    if (!window.pywebview?.api?.install_cuda_torch || _runtimeInstallInFlight) return;
-    _runtimePromptDismissed = false;
-    _runtimeInstallInFlight = true;
-    if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
-
-    try {
-      const result = await window.pywebview.api.install_cuda_torch();
-      if (result?.status === 'busy') {
-        _runtimeInstallInFlight = false;
-        if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
-        showToast(result.error || 'Finish the current transcription first.', 4000);
-      }
-    } catch (e) {
-      _runtimeInstallInFlight = false;
-      if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
-      showToast(`CUDA torch install failed: ${e}`, 5000);
-    }
-  }
-
-  function _onRuntimeTorchInstallStarted() {
-    _runtimeInstallInFlight = true;
-    if (_runtimeStatus) _applyRuntimeStatus(_runtimeStatus);
-    showToast('Installing CUDA-enabled PyTorch…', 3000);
-  }
-
-  function _onRuntimeTorchInstallComplete(status, restartRequired) {
-    _runtimeInstallInFlight = false;
-    _runtimePromptDismissed = false;
-    _applyRuntimeStatus(status || _runtimeStatus);
-    if (restartRequired) {
-      showToast('CUDA torch installed. Restart AudioAssist before testing Qwen on GPU.', 6000);
-    } else {
-      showToast('CUDA torch installation finished.', 4000);
-    }
-  }
-
-  function _onRuntimeTorchInstallError(message) {
-    _runtimeInstallInFlight = false;
-    _runtimePromptDismissed = false;
-    const fallback = _runtimeStatus
-      ? { ..._runtimeStatus, severity: 'error', message: `CUDA torch install failed: ${message}` }
-      : { severity: 'error', message: `CUDA torch install failed: ${message}`, needs_cuda_torch: true };
-    _applyRuntimeStatus(fallback);
-    showToast(`CUDA torch install failed: ${message}`, 6000);
-    _refreshRuntimeStatus();
   }
 
   function _setSetupItem(key, ready) {
@@ -1024,9 +967,6 @@ const App = (() => {
 
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
            onTranscribeCancel, onTranscribeRefined,
-           onRuntimeTorchInstallStarted: _onRuntimeTorchInstallStarted,
-           onRuntimeTorchInstallComplete: _onRuntimeTorchInstallComplete,
-           onRuntimeTorchInstallError: _onRuntimeTorchInstallError,
            refreshEngineSelector: _populateEngineSelector,
            openExportMenu, showToast };
 })();
@@ -1038,10 +978,6 @@ function onTranscribeComplete(jobId, jsonPath, hasRefine) { App.onTranscribeComp
 function onTranscribeError(jobId, message)          { App.onTranscribeError(jobId, message); }
 function onTranscribeCancel(jobId)                  { App.onTranscribeCancel(jobId); }
 function onTranscribeRefined(jobId)                 { App.onTranscribeRefined(jobId); }
-function onRuntimeTorchInstallStarted()             { App.onRuntimeTorchInstallStarted(); }
-function onRuntimeTorchInstallComplete(status, restartRequired) { App.onRuntimeTorchInstallComplete(status, restartRequired); }
-function onRuntimeTorchInstallError(message)        { App.onRuntimeTorchInstallError(message); }
-
 function onModelDownloadProgress(name, percent) {
   console.log(`[model] ${name} ${(percent * 100).toFixed(0)}%`);
 

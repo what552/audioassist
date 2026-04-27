@@ -1410,35 +1410,6 @@ class API:
 
         return get_runtime_status(refresh=True)
 
-    def install_cuda_torch(self) -> dict:
-        """
-        Install an official CUDA-enabled PyTorch build for the current interpreter.
-
-        Returns {"status": "started"} immediately and reports completion/error to JS.
-        """
-        with _cancel_flags_mutex:
-            if _cancel_flags:
-                return {
-                    "status": "busy",
-                    "error": "Finish or cancel the current transcription before installing CUDA PyTorch.",
-                }
-
-        def _run():
-            try:
-                from src.runtime_env import install_cuda_torch
-
-                _push("onRuntimeTorchInstallStarted()")
-                status = install_cuda_torch()
-                _push(
-                    f"onRuntimeTorchInstallComplete({json.dumps(status)}, true)"
-                )
-            except Exception as exc:
-                logger.exception("CUDA torch install failed")
-                _push(f"onRuntimeTorchInstallError({json.dumps(str(exc))})")
-
-        threading.Thread(target=_run, daemon=True).start()
-        return {"status": "started"}
-
     def get_models(self) -> list[dict]:
         """Return model catalog with download status."""
         from src.model_manager import ModelManager

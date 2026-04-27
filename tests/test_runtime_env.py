@@ -13,7 +13,7 @@ class TestGetRuntimeStatus:
     def test_warns_when_nvidia_gpu_present_but_torch_is_cpu_only(self):
         with patch("src.runtime_env._run_nvidia_smi", return_value=(True, "RTX 4070", "591.86")), \
              patch(
-                 "src.runtime_env._probe_torch_runtime",
+                 "src.runtime_env._inspect_torch_runtime",
                  return_value={
                      "torch_version": "2.11.0+cpu",
                      "torch_cuda_build": None,
@@ -29,12 +29,11 @@ class TestGetRuntimeStatus:
         assert status["preferred_device"] == "cpu"
         assert status["severity"] == "warning"
         assert "CPU-only PyTorch" in status["message"]
-        assert status["install_plan"]["index_url"].endswith("/cu128")
 
     def test_reports_cuda_ready_when_torch_can_use_gpu(self):
         with patch("src.runtime_env._run_nvidia_smi", return_value=(True, "RTX 4070", "591.86")), \
              patch(
-                 "src.runtime_env._probe_torch_runtime",
+                 "src.runtime_env._inspect_torch_runtime",
                  return_value={
                      "torch_version": "2.11.0+cu128",
                      "torch_cuda_build": "12.8",
@@ -53,7 +52,7 @@ class TestGetRuntimeStatus:
     def test_reports_cpu_mode_when_no_nvidia_gpu_detected(self):
         with patch("src.runtime_env._run_nvidia_smi", return_value=(False, None, None)), \
              patch(
-                 "src.runtime_env._probe_torch_runtime",
+                 "src.runtime_env._inspect_torch_runtime",
                  return_value={
                      "torch_version": "2.11.0+cpu",
                      "torch_cuda_build": None,
@@ -69,9 +68,3 @@ class TestGetRuntimeStatus:
         assert status["preferred_device"] == "cpu"
         assert status["severity"] == "info"
         assert "No NVIDIA CUDA device detected" in status["message"]
-
-    def test_install_plan_uses_current_python_executable(self):
-        plan = runtime_env.get_cuda_torch_install_plan()
-        assert "python.exe" in plan["command"].lower()
-        assert plan["torch_version"] == "2.10.0"
-        assert plan["torchaudio_version"] == "2.10.0"

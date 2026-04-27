@@ -5,7 +5,6 @@ import os
 import pytest
 from unittest.mock import patch
 
-import app as app_module
 from app import API
 import src.model_manager as _mm_module
 from src.model_manager import _DIARIZER_REQUIRED_FILES
@@ -96,29 +95,3 @@ class TestGetSetupStatus:
         with patch("src.runtime_env.get_runtime_status", return_value=fake_runtime):
             status = api.get_setup_status()
         assert status["runtime"] == fake_runtime
-
-    def test_install_cuda_torch_returns_busy_when_transcription_running(self, env):
-        api, _ = env
-        with patch.dict(app_module._cancel_flags, {"job-1": object()}, clear=True):
-            result = api.install_cuda_torch()
-        assert result["status"] == "busy"
-
-    def test_install_cuda_torch_starts_background_worker(self, env):
-        api, _ = env
-        pushes = []
-
-        class _ImmediateThread:
-            def __init__(self, target, daemon=True):
-                self._target = target
-
-            def start(self):
-                self._target()
-
-        with patch("src.runtime_env.install_cuda_torch", return_value={"preferred_device": "cuda"}), \
-             patch.object(app_module, "_push", side_effect=pushes.append), \
-             patch.object(app_module.threading, "Thread", _ImmediateThread):
-            result = api.install_cuda_torch()
-
-        assert result["status"] == "started"
-        assert any("onRuntimeTorchInstallStarted" in item for item in pushes)
-        assert any("onRuntimeTorchInstallComplete" in item for item in pushes)

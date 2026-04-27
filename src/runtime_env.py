@@ -1,19 +1,11 @@
 """
-Runtime environment detection and CUDA torch installation helpers.
+Runtime environment detection helpers.
 """
 from __future__ import annotations
 
 from functools import lru_cache
-import json
 import platform
 import subprocess
-import sys
-
-
-_TORCH_CUDA_CHANNEL = "cu128"
-_TORCH_VERSION = "2.10.0"
-_TORCHAUDIO_VERSION = "2.10.0"
-_TORCH_INDEX_URL = f"https://download.pytorch.org/whl/{_TORCH_CUDA_CHANNEL}"
 
 
 def _run_nvidia_smi() -> tuple[bool, str | None, str | None]:
@@ -47,37 +39,15 @@ def _run_nvidia_smi() -> tuple[bool, str | None, str | None]:
     return True, gpu_name, driver_version
 
 
-def _probe_torch_runtime() -> dict:
-    """Inspect torch in a subprocess so the current app process does not lock it."""
-    script = (
-        "import json\n"
-        "try:\n"
-        " import torch\n"
-        " data = {\n"
-        "  'torch_version': str(torch.__version__),\n"
-        "  'torch_cuda_build': torch.version.cuda,\n"
-        "  'torch_cuda_available': bool(torch.cuda.is_available()),\n"
-        "  'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU',\n"
-        "  'torch_error': None,\n"
-        " }\n"
-        "except Exception as exc:\n"
-        " data = {\n"
-        "  'torch_version': None,\n"
-        "  'torch_cuda_build': None,\n"
-        "  'torch_cuda_available': False,\n"
-        "  'device_name': 'CPU',\n"
-        "  'torch_error': str(exc),\n"
-        " }\n"
-        "print(json.dumps(data))\n"
-    )
+def _inspect_torch_runtime() -> dict:
+    """
+    Inspect the current torch runtime in-process.
 
+    This avoids subprocess probing that becomes brittle once the app is frozen
+    into a packaged executable.
+    """
     try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
+        import torch
     except Exception as exc:
         return {
             "torch_version": None,
@@ -87,47 +57,20 @@ def _probe_torch_runtime() -> dict:
             "torch_error": str(exc),
         }
 
-    if result.returncode != 0:
-        error = result.stderr.strip() or result.stdout.strip() or "torch probe failed"
-        return {
-            "torch_version": None,
-            "torch_cuda_build": None,
-            "torch_cuda_available": False,
-            "device_name": "CPU",
-            "torch_error": error,
-        }
-
-    try:
-        return json.loads(result.stdout.strip())
-    except json.JSONDecodeError:
-        return {
-            "torch_version": None,
-            "torch_cuda_build": None,
-            "torch_cuda_available": False,
-            "device_name": "CPU",
-            "torch_error": result.stdout.strip() or "torch probe returned invalid JSON",
-        }
-
-
-def get_cuda_torch_install_plan() -> dict:
+    cuda_available = bool(torch.cuda.is_available())
     return {
-        "channel": _TORCH_CUDA_CHANNEL,
-        "torch_version": _TORCH_VERSION,
-        "torchaudio_version": _TORCHAUDIO_VERSION,
-        "index_url": _TORCH_INDEX_URL,
-        "command": (
-            f'"{sys.executable}" -m pip install --upgrade --force-reinstall '
-            f"torch=={_TORCH_VERSION} torchaudio=={_TORCHAUDIO_VERSION} "
-            f"--index-url {_TORCH_INDEX_URL}"
-        ),
+        "torch_version": str(torch.__version__),
+        "torch_cuda_build": torch.version.cuda,
+        "torch_cuda_available": cuda_available,
+        "device_name": torch.cuda.get_device_name(0) if cuda_available else "CPU",
+        "torch_error": None,
     }
 
 
 @lru_cache(maxsize=1)
 def _detect_runtime_status() -> dict:
     has_nvidia_gpu, gpu_name, driver_version = _run_nvidia_smi()
-    torch_info = _probe_torch_runtime()
-    install_plan = get_cuda_torch_install_plan()
+    torch_info = _inspect_torch_runtime()
 
     status = {
         "platform": platform.system(),
@@ -144,7 +87,6 @@ def _detect_runtime_status() -> dict:
         "severity": "info",
         "message": "",
         "needs_cuda_torch": False,
-        "install_plan": install_plan,
     }
 
     if torch_info["torch_error"]:
@@ -169,7 +111,7 @@ def _detect_runtime_status() -> dict:
         status["message"] = (
             f"Detected NVIDIA GPU ({gpu_name}), but this Python environment uses "
             f"CPU-only PyTorch ({torch_info['torch_version']}). Qwen will run on CPU "
-            "until a CUDA-enabled PyTorch build is installed for this interpreter."
+            "until a CUDA-enabled PyTorch build is installed for this environment."
         )
         return status
 
@@ -180,7 +122,7 @@ def _detect_runtime_status() -> dict:
             f"Detected NVIDIA GPU ({gpu_name}) and a CUDA PyTorch build "
             f"({torch_info['torch_version']}, CUDA {torch_info['torch_cuda_build']}), "
             "but torch.cuda.is_available() is false. Check the NVIDIA driver/runtime "
-            "for this Python environment."
+            "for this environment."
         )
         return status
 
@@ -194,33 +136,3 @@ def get_runtime_status(refresh: bool = False) -> dict:
     if refresh:
         _detect_runtime_status.cache_clear()
     return dict(_detect_runtime_status())
-
-
-def install_cuda_torch() -> dict:
-    """Install an official CUDA-enabled torch/torchaudio pair for this interpreter."""
-    plan = get_cuda_torch_install_plan()
-    command = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-        "--force-reinstall",
-        f"torch=={plan['torch_version']}",
-        f"torchaudio=={plan['torchaudio_version']}",
-        "--index-url",
-        plan["index_url"],
-    ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=60 * 30,
-    )
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        stdout = (result.stdout or "").strip()
-        message = stderr or stdout or "pip install failed"
-        raise RuntimeError(message)
-
-    return get_runtime_status(refresh=True)
