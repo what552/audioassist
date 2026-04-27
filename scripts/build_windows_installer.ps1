@@ -2,7 +2,7 @@ param(
     [string]$DistDir = ".\dist\AudioAssist",
     [string]$OutputDir = ".\release",
     [string]$AppVersion = "",
-    [string]$Publisher = "stevenSHN",
+    [string]$Publisher = "AudioAssist",
     [string]$InnoSetupCompiler = "",
     [switch]$DownloadWebView2,
     [switch]$Clean

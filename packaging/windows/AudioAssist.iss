@@ -3,7 +3,7 @@
   #define MyAppVersion "0.0.0-local"
 #endif
 #ifndef MyAppPublisher
-  #define MyAppPublisher "stevenSHN"
+  #define MyAppPublisher "AudioAssist"
 #endif
 #ifndef MySourceDir
   #error MySourceDir must point to the built PyInstaller onedir directory.
