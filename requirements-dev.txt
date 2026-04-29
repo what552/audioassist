@@ -1,0 +1,5 @@
+-r requirements-runtime.txt
+
+# Frontend / integration test tooling
+playwright>=1.40
+pytest-playwright>=0.4

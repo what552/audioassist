@@ -79,6 +79,19 @@ class TestToWav:
         assert is_temp is True
         assert result_path.endswith(".wav")
 
+    def test_to_wav_uses_resolved_ffmpeg_path(self, tmp_path):
+        mp3 = tmp_path / "audio.mp3"
+        mp3.write_bytes(b"fake mp3 data")
+
+        ok = MagicMock()
+        ok.returncode = 0
+
+        with patch("src.audio_utils.resolve_tool_path", return_value="C:/bundle/ffmpeg.exe"), \
+             patch("subprocess.run", return_value=ok) as mock_run:
+            to_wav(str(mp3))
+
+        assert mock_run.call_args[0][0][0] == "C:/bundle/ffmpeg.exe"
+
     def test_ffmpeg_failure_raises(self, tmp_path):
         mp4 = tmp_path / "audio.mp4"
         mp4.write_bytes(b"fake mp4 data")
@@ -102,6 +115,17 @@ class TestGetDuration:
 
         with patch("subprocess.run", return_value=ok):
             assert get_duration("dummy.mp3") == pytest.approx(123.456)
+
+    def test_uses_resolved_ffprobe_path(self):
+        ok = MagicMock()
+        ok.returncode = 0
+        ok.stdout = "1.25\n"
+
+        with patch("src.audio_utils.resolve_tool_path", return_value="C:/bundle/ffprobe.exe"), \
+             patch("subprocess.run", return_value=ok) as mock_run:
+            assert get_duration("dummy.mp3") == pytest.approx(1.25)
+
+        assert mock_run.call_args[0][0][0] == "C:/bundle/ffprobe.exe"
 
     def test_ffprobe_failure_raises(self):
         fail = MagicMock()
@@ -190,3 +214,12 @@ class TestSplitToChunks:
         # First chunk should have been cleaned up
         assert first_chunk_path is not None
         assert not os.path.exists(first_chunk_path)
+
+    def test_split_to_chunks_uses_resolved_ffmpeg_path(self):
+        with patch("src.audio_utils.get_duration", return_value=700.0), \
+             patch("src.audio_utils.resolve_tool_path", return_value="C:/bundle/ffmpeg.exe"), \
+             patch("subprocess.run", return_value=self._ok()) as mock_run:
+            split_to_chunks("audio.wav", chunk_sec=300)
+
+        first_cmd = mock_run.call_args_list[0][0][0]
+        assert first_cmd[0] == "C:/bundle/ffmpeg.exe"
