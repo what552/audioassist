@@ -323,6 +323,24 @@ class TestEngineOption:
 
         assert captured.get("engine") == "qwen"
 
+    def test_model_id_is_forwarded_to_mic_transcriber(self):
+        api = API()
+        captured = {}
+
+        def capture_init(*args, **kwargs):
+            captured.update(kwargs)
+            inst = MagicMock()
+            inst.start.return_value = None
+            return inst
+
+        with patch("src.realtime.RealtimeTranscriber", side_effect=capture_init), \
+             patch.object(app_module, "_push"):
+            api.start_realtime({"model_id": "whisper-medium"})
+            _wait(0.3)
+
+        assert captured["engine"] == "whisper"
+        assert captured["model_id"] == "whisper-medium"
+
 
 # ── delete_model ──────────────────────────────────────────────────────────────
 

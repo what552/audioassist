@@ -14,20 +14,11 @@ from .asr_whisper import WhisperASREngine
 from .diarize import DiarizationEngine, SpeakerSegment, DEFAULT_DIARIZER_MODEL
 from .merge import SpeakerBlock, merge, to_json, to_markdown
 from .audio_utils import to_wav, split_to_chunks
+from .model_errors import ModelNotReadyError
 from .model_manager import ModelManager
 from . import checkpoint
 
 logger = logging.getLogger(__name__)
-
-
-class ModelNotReadyError(RuntimeError):
-    def __init__(self, model_id: str, reason: str):
-        self.model_id = model_id
-        self.reason = reason  # "model_not_downloaded" | "model_incomplete"
-        super().__init__(
-            f"Model '{model_id}' is not ready: {reason.replace('_', ' ')}. "
-            "Please download it from the Model Library."
-        )
 
 
 def _validate_model_local(mm: ModelManager, model_id: str) -> str:

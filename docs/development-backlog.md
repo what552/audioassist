@@ -17,7 +17,7 @@ Priority meanings:
 
 | Order | ID | Priority | Status | Task |
 |---:|---|---|---|---|
-| 1 | RUNTIME-01 | P0 | Ready | Enforce local-model-only loading in both realtime capture implementations |
+| 1 | RUNTIME-01 | P0 | Complete | Enforce local-model-only loading in both realtime capture implementations |
 | 2 | ENV-01 | P1 | Ready | Unify development, CLI, test, and package builds on the repository `.venv` |
 | 3 | QWEN-01 | P1 | Ready after ENV-01 | Add the internal Qwen backend protocol/factory and deterministic model cleanup |
 | 4 | QWEN-02 | P1 | Depends on QWEN-01 | Implement and package the full-precision MLX Qwen adapter |
@@ -187,7 +187,7 @@ scheduled twice:
 | Realtime finish full transcription | Superseded by fast realtime result plus explicit manual high-accuracy refinement |
 | ModelManager local path validation | Complete, including HF-cache key-file validation |
 | Local-only file transcription | Complete; retain as a regression requirement for every backend |
-| Local-only realtime transcription | Still open and promoted to P0 as RUNTIME-01 |
+| Local-only realtime transcription | Complete under RUNTIME-01; retain as a regression requirement |
 | Real-audio smoke test | Complete for R03-a and retained as a recurring release gate |
 | macOS DMG support | Implemented; reproducible clean-machine release verification remains REL-01 |
 | Windows EXE | Still open under WIN-AUDIO-01 |

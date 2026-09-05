@@ -499,12 +499,23 @@ class TestLoadModels:
         with patch.dict(sys.modules, {
             "silero_vad": mock_silero,
             "src.asr_whisper": mock_asr_whisper_mod,
-        }):
+        }), patch(
+            "src.realtime.resolve_realtime_model",
+            return_value=types.SimpleNamespace(
+                engine="whisper",
+                model_id="whisper-medium",
+                local_path="/models/whisper-medium",
+            ),
+        ):
             import src.realtime as m
-            rt = m.RealtimeTranscriber(engine="whisper")
+            rt = m.RealtimeTranscriber(
+                engine="whisper", model_id="whisper-medium"
+            )
             rt._load_models()
 
-        mock_whisper_cls.assert_called_once_with()  # WhisperASREngine() — no with_timestamps
+        mock_whisper_cls.assert_called_once_with(
+            model_path="/models/whisper-medium"
+        )
         mock_whisper_cls.return_value.load.assert_called_once()
 
     def test_qwen_engine_uses_ASREngine(self):
@@ -519,12 +530,22 @@ class TestLoadModels:
         with patch.dict(sys.modules, {
             "silero_vad": mock_silero,
             "src.asr": mock_asr_mod,
-        }):
+        }), patch(
+            "src.realtime.resolve_realtime_model",
+            return_value=types.SimpleNamespace(
+                engine="qwen",
+                model_id="qwen3-asr-1.7b",
+                local_path="/models/qwen",
+            ),
+        ):
             import src.realtime as m
             rt = m.RealtimeTranscriber(engine="qwen")
             rt._load_models()
 
-        mock_asr_cls.assert_called_once_with(with_timestamps=False)
+        mock_asr_cls.assert_called_once_with(
+            with_timestamps=False,
+            model_path="/models/qwen",
+        )
         mock_asr_cls.return_value.load.assert_called_once()
 
 

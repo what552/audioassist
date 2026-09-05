@@ -27,6 +27,8 @@ import threading
 import wave
 from typing import Callable, Optional
 
+from .realtime_models import resolve_realtime_model
+
 logger = logging.getLogger(__name__)
 
 # Audio constants — must match RealtimeTranscriber and the Swift helper
@@ -81,6 +83,7 @@ class NativeCaptureHelper:
         on_error: Optional[Callable] = None,
         output_path: Optional[str] = None,
         helper_path: Optional[str] = None,
+        model_id: Optional[str] = None,
     ) -> None:
         self._mode        = mode
         self._engine      = engine
@@ -88,6 +91,7 @@ class NativeCaptureHelper:
         self._on_error    = on_error  or (lambda msg: None)
         self._output_path = output_path        # WAV path written by the helper
         self._helper_path = helper_path or _default_helper_path()
+        self._model_id    = model_id
 
         # Subprocess / IPC handles
         self._process: Optional[subprocess.Popen] = None
@@ -337,14 +341,28 @@ class NativeCaptureHelper:
         self._vad = load_silero_vad()
         logger.info("Silero VAD loaded (native capture)")
 
-        if self._engine == "whisper":
+        resolved = resolve_realtime_model(
+            engine=self._engine,
+            model_id=self._model_id,
+        )
+        self._engine = resolved.engine
+        self._model_id = resolved.model_id
+
+        if resolved.engine == "whisper":
             from .asr_whisper import WhisperASREngine
-            self._asr = WhisperASREngine()
+            self._asr = WhisperASREngine(model_path=resolved.local_path)
         else:
             from .asr import ASREngine
-            self._asr = ASREngine(with_timestamps=False)
+            self._asr = ASREngine(
+                with_timestamps=False,
+                model_path=resolved.local_path,
+            )
         self._asr.load()
-        logger.info("ASR engine loaded for native capture: %s", self._engine)
+        logger.info(
+            "ASR engine loaded for native capture: %s (%s)",
+            self._engine,
+            resolved.local_path,
+        )
 
     # ── Event reader (helper stdout → NDJSON) ──────────────────────────────────
 

@@ -10,8 +10,10 @@ import io
 import os
 import queue
 import signal
+import sys
 import threading
 import time
+import types
 from unittest.mock import MagicMock, patch, call
 
 import pytest
@@ -361,6 +363,65 @@ class TestGetSegments:
         assert len(h._segments) == 1  # original unchanged
 
 
+class TestLocalModelLoading:
+    def test_qwen_uses_validated_local_path_without_aligner(self):
+        asr_class = MagicMock()
+        asr_module = types.ModuleType("src.asr")
+        asr_module.ASREngine = asr_class
+        silero = types.ModuleType("silero_vad")
+        silero.load_silero_vad = MagicMock(return_value=MagicMock())
+
+        with patch.dict(sys.modules, {"src.asr": asr_module, "silero_vad": silero}), \
+             patch(
+                 "src.native_capture.resolve_realtime_model",
+                 return_value=types.SimpleNamespace(
+                     engine="qwen",
+                     model_id="qwen3-asr-1.7b",
+                     local_path="/models/qwen",
+                 ),
+             ):
+            helper = _helper()
+            helper._load_models()
+
+        asr_class.assert_called_once_with(
+            with_timestamps=False,
+            model_path="/models/qwen",
+        )
+        asr_class.return_value.load.assert_called_once()
+
+    def test_whisper_uses_validated_local_path(self):
+        whisper_class = MagicMock()
+        whisper_module = types.ModuleType("src.asr_whisper")
+        whisper_module.WhisperASREngine = whisper_class
+        silero = types.ModuleType("silero_vad")
+        silero.load_silero_vad = MagicMock(return_value=MagicMock())
+
+        with patch.dict(
+            sys.modules,
+            {"src.asr_whisper": whisper_module, "silero_vad": silero},
+        ), patch(
+            "src.native_capture.resolve_realtime_model",
+            return_value=types.SimpleNamespace(
+                engine="whisper",
+                model_id="whisper-medium",
+                local_path="/models/whisper-medium",
+            ),
+        ):
+            helper = NativeCaptureHelper(
+                mode="system",
+                engine="whisper",
+                model_id="whisper-medium",
+                output_path="/tmp/cap.wav",
+                helper_path="/fake/helper",
+            )
+            helper._load_models()
+
+        whisper_class.assert_called_once_with(
+            model_path="/models/whisper-medium"
+        )
+        whisper_class.return_value.load.assert_called_once()
+
+
 # ── app.py integration: capture_mode routing ──────────────────────────────────
 
 class TestAppCaptureMode:
@@ -429,6 +490,32 @@ class TestAppCaptureMode:
             time.sleep(0.3)
 
         assert captured.get("backend") == "NativeCaptureHelper"
+
+    def test_system_mode_forwards_selected_model_id(self):
+        import app as app_module
+        from app import API
+
+        api = API()
+        captured = {}
+
+        def capture_nch_init(*args, **kwargs):
+            captured.update(kwargs)
+            inst = MagicMock()
+            inst.start.return_value = None
+            inst._output_path = "/tmp/test.wav"
+            return inst
+
+        with patch("src.native_capture.NativeCaptureHelper", side_effect=capture_nch_init), \
+             patch.object(app_module, "_push"), \
+             patch.object(app_module, "OUTPUT_DIR", "/tmp"):
+            api.start_realtime({
+                "capture_mode": "system",
+                "model_id": "whisper-medium",
+            })
+            time.sleep(0.3)
+
+        assert captured["engine"] == "whisper"
+        assert captured["model_id"] == "whisper-medium"
 
 
 # ── app.py: preflight_capture ─────────────────────────────────────────────────

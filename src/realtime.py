@@ -22,6 +22,8 @@ import threading
 import wave
 from typing import Callable, Optional
 
+from .realtime_models import resolve_realtime_model
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -44,11 +46,13 @@ class RealtimeTranscriber:
         on_result: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
         output_path: Optional[str] = None,
+        model_id: Optional[str] = None,
     ):
         self._engine      = engine
         self._on_result   = on_result or (lambda text: None)
         self._on_error    = on_error  or (lambda msg: None)
         self._output_path = output_path
+        self._model_id    = model_id
 
         self._running    = False
         self._stream     = None
@@ -155,14 +159,26 @@ class RealtimeTranscriber:
         self._vad = load_silero_vad()
         logger.info("Silero VAD loaded")
 
-        if self._engine == "whisper":
+        resolved = resolve_realtime_model(
+            engine=self._engine,
+            model_id=self._model_id,
+        )
+        self._engine = resolved.engine
+        self._model_id = resolved.model_id
+
+        if resolved.engine == "whisper":
             from .asr_whisper import WhisperASREngine
-            self._asr = WhisperASREngine()
+            self._asr = WhisperASREngine(model_path=resolved.local_path)
         else:
             from .asr import ASREngine
-            self._asr = ASREngine(with_timestamps=False)
+            self._asr = ASREngine(
+                with_timestamps=False,
+                model_path=resolved.local_path,
+            )
         self._asr.load()
-        logger.info("ASR engine loaded: %s", self._engine)
+        logger.info(
+            "ASR engine loaded: %s (%s)", self._engine, resolved.local_path
+        )
 
     # ── Audio callback (runs in sounddevice audio thread) ─────────────────────
 

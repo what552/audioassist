@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The current `main` baseline is 669 automated tests: 666 Python/backend tests and
+The RUNTIME-01 integration baseline is 680 automated tests: 677 Python/backend tests and
 3 browser tests. Real model, audio-device, permission, and packaged-app behavior remains
 release-level manual validation rather than CI coverage.
 
@@ -41,8 +41,8 @@ The c02 gate verified the 512-sample mix-buffer drain behavior, Screen Recording
 
 ## Next product work
 
-Use [the authoritative development backlog](development-backlog.md). First close the
-realtime local-model-only gap, then unify the repository environment, introduce the Qwen
+Use [the authoritative development backlog](development-backlog.md). The realtime
+local-model-only gap is closed; next unify the repository environment, introduce the Qwen
 backend seam/lifecycle, build the MLX adapter, and run its benchmark gate. HTTP/MCP work
 remains a separate milestone and must not imply durable background work until lifecycle,
 locking, recovery, and cancellation are designed.

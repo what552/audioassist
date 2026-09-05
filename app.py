@@ -672,6 +672,7 @@ class API:
                     rt = NativeCaptureHelper(
                         mode=capture_mode,
                         engine=engine,
+                        model_id=model_id,
                         output_path=output_path,
                         on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
@@ -681,6 +682,7 @@ class API:
                     from src.realtime import RealtimeTranscriber
                     rt = RealtimeTranscriber(
                         engine=engine,
+                        model_id=model_id,
                         output_path=output_path,
                         on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
