@@ -11,9 +11,12 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03 has
 | R01 | Complete | File transcription, diarization, timestamp playback, editing, summary generation, realtime transcription foundation |
 | R02-a to R02-b5 | Complete | Three-column UI, session lifecycle, model setup and management, Summary Agent, Obsidian sync, checkpoint/resume, batch queue, re-transcription |
 | R02-b6 | Complete | macOS microphone/system/mix capture, ScreenCaptureKit helper, manual high-accuracy refinement, DMG packaging |
-| R03 | Not started | Planned CLI and HTTP resource/agent APIs |
+| R03-a | In progress | Local session resources, synchronous transcription and summary CLI with stable JSON output |
+| R03-b | Not started | Planned HTTP resource/agent APIs and explicit background-job lifecycle |
 
-The maintenance baseline is 602 automated tests: 599 Python/backend tests and 3 browser tests. Real model, audio-device, permission, and packaged-app behavior remains release-level manual validation rather than CI coverage.
+The R03-a feature branch baseline is 613 automated tests: 610 Python/backend tests and
+3 browser tests. Real model, audio-device, permission, and packaged-app behavior remains
+release-level manual validation rather than CI coverage.
 
 ## Historical gate record
 
@@ -34,7 +37,11 @@ The c02 gate verified the 512-sample mix-buffer drain behavior, Screen Recording
 - Use a separate research task for uncertain platform, hardware, API, or architecture questions.
 - Review the exact implementation commit for medium/high-risk changes; routine fixes can be implemented and tested in one task.
 - Archive or hand off a task after integration, then remove its worktree and branch.
+- Root development rules now live in `AGENTS.md`; a permanent builder role is no longer required.
 
 ## Next product work
 
-Choose the next milestone from the public roadmap rather than reviving the old role branches. The largest candidates are Windows system-audio capture, cloud ASR, mix-mode echo handling, distribution hardening, and R03 service mode.
+Finish and integrate R03-a before starting R03-b. The current R03-a scope is the shared
+application service, local CLI contract, session/status resources, synchronous file
+transcription, and summary generation. HTTP and durable background submission remain a
+separate milestone.

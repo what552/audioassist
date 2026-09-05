@@ -204,9 +204,9 @@ class TestCopyResilience:
         pushes = []
 
         with patch("src.pipeline.run", side_effect=_fake_pipeline), \
-             patch.object(app_module, "shutil") as mock_shutil, \
+             patch("src.service.shutil.copy2") as mock_copy, \
              patch.object(app_module, "_push", side_effect=pushes.append):
-            mock_shutil.copy2.side_effect = OSError("disk full")
+            mock_copy.side_effect = OSError("disk full")
             api.transcribe(str(src), {})
             _wait()
 

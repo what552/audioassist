@@ -29,6 +29,7 @@ AudioAssist 的目标，是把“语音转写”升级成“Agent 可用的个�
 - Markdown / 文本导出
 - 转写结果本地保存，便于后续 Agent 处理
 - 直接同步到 Obsidian Vault，进入 Claude Code + Obsidian 工作流
+- 本地 CLI，可让 Agent 查询会话、执行转写并生成纪要，无需打开 GUI
 
 ## 平台支持
 
@@ -62,7 +63,7 @@ AudioAssist 的目标，是把“语音转写”升级成“Agent 可用的个�
 - 改进 mix 模式下的系统音频回声消除
 - 提供更稳定的面向普通用户的系统发行版
 - 与 Obsidian 更深度整合
-- 提供 CLI / HTTP 接口，让 Agent 可以直接调用转写能力，而不必依赖完整 GUI
+- 在现有本地 CLI 之上提供 HTTP 接口和明确的后台任务生命周期
 - 探索本地 + 云端协同形态，让手机、麦克风、录音笔等设备产生的音频进入统一转写工作流，并最终沉淀为可继续被 Agent 使用的 Markdown 资产
 
 ## 开发与详细说明

@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (through r02-b6-c07)
+## Features (through R03-a local CLI)
 
 - **Session-per-directory storage (F6)** — each job lives in `meetings/{job_id}/` inside the output directory (`transcript.json`, `summary.json`, `agent_chat.json`, `source_audio.*`); legacy flat-file sessions are read transparently for backward compatibility; session delete uses `shutil.rmtree` for new layout
 - **Local-only model inference (F1)** — `pipeline.run()` and `run_realtime_segments()` never auto-download models; if a required model is not present, `ModelNotReadyError` is raised immediately with a clear message pointing to the Model Library; no silent network calls during transcription
@@ -45,11 +45,12 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model), template management, and Obsidian vault sync configuration
 - **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
 - **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
+- **Agent-callable local CLI (R03-a)** — session listing/detail/status, synchronous file transcription, and summary generation are available through `python -m src.cli` or the installed `audioassist` command; `--json` provides a stable response envelope while progress stays on stderr
 
 ## Development status
 
 - R01 and R02 are integrated into `main`; the current application is a functional MVP.
-- R03 service mode (CLI / HTTP resource and agent APIs) has not started.
+- R03-a local CLI is in development; the HTTP resource/agent API has not started.
 - Before the next feature milestone, keep the unit suite green and run the manual real-audio smoke checklist against the packaged app.
 - Maintainer references: [development status](docs/development-status.md), [system audio architecture](docs/system-audio-architecture.md), and [release checklist](docs/release-checklist.md).
 
@@ -147,6 +148,19 @@ python run.py
 # Debug mode (opens DevTools):
 python run.py --debug
 ```
+
+### Local CLI
+
+```bash
+python -m src.cli --json sessions list
+python -m src.cli --json sessions show JOB_ID
+python -m src.cli --json status JOB_ID
+python -m src.cli --json transcribe /path/to/audio.m4a
+python -m src.cli --json summarize JOB_ID
+```
+
+See [the R03-a CLI contract](docs/cli-contract.md) for installation, stdout, error, and
+exit-code guarantees.
 
 ## Platform notes
 

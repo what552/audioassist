@@ -29,6 +29,7 @@ AudioAssist is built to make transcription a first-class input for AI agents.
 - Markdown / text export
 - Local transcript storage for agent workflows
 - Direct sync to Obsidian Vault for Claude Code + Obsidian workflows
+- A local CLI for agents to inspect sessions, transcribe files, and generate notes without the GUI
 
 ## Platform Support
 
@@ -62,7 +63,7 @@ AudioAssist is built to make transcription a first-class input for AI agents.
 - Better echo cancellation in mix mode
 - A more stable end-user distribution
 - Deeper Obsidian integration
-- CLI / HTTP interfaces so agents can call transcription directly without the full GUI
+- An HTTP interface and explicit background-job lifecycle on top of the local CLI
 - Explore hybrid local + cloud workflows for audio captured from phones, microphones, and recording devices
 
 ## Developer and Detailed Docs
