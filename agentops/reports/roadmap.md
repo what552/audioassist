@@ -1,5 +1,8 @@
 # AudioAssist Development Roadmap
 
+> Historical R02 planning record. For active priorities and audited carry-over
+> items, use [`docs/development-backlog.md`](../../docs/development-backlog.md).
+
 确认日期：2026-03-24
 
 ## r02-b2（进行中）— 首次使用门槛

@@ -1,5 +1,8 @@
 # TASK
 
+> Historical R01 execution record. Current work is tracked in
+> [`docs/development-backlog.md`](../docs/development-backlog.md).
+
 ## 当前轮次：r01
 
 ### 里程碑目标

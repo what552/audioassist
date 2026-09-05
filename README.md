@@ -69,3 +69,4 @@ AudioAssist 的目标，是把“语音转写”升级成“Agent 可用的个�
 ## 开发与详细说明
 
 - 详细开发说明与运行文档： [README.dev.md](README.dev.md)
+- 当前开发任务与优先级： [docs/development-backlog.md](docs/development-backlog.md)

@@ -1,20 +1,20 @@
 # Development Status
 
-Updated: 2026-09-05
+Updated: 2026-09-06
 
 ## Current baseline
 
-AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03 has not started.
+AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a is complete.
 
 | Milestone | Status | Delivered |
 |---|---|---|
 | R01 | Complete | File transcription, diarization, timestamp playback, editing, summary generation, realtime transcription foundation |
 | R02-a to R02-b5 | Complete | Three-column UI, session lifecycle, model setup and management, Summary Agent, Obsidian sync, checkpoint/resume, batch queue, re-transcription |
 | R02-b6 | Complete | macOS microphone/system/mix capture, ScreenCaptureKit helper, manual high-accuracy refinement, DMG packaging |
-| R03-a | In progress | Local session resources, synchronous transcription and summary CLI with stable JSON output |
-| R03-b | Not started | Planned HTTP resource/agent APIs and explicit background-job lifecycle |
+| R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
+| R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The R03-a hardening branch baseline is 669 automated tests: 666 Python/backend tests and
+The current `main` baseline is 669 automated tests: 666 Python/backend tests and
 3 browser tests. Real model, audio-device, permission, and packaged-app behavior remains
 release-level manual validation rather than CI coverage.
 
@@ -41,7 +41,8 @@ The c02 gate verified the 512-sample mix-buffer drain behavior, Screen Recording
 
 ## Next product work
 
-Finish and integrate R03-a before starting R03-b. The current R03-a scope is the shared
-application service, local CLI contract, session/status resources, synchronous file
-transcription, and summary generation. HTTP and durable background submission remain a
-separate milestone.
+Use [the authoritative development backlog](development-backlog.md). First close the
+realtime local-model-only gap, then unify the repository environment, introduce the Qwen
+backend seam/lifecycle, build the MLX adapter, and run its benchmark gate. HTTP/MCP work
+remains a separate milestone and must not imply durable background work until lifecycle,
+locking, recovery, and cancellation are designed.

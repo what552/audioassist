@@ -50,9 +50,9 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 ## Development status
 
 - R01 and R02 are integrated into `main`; the current application is a functional MVP.
-- R03-a local CLI is in development; the HTTP resource/agent API has not started.
+- R03-a local CLI is complete; the HTTP resource/agent API has not started.
 - Before the next feature milestone, keep the unit suite green and run the manual real-audio smoke checklist against the packaged app.
-- Maintainer references: [development status](docs/development-status.md), [system audio architecture](docs/system-audio-architecture.md), and [release checklist](docs/release-checklist.md).
+- Maintainer references: [development status](docs/development-status.md), [development backlog](docs/development-backlog.md), [system audio architecture](docs/system-audio-architecture.md), and [release checklist](docs/release-checklist.md).
 
 ## Requirements
 
