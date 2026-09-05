@@ -239,17 +239,25 @@ class TestAutoDownload:
 # ── diarize() waveform-dict input ─────────────────────────────────────────────
 
 class TestDiarizeWaveformInput:
-    """diarize() must load audio via torchaudio and pass a waveform dict to the
+    """diarize() must load audio via soundfile and pass a waveform dict to the
     pipeline instead of a raw file path, so torchcodec is never invoked."""
 
-    def _make_fake_mods_with_torchaudio(self):
-        """Extend _fake_modules() with a torchaudio mock."""
+    def _make_fake_audio_modules(self):
+        """Extend _fake_modules() with soundfile input and tensor conversion."""
         fake_mods, mock_pipeline_cls = _fake_modules()
+        mock_audio = MagicMock(name="frames_channels_array")
         mock_tensor = MagicMock(name="waveform_tensor")
-        torchaudio_mod = MagicMock(name="torchaudio")
-        torchaudio_mod.load.return_value = (mock_tensor, 16000)
-        fake_mods["torchaudio"] = torchaudio_mod
-        return fake_mods, mock_pipeline_cls, mock_tensor, torchaudio_mod
+        soundfile_mod = MagicMock(name="soundfile")
+        soundfile_mod.read.return_value = (mock_audio, 16000)
+        fake_mods["soundfile"] = soundfile_mod
+        fake_mods["torch"].from_numpy.return_value = mock_tensor
+        return (
+            fake_mods,
+            mock_pipeline_cls,
+            mock_audio,
+            mock_tensor,
+            soundfile_mod,
+        )
 
     def _loaded_engine(self, pipeline_instance, num_speakers=None):
         """Return an engine with _pipeline already set (bypasses load())."""
@@ -270,8 +278,8 @@ class TestDiarizeWaveformInput:
 
     def test_passes_waveform_dict_to_pipeline(self):
         """Pipeline must receive {"waveform": tensor, "sample_rate": int}."""
-        fake_mods, mock_pipeline_cls, mock_tensor, torchaudio_mod = \
-            self._make_fake_mods_with_torchaudio()
+        fake_mods, mock_pipeline_cls, mock_audio, mock_tensor, soundfile_mod = \
+            self._make_fake_audio_modules()
 
         pipeline_instance = mock_pipeline_cls.from_pretrained.return_value
         pipeline_instance.return_value = self._mock_annotation()
@@ -280,8 +288,10 @@ class TestDiarizeWaveformInput:
         with patch.dict(sys.modules, fake_mods):
             engine.diarize("/audio/test.wav")
 
-        # torchaudio.load called with the original path
-        torchaudio_mod.load.assert_called_once_with("/audio/test.wav")
+        soundfile_mod.read.assert_called_once_with(
+            "/audio/test.wav", dtype="float32", always_2d=True
+        )
+        fake_mods["torch"].from_numpy.assert_called_once_with(mock_audio.T)
 
         # Pipeline called with waveform dict, not the raw string path
         audio_input = pipeline_instance.call_args[0][0]
@@ -293,7 +303,7 @@ class TestDiarizeWaveformInput:
 
     def test_does_not_pass_raw_path_to_pipeline(self):
         """The string audio path must NOT be passed directly to the pipeline."""
-        fake_mods, mock_pipeline_cls, _, _ = self._make_fake_mods_with_torchaudio()
+        fake_mods, mock_pipeline_cls, _, _, _ = self._make_fake_audio_modules()
         pipeline_instance = mock_pipeline_cls.from_pretrained.return_value
         pipeline_instance.return_value = self._mock_annotation()
 
@@ -308,7 +318,7 @@ class TestDiarizeWaveformInput:
     def test_returns_speaker_segments(self):
         """diarize() must parse itertracks and return correct SpeakerSegment list."""
         from src.diarize import SpeakerSegment
-        fake_mods, mock_pipeline_cls, _, _ = self._make_fake_mods_with_torchaudio()
+        fake_mods, mock_pipeline_cls, _, _, _ = self._make_fake_audio_modules()
         pipeline_instance = mock_pipeline_cls.from_pretrained.return_value
 
         turn1 = MagicMock(); turn1.start = 0.0; turn1.end = 2.5
@@ -328,7 +338,7 @@ class TestDiarizeWaveformInput:
 
     def test_num_speakers_forwarded_to_pipeline(self):
         """num_speakers kwarg must still be forwarded to pipeline call."""
-        fake_mods, mock_pipeline_cls, _, _ = self._make_fake_mods_with_torchaudio()
+        fake_mods, mock_pipeline_cls, _, _, _ = self._make_fake_audio_modules()
         pipeline_instance = mock_pipeline_cls.from_pretrained.return_value
         pipeline_instance.return_value = self._mock_annotation()
 

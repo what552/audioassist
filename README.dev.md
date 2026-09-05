@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (v0.14 — r02-b6-c01)
+## Features (through r02-b6-c07)
 
 - **Session-per-directory storage (F6)** — each job lives in `meetings/{job_id}/` inside the output directory (`transcript.json`, `summary.json`, `agent_chat.json`, `source_audio.*`); legacy flat-file sessions are read transparently for backward compatibility; session delete uses `shutil.rmtree` for new layout
 - **Local-only model inference (F1)** — `pipeline.run()` and `run_realtime_segments()` never auto-download models; if a required model is not present, `ModelNotReadyError` is raised immediately with a clear message pointing to the Model Library; no silent network calls during transcription
@@ -31,7 +31,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Export summary** — "Export ▾" button in the summary panel exports the current summary as `.txt` or `.md` via a native Save dialog
 - **Markdown rendering** — summary text and Summary Agent replies are rendered as Markdown (bold, headings, lists, code blocks) using `marked.js` + `DOMPurify`; raw `**` symbols are never shown to the user
 - **Obsidian vault sync** — configure a target vault folder in Settings; every time a transcript is saved or a summary is generated the corresponding session is automatically written as `YYYY-MM-DD display_name.md` with YAML frontmatter (date, duration, speakers, source, job_id) plus summary and transcript sections; session renames propagate to the vault filename; on first launch all existing sessions are back-filled (see Settings → Obsidian Sync)
-- **System audio capture (r02-b6-c01)** — new `capture_mode: "system"` option in `start_realtime()`; uses `AudioAssistCaptureHelper` (Swift + ScreenCaptureKit) to capture all macOS system audio (Zoom, browser meetings, etc.) and stream 16 kHz / mono / float32 PCM via named pipe to the existing VAD + ASR pipeline; helper writes a simultaneous PCM16 WAV to the session directory; `preflight_capture(mode)` checks macOS 13.0+ and helper binary presence before start; pause/resume via SIGUSR1/SIGUSR2; `mic` mode unchanged (requires macOS 13.0)
+- **System and mixed audio capture (r02-b6)** — `capture_mode` supports `mic`, `system`, and `mix`; `AudioAssistCaptureHelper` uses Swift + ScreenCaptureKit for macOS system audio, mixes microphone input when requested, and streams 16 kHz / mono / float32 PCM to the existing VAD + ASR pipeline; subsequent c03-c07 work added manual high-accuracy refinement, DMG packaging, bundled runtime dependencies, and a torchcodec-free diarization path
 - **Realtime transcription** — live microphone transcription with Silero VAD; pause/resume mid-session; full session `.wav` auto-saved; on Finish the pipeline runs speaker diarization only (ASR already done live) to produce the final transcript (see [Realtime transcription](#realtime-transcription))
 - **Realtime timestamps** — each live utterance records absolute `start`/`end` times (seconds from session start); displayed as `[MM:SS]` prefix in the live panel and passed to the diarizer for accurate speaker labelling
 - **Finish → diarize only** — when a realtime session ends, the already-transcribed segments are used for instant diarize-only output; the draft transcript is shown immediately
@@ -45,6 +45,13 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model), template management, and Obsidian vault sync configuration
 - **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
 - **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
+
+## Development status
+
+- R01 and R02 are integrated into `main`; the current application is a functional MVP.
+- R03 service mode (CLI / HTTP resource and agent APIs) has not started.
+- Before the next feature milestone, keep the unit suite green and run the manual real-audio smoke checklist against the packaged app.
+- Maintainer references: [development status](docs/development-status.md), [system audio architecture](docs/system-audio-architecture.md), and [release checklist](docs/release-checklist.md).
 
 ## Requirements
 
