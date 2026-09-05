@@ -366,12 +366,10 @@ class TestGetSegments:
 class TestLocalModelLoading:
     def test_qwen_uses_validated_local_path_without_aligner(self):
         asr_class = MagicMock()
-        asr_module = types.ModuleType("src.asr")
-        asr_module.ASREngine = asr_class
         silero = types.ModuleType("silero_vad")
         silero.load_silero_vad = MagicMock(return_value=MagicMock())
 
-        with patch.dict(sys.modules, {"src.asr": asr_module, "silero_vad": silero}), \
+        with patch.dict(sys.modules, {"silero_vad": silero}), \
              patch(
                  "src.native_capture.resolve_realtime_model",
                  return_value=types.SimpleNamespace(
@@ -379,6 +377,8 @@ class TestLocalModelLoading:
                      model_id="qwen3-asr-1.7b",
                      local_path="/models/qwen",
                  ),
+             ), patch(
+                 "src.native_capture.create_qwen_engine", asr_class,
              ):
             helper = _helper()
             helper._load_models()
@@ -386,8 +386,19 @@ class TestLocalModelLoading:
         asr_class.assert_called_once_with(
             with_timestamps=False,
             model_path="/models/qwen",
+            aligner_path=None,
         )
         asr_class.return_value.load.assert_called_once()
+
+    def test_stop_closes_loaded_backend(self):
+        helper = _helper()
+        backend = MagicMock()
+        helper._asr = backend
+
+        helper.stop()
+
+        backend.close.assert_called_once()
+        assert helper._asr is None
 
     def test_whisper_uses_validated_local_path(self):
         whisper_class = MagicMock()

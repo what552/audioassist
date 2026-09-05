@@ -22,6 +22,7 @@ import threading
 import wave
 from typing import Callable, Optional
 
+from .asr_factory import create_qwen_engine
 from .realtime_models import resolve_realtime_model
 
 logger = logging.getLogger(__name__)
@@ -81,35 +82,56 @@ class RealtimeTranscriber:
     def start(self) -> None:
         """Load models then open the microphone stream."""
         self._load_models()
-        self._running = True
+        try:
+            self._running = True
 
-        # Start the serial worker that drains the transcription queue
-        self._worker_thread = threading.Thread(
-            target=self._transcription_worker,
-            daemon=True,
-            name="realtime-transcribe-worker",
-        )
-        self._worker_thread.start()
+            # Start the serial worker that drains the transcription queue
+            self._worker_thread = threading.Thread(
+                target=self._transcription_worker,
+                daemon=True,
+                name="realtime-transcribe-worker",
+            )
+            self._worker_thread.start()
 
-        # Open session WAV writer before the stream captures audio
-        if self._output_path is not None:
-            parent = os.path.dirname(self._output_path)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
-            self._wav_writer = wave.open(self._output_path, "wb")
-            self._wav_writer.setnchannels(1)
-            self._wav_writer.setsampwidth(2)
-            self._wav_writer.setframerate(SAMPLE_RATE)
+            # Open session WAV writer before the stream captures audio
+            if self._output_path is not None:
+                parent = os.path.dirname(self._output_path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                self._wav_writer = wave.open(self._output_path, "wb")
+                self._wav_writer.setnchannels(1)
+                self._wav_writer.setsampwidth(2)
+                self._wav_writer.setframerate(SAMPLE_RATE)
 
-        import sounddevice as sd
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=CHUNK_SIZE,
-            callback=self._audio_callback,
-        )
-        self._stream.start()
+            import sounddevice as sd
+            self._stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                blocksize=CHUNK_SIZE,
+                callback=self._audio_callback,
+            )
+            self._stream.start()
+        except Exception:
+            self._running = False
+            if self._stream is not None:
+                try:
+                    self._stream.close()
+                except Exception:
+                    pass
+                self._stream = None
+            if self._wav_writer is not None:
+                try:
+                    self._wav_writer.close()
+                except Exception:
+                    pass
+                self._wav_writer = None
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                self._transcribe_queue.put(None)
+                self._worker_thread.join()
+            self._worker_thread = None
+            self._close_asr()
+            raise
         logger.info("Realtime transcription started (engine=%s)", self._engine)
 
     def stop(self) -> None:
@@ -130,6 +152,7 @@ class RealtimeTranscriber:
             self._transcribe_queue.put(None)  # sentinel
             self._worker_thread.join()
             self._worker_thread = None
+        self._close_asr()
         logger.info("Realtime transcription stopped")
 
     def pause(self) -> None:
@@ -170,15 +193,32 @@ class RealtimeTranscriber:
             from .asr_whisper import WhisperASREngine
             self._asr = WhisperASREngine(model_path=resolved.local_path)
         else:
-            from .asr import ASREngine
-            self._asr = ASREngine(
+            self._asr = create_qwen_engine(
                 with_timestamps=False,
                 model_path=resolved.local_path,
+                aligner_path=None,
             )
-        self._asr.load()
+        try:
+            self._asr.load()
+        except Exception:
+            self._close_asr()
+            raise
         logger.info(
-            "ASR engine loaded: %s (%s)", self._engine, resolved.local_path
+            "ASR engine loaded: %s backend=%s (%s)",
+            self._engine,
+            getattr(self._asr, "backend_name", "default"),
+            resolved.local_path,
         )
+
+    def _close_asr(self) -> None:
+        asr = self._asr
+        self._asr = None
+        close = getattr(asr, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logger.warning("Realtime ASR cleanup failed", exc_info=True)
 
     # ── Audio callback (runs in sounddevice audio thread) ─────────────────────
 

@@ -64,7 +64,7 @@ def mock_pipeline_deps(tmp_path):
     with patch("os.path.isfile", return_value=True), \
          patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
          patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
-         patch(f"{PIPELINE}.ASREngine", mock_asr_cls), \
+         patch(f"{PIPELINE}.create_qwen_engine", mock_asr_cls), \
          patch(f"{PIPELINE}.WhisperASREngine", MagicMock(return_value=mock_asr_instance)), \
          patch(f"{PIPELINE}.DiarizationEngine", mock_diarize_cls), \
          patch(f"{PIPELINE}.ModelManager", mock_mm_cls), \
@@ -199,7 +199,7 @@ class TestEngineSelection:
         with patch("os.path.isfile", return_value=True), \
              patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
              patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
-             patch(f"{PIPELINE}.ASREngine", mock_asr_cls), \
+             patch(f"{PIPELINE}.create_qwen_engine", mock_asr_cls), \
              patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
              patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
              patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
@@ -235,7 +235,7 @@ class TestTempFileCleanup:
         with patch("os.path.isfile", return_value=True), \
              patch(f"{PIPELINE}.to_wav", return_value=(tmp_wav_path, True)), \
              patch(f"{PIPELINE}.split_to_chunks", return_value=[(tmp_wav_path, 0.0)]), \
-             patch(f"{PIPELINE}.ASREngine", MagicMock(return_value=mock_asr_instance)), \
+             patch(f"{PIPELINE}.create_qwen_engine", MagicMock(return_value=mock_asr_instance)), \
              patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
              patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
              patch(f"{PIPELINE}._validate_model_local", return_value="/fake/model/path"), \
@@ -246,6 +246,48 @@ class TestTempFileCleanup:
             run("/audio/test.mp3", str(tmp_path))
 
         assert not os.path.exists(tmp_wav_path)
+
+
+class TestASRLifecycle:
+    def test_asr_closes_before_diarization(self, tmp_path, mock_pipeline_deps):
+        from src.pipeline import run
+
+        events = []
+        asr = mock_pipeline_deps["asr_instance"]
+        diarizer = mock_pipeline_deps["diarize_instance"]
+        asr.close.side_effect = lambda: events.append("asr.close")
+        diarizer.diarize.side_effect = lambda _path: (
+            events.append("diarize") or _make_speaker_segments()
+        )
+
+        run("/audio/test.mp3", str(tmp_path), engine="qwen")
+
+        assert events.index("asr.close") < events.index("diarize")
+
+    def test_asr_closes_when_transcription_fails(self, tmp_path, mock_pipeline_deps):
+        from src.pipeline import run
+
+        asr = mock_pipeline_deps["asr_instance"]
+        asr.transcribe.side_effect = RuntimeError("inference failed")
+
+        with pytest.raises(RuntimeError, match="inference failed"):
+            run("/audio/test.mp3", str(tmp_path), engine="qwen")
+
+        asr.close.assert_called_once()
+
+    def test_selected_backend_is_reported_in_progress(self, tmp_path, mock_pipeline_deps):
+        from src.pipeline import run
+
+        mock_pipeline_deps["asr_instance"].backend_name = "pytorch-cpu"
+        progress = []
+        run(
+            "/audio/test.mp3",
+            str(tmp_path),
+            engine="qwen",
+            progress_callback=lambda _pct, message: progress.append(message),
+        )
+
+        assert "Using Qwen backend: pytorch-cpu" in progress
 
 
 # ── local-model-only (F1) ─────────────────────────────────────────────────────
@@ -289,8 +331,8 @@ class TestLocalModelOnly:
 
 # ── aligner optional use ──────────────────────────────────────────────────────
 
-class TestAlignerOptional:
-    """Aligner is used if present (local_path), ignored if not (no auto-download in F1)."""
+class TestAlignerRequired:
+    """Timestamped Qwen jobs require the app-managed Forced Aligner."""
 
     def test_aligner_not_downloaded_automatically(self, tmp_path, mock_pipeline_deps):
         """mm.download() is never called for aligner (F1: no auto-download)."""
@@ -311,15 +353,21 @@ class TestAlignerOptional:
         # aligner_path should be set (not None)
         assert call_kwargs.get("aligner_path") is not None
 
-    def test_aligner_not_passed_when_not_present(self, tmp_path, mock_pipeline_deps):
-        """When aligner is not is_downloaded, aligner_path=None is passed to ASREngine."""
+    def test_missing_aligner_is_visible_readiness_error(self, tmp_path, mock_pipeline_deps):
+        from src.model_errors import ModelNotReadyError
         from src.pipeline import run
-        mm = mock_pipeline_deps["mm_instance"]
-        # asr and diarizer present; aligner not present
-        mm.is_downloaded.side_effect = lambda mid: mid != "qwen3-forced-aligner"
-        run("/audio/test.mp3", str(tmp_path), engine="qwen")
-        call_kwargs = mock_pipeline_deps["asr_cls"].call_args[1]
-        assert call_kwargs.get("aligner_path") is None
+
+        def validate(_manager, model_id):
+            if model_id == "qwen3-forced-aligner":
+                raise ModelNotReadyError(model_id, "model_not_downloaded")
+            return "/fake/model/path"
+
+        with patch(f"{PIPELINE}._validate_model_local", side_effect=validate):
+            with pytest.raises(ModelNotReadyError) as exc_info:
+                run("/audio/test.mp3", str(tmp_path), engine="qwen")
+
+        assert exc_info.value.model_id == "qwen3-forced-aligner"
+        mock_pipeline_deps["asr_cls"].assert_not_called()
 
 
 # ── asr_model_id / _WHISPER_SIZE_MAP (P3) ─────────────────────────────────────
@@ -354,7 +402,7 @@ class TestAsrModelId:
         with patch("os.path.isfile", return_value=True), \
              patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
              patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
-             patch(f"{PIPELINE}.ASREngine", MagicMock()), \
+             patch(f"{PIPELINE}.create_qwen_engine", MagicMock()), \
              patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
              patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
              patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
@@ -384,7 +432,7 @@ class TestAsrModelId:
         with patch("os.path.isfile", return_value=True), \
              patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
              patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
-             patch(f"{PIPELINE}.ASREngine", MagicMock()), \
+             patch(f"{PIPELINE}.create_qwen_engine", MagicMock()), \
              patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
              patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
              patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \
@@ -414,7 +462,7 @@ class TestAsrModelId:
         with patch("os.path.isfile", return_value=True), \
              patch(f"{PIPELINE}.to_wav", return_value=(wav, False)), \
              patch(f"{PIPELINE}.split_to_chunks", return_value=[(wav, 0.0)]), \
-             patch(f"{PIPELINE}.ASREngine", MagicMock()), \
+             patch(f"{PIPELINE}.create_qwen_engine", MagicMock()), \
              patch(f"{PIPELINE}.WhisperASREngine", mock_whisper_cls), \
              patch(f"{PIPELINE}.DiarizationEngine", MagicMock(return_value=mock_diarize_instance)), \
              patch(f"{PIPELINE}.ModelManager", MagicMock(return_value=mock_mm_instance)), \

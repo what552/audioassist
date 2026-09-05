@@ -59,6 +59,21 @@ audioassist --json sessions list
   upgrade Qwen, PyTorch, pyannote, or MLX Whisper incidentally.
 - Do not recreate a second `requirements.txt` dependency source.
 
+## Qwen backend diagnostics
+
+The public engine name remains `qwen`. QWEN-01 keeps automatic selection on
+the official PyTorch CUDA/CPU paths. On Apple Silicon, developers may exercise
+the unpromoted MPS path explicitly:
+
+```bash
+AUDIOASSIST_QWEN_BACKEND=pytorch-mps .venv/bin/audioassist --json transcribe /path/to/audio.wav
+```
+
+Supported diagnostic values are `auto`, `pytorch-cpu`, `pytorch-cuda`, and
+`pytorch-mps`. An unavailable explicit device is an error; a job never silently
+switches backend after it starts. MLX selection is introduced separately by
+QWEN-02 and is not implied by this override.
+
 ## Existing global command cleanup
 
 An old editable install may leave `audioassist` under pyenv shims. Confirm the

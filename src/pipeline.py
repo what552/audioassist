@@ -9,7 +9,7 @@ import logging
 from typing import Callable, Optional
 
 from .types import WordSegment, TranscriptResult
-from .asr import ASREngine
+from .asr_factory import QwenASREngineProtocol, create_qwen_engine
 from .asr_whisper import WhisperASREngine
 from .diarize import DiarizationEngine, SpeakerSegment, DEFAULT_DIARIZER_MODEL
 from .merge import SpeakerBlock, merge, to_json, to_markdown
@@ -19,6 +19,16 @@ from .model_manager import ModelManager
 from . import checkpoint
 
 logger = logging.getLogger(__name__)
+
+
+def _close_asr_engine(engine: object | None) -> None:
+    """Close an ASR adapter without hiding the pipeline's primary error."""
+    close = getattr(engine, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.warning("ASR engine cleanup failed", exc_info=True)
 
 
 def _validate_model_local(mm: ModelManager, model_id: str) -> str:
@@ -123,49 +133,64 @@ def run(
             whisper_path = _validate_model_local(mm, whisper_id)
             _progress(0.05, "Loading Whisper ASR model...")
             size = _WHISPER_SIZE_MAP.get(whisper_id, "turbo")
-            asr: ASREngine | WhisperASREngine = WhisperASREngine(
+            asr: QwenASREngineProtocol | WhisperASREngine = WhisperASREngine(
                 size=size,
                 model_path=whisper_path,
             )
         else:
             asr_id     = asr_model_id or "qwen3-asr-1.7b"
             aligner_id = "qwen3-forced-aligner"
-            _validate_model_local(mm, asr_id)
+            asr_path = _validate_model_local(mm, asr_id)
             _progress(0.05, "Loading Qwen3-ASR model...")
-            aligner_path = mm.local_path(aligner_id) if mm.is_downloaded(aligner_id) else None
-            asr = ASREngine(
+            aligner_path = (
+                _validate_model_local(mm, aligner_id)
+                if with_timestamps
+                else None
+            )
+            asr = create_qwen_engine(
                 with_timestamps=with_timestamps,
-                model_path=mm.local_path(asr_id),
+                model_path=asr_path,
                 aligner_path=aligner_path,
             )
-        asr.load()
+        try:
+            asr.load()
+        except Exception:
+            _close_asr_engine(asr)
+            raise
+        try:
+            backend_name = getattr(asr, "backend_name", None)
+            if backend_name:
+                _progress(0.07, f"Using Qwen backend: {backend_name}")
 
-        all_words: list[WordSegment] = []
-        all_text: list[str] = []
-        language = ""
+            all_words: list[WordSegment] = []
+            all_text: list[str] = []
+            language = ""
 
-        # Build initial chunk list from checkpoint if available
-        if ckpt_data and session_dir:
-            ckpt_chunks = {c["index"]: c for c in ckpt_data.get("chunks", [])}
-        else:
-            ckpt_chunks = {}
+            # Build initial chunk list from checkpoint if available
+            if ckpt_data and session_dir:
+                ckpt_chunks = {c["index"]: c for c in ckpt_data.get("chunks", [])}
+            else:
+                ckpt_chunks = {}
 
-        # Write initial checkpoint
-        if session_dir:
-            ckpt_payload: dict = {
-                "job_id": job_id,
-                "source_audio": audio_path,
-                "engine": engine,
-                "model_id": asr_model_id or ("qwen3-asr-1.7b" if engine != "whisper" else asr_model_id),
-                "status": "running",
-                "chunks": [
-                    ckpt_chunks.get(i, {"index": i, "offset": offset, "status": "pending"})
-                    for i, (_, offset) in enumerate(chunks)
-                ],
-                "completed_chunks": sum(1 for c in ckpt_chunks.values() if c.get("status") == "done"),
-                "total_chunks": len(chunks),
-            }
-            checkpoint.write(session_dir, ckpt_payload)
+            # Write initial checkpoint
+            if session_dir:
+                ckpt_payload: dict = {
+                    "job_id": job_id,
+                    "source_audio": audio_path,
+                    "engine": engine,
+                    "model_id": asr_model_id or ("qwen3-asr-1.7b" if engine != "whisper" else asr_model_id),
+                    "status": "running",
+                    "chunks": [
+                        ckpt_chunks.get(i, {"index": i, "offset": offset, "status": "pending"})
+                        for i, (_, offset) in enumerate(chunks)
+                    ],
+                    "completed_chunks": sum(1 for c in ckpt_chunks.values() if c.get("status") == "done"),
+                    "total_chunks": len(chunks),
+                }
+                checkpoint.write(session_dir, ckpt_payload)
+        except Exception:
+            _close_asr_engine(asr)
+            raise
 
         try:
             for i, (chunk_path, offset) in enumerate(chunks):
@@ -211,7 +236,11 @@ def run(
         except Exception:
             if session_dir and ckpt_payload is not None:
                 ckpt_payload["status"] = "interrupted"
-                checkpoint.write(session_dir, ckpt_payload)
+                try:
+                    checkpoint.write(session_dir, ckpt_payload)
+                except Exception:
+                    logger.warning("Failed to persist interrupted checkpoint", exc_info=True)
+            _close_asr_engine(asr)
             raise
 
         merged_asr = TranscriptResult(
@@ -222,6 +251,10 @@ def run(
         logger.info(
             f"Transcript ({len(merged_asr.text)} chars): {merged_asr.text[:80]}..."
         )
+
+        # Qwen and its Forced Aligner are no longer needed. Release their
+        # unified-memory footprint before pyannote initializes.
+        _close_asr_engine(asr)
 
         # 3. Diarization — validate local model (F1: no auto-download)
         actual_diarizer_id = diarizer_model_id or DEFAULT_DIARIZER_MODEL

@@ -518,18 +518,15 @@ class TestLoadModels:
         )
         mock_whisper_cls.return_value.load.assert_called_once()
 
-    def test_qwen_engine_uses_ASREngine(self):
-        """engine='qwen' (default) path imports ASREngine."""
+    def test_qwen_engine_uses_internal_factory(self):
+        """engine='qwen' stays public while construction uses the factory."""
         mock_asr_cls = MagicMock()
-        mock_asr_mod = types.ModuleType("src.asr")
-        mock_asr_mod.ASREngine = mock_asr_cls
 
         mock_silero = types.ModuleType("silero_vad")
         mock_silero.load_silero_vad = MagicMock(return_value=MagicMock())
 
         with patch.dict(sys.modules, {
             "silero_vad": mock_silero,
-            "src.asr": mock_asr_mod,
         }), patch(
             "src.realtime.resolve_realtime_model",
             return_value=types.SimpleNamespace(
@@ -537,6 +534,8 @@ class TestLoadModels:
                 model_id="qwen3-asr-1.7b",
                 local_path="/models/qwen",
             ),
+        ), patch(
+            "src.realtime.create_qwen_engine", mock_asr_cls,
         ):
             import src.realtime as m
             rt = m.RealtimeTranscriber(engine="qwen")
@@ -545,8 +544,58 @@ class TestLoadModels:
         mock_asr_cls.assert_called_once_with(
             with_timestamps=False,
             model_path="/models/qwen",
+            aligner_path=None,
         )
         mock_asr_cls.return_value.load.assert_called_once()
+
+    def test_qwen_load_failure_closes_partial_backend(self):
+        backend = MagicMock()
+        backend.load.side_effect = RuntimeError("load failed")
+        mock_silero = types.ModuleType("silero_vad")
+        mock_silero.load_silero_vad = MagicMock(return_value=MagicMock())
+
+        with patch.dict(sys.modules, {"silero_vad": mock_silero}), patch(
+            "src.realtime.resolve_realtime_model",
+            return_value=types.SimpleNamespace(
+                engine="qwen",
+                model_id="qwen3-asr-1.7b",
+                local_path="/models/qwen",
+            ),
+        ), patch("src.realtime.create_qwen_engine", return_value=backend):
+            import src.realtime as m
+            rt = m.RealtimeTranscriber(engine="qwen")
+            with pytest.raises(RuntimeError, match="load failed"):
+                rt._load_models()
+
+        backend.close.assert_called_once()
+        assert rt._asr is None
+
+    def test_stop_closes_loaded_backend(self):
+        rt, _ = _make_rt()
+        backend = MagicMock()
+        rt._asr = backend
+
+        rt.stop()
+
+        backend.close.assert_called_once()
+        assert rt._asr is None
+
+    def test_stream_start_failure_closes_loaded_backend(self):
+        rt, _ = _make_rt()
+        backend = MagicMock()
+        rt._asr = backend
+        sounddevice = types.ModuleType("sounddevice")
+        sounddevice.InputStream = MagicMock(side_effect=RuntimeError("no device"))
+
+        with patch.object(rt, "_load_models"), patch.dict(
+            sys.modules, {"sounddevice": sounddevice}
+        ):
+            with pytest.raises(RuntimeError, match="no device"):
+                rt.start()
+
+        backend.close.assert_called_once()
+        assert rt._worker_thread is None
+        assert rt._asr is None
 
 
 # ── _write_wav ────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # Qwen3-ASR on macOS: PyTorch MPS vs MLX
 
-Status: reviewed implementation proposal; not yet approved as the production default  
+Status: QWEN-01 backend seam complete; MLX not yet approved as the production default
 Research date: 2026-09-05; upstream rechecked 2026-09-06  
 Scope: AudioAssist Qwen3-ASR inference on Apple Silicon macOS
 
@@ -420,6 +420,14 @@ packaged-app runs.
 ## Rollout plan
 
 ### Phase 1: backend seam and PyTorch baseline
+
+Completed in QWEN-01. The implementation keeps `engine="qwen"`, requires
+validated local ASR/aligner paths, reports the selected internal backend,
+supports `AUDIOASSIST_QWEN_BACKEND=pytorch-mps` as a diagnostic override, and
+releases Qwen before diarization and on realtime stop/error paths. Source-tree
+forced-offline 30-second CPU and MPS smoke jobs produced identical transcript
+and timestamp output. Those runs are compatibility checks, not QWEN-03
+performance measurements.
 
 - Introduce the internal protocol/factory without changing public behavior.
 - Make local model paths explicit in offline and realtime flows.

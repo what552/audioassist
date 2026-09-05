@@ -27,6 +27,7 @@ import threading
 import wave
 from typing import Callable, Optional
 
+from .asr_factory import create_qwen_engine
 from .realtime_models import resolve_realtime_model
 
 logger = logging.getLogger(__name__)
@@ -133,11 +134,11 @@ class NativeCaptureHelper:
 
     def start(self) -> None:
         """Load models, create FIFO, launch helper, start reader threads."""
-        self._stop_event.clear()
-        self._load_models()
-
         if not self._output_path:
             raise ValueError("output_path must be set before calling start()")
+
+        self._stop_event.clear()
+        self._load_models()
 
         # Create FIFO
         self._fifo_path = os.path.join(
@@ -195,7 +196,9 @@ class NativeCaptureHelper:
                 self._fifo_path = None
             if self._worker_thread is not None and self._worker_thread.is_alive():
                 self._transcribe_queue.put(None)
+                self._worker_thread.join(timeout=5)
             self._worker_thread = None
+            self._close_asr()
             raise
 
         self._running = True
@@ -302,7 +305,8 @@ class NativeCaptureHelper:
                     logger.error(
                         "NativeCaptureHelper: worker thread did not exit within 30 s timeout"
                     )
-            self._worker_thread = None
+            if self._worker_thread is None or not self._worker_thread.is_alive():
+                self._worker_thread = None
 
         # Step 6: Close FIFO read-end.
         fd = self._fifo_fd
@@ -322,6 +326,9 @@ class NativeCaptureHelper:
             self._fifo_path = None
 
         self._running = False
+
+        if self._worker_thread is None or not self._worker_thread.is_alive():
+            self._close_asr()
 
         logger.info(
             "NativeCaptureHelper stopped: segments=%d flush=%d chunks_read=%d",
@@ -352,17 +359,32 @@ class NativeCaptureHelper:
             from .asr_whisper import WhisperASREngine
             self._asr = WhisperASREngine(model_path=resolved.local_path)
         else:
-            from .asr import ASREngine
-            self._asr = ASREngine(
+            self._asr = create_qwen_engine(
                 with_timestamps=False,
                 model_path=resolved.local_path,
+                aligner_path=None,
             )
-        self._asr.load()
+        try:
+            self._asr.load()
+        except Exception:
+            self._close_asr()
+            raise
         logger.info(
-            "ASR engine loaded for native capture: %s (%s)",
+            "ASR engine loaded for native capture: %s backend=%s (%s)",
             self._engine,
+            getattr(self._asr, "backend_name", "default"),
             resolved.local_path,
         )
+
+    def _close_asr(self) -> None:
+        asr = self._asr
+        self._asr = None
+        close = getattr(asr, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logger.warning("Native capture ASR cleanup failed", exc_info=True)
 
     # ── Event reader (helper stdout → NDJSON) ──────────────────────────────────
 

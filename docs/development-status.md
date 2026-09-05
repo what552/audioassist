@@ -14,10 +14,12 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The ENV-01 integration baseline is 685 automated tests: 682 Python/backend tests and
-3 browser tests, all running from the repository `.venv`. Offline 30-second Qwen and
-Whisper CLI smoke jobs also pass from that environment. Real audio-device, permission,
-and packaged-app behavior remains release-level manual validation rather than CI coverage.
+The QWEN-01 integration baseline is 702 automated tests: 699 Python/backend tests and
+3 browser tests, all running from the repository `.venv`. Forced-offline 30-second Qwen
+CPU and diagnostic MPS CLI smoke jobs produced identical language, text, speaker blocks,
+and timestamps; the environment-level Whisper smoke also passes. Real audio-device,
+permission, and packaged-app behavior remains release-level manual validation rather
+than CI coverage.
 
 ## Historical gate record
 
@@ -43,7 +45,7 @@ The c02 gate verified the 512-sample mix-buffer drain behavior, Screen Recording
 ## Next product work
 
 Use [the authoritative development backlog](development-backlog.md). The realtime
-local-model-only gap and repository environment unification are complete; next introduce
-the Qwen backend seam/lifecycle, build the MLX adapter, and run its benchmark gate.
-HTTP/MCP work remains a separate milestone and must not imply durable background work
-until lifecycle, locking, recovery, and cancellation are designed.
+local-model-only gate, repository environment, and Qwen backend seam/lifecycle are
+complete; next build the full-precision MLX adapter and run its benchmark gate. HTTP/MCP
+work remains a separate milestone and must not imply durable background work until
+lifecycle, locking, recovery, and cancellation are designed.

@@ -8,55 +8,63 @@ Actual API (qwen-asr 0.0.6):
   - time_stamps.items: each has .text, .start_time, .end_time
 """
 from __future__ import annotations
-from typing import Optional
+import gc
 import logging
+import multiprocessing
 
+from .asr_factory import QwenBackendConfig
 from .types import WordSegment, TranscriptResult
 
 logger = logging.getLogger(__name__)
 
-# Default HuggingFace model IDs (used when local path not provided)
-_DEFAULT_ASR_MODEL = "Qwen/Qwen3-ASR-1.7B"
-_DEFAULT_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
-
-
 class ASREngine:
-    """Wraps Qwen3ASRModel with optional ForcedAligner for timestamps."""
+    """Official qwen-asr PyTorch adapter using local model directories."""
 
     def __init__(
         self,
         with_timestamps: bool = True,
-        model_path: Optional[str] = None,
-        aligner_path: Optional[str] = None,
+        model_path: str = "",
+        aligner_path: str | None = None,
+        backend: QwenBackendConfig | None = None,
     ):
+        if not model_path:
+            raise ValueError("ASREngine requires an explicit local model_path")
+        if with_timestamps and not aligner_path:
+            raise ValueError("ASREngine timestamps require an explicit aligner_path")
         self.with_timestamps = with_timestamps
-        self.model_path = model_path or _DEFAULT_ASR_MODEL
-        self.aligner_path = aligner_path or _DEFAULT_ALIGNER_MODEL
+        self.model_path = model_path
+        self.aligner_path = aligner_path
+        self.backend = backend or QwenBackendConfig(
+            name="pytorch-cpu", device="cpu", dtype_name="float32"
+        )
+        self.backend_name = self.backend.name
         self._model = None
 
-    def load(self):
-        """Lazy-load models (first call downloads ~3GB to HF cache)."""
+    def load(self) -> None:
+        """Lazy-load already validated local models."""
+        if self._model is not None:
+            return
+
         from qwen_asr import Qwen3ASRModel
         import torch
 
-        # Device selection: CUDA > CPU (MPS causes SIGBUS on Qwen3-ASR)
-        if torch.cuda.is_available():
-            device = "cuda"
-            dtype = torch.float16
-        else:
-            device = "cpu"
-            dtype = torch.float32
-            import multiprocessing
+        device = self.backend.device
+        dtype = getattr(torch, self.backend.dtype_name)
+        if device == "cpu":
             torch.set_num_threads(multiprocessing.cpu_count())
 
-        logger.info(f"Loading ASR model on {device} ({dtype})")
+        logger.info("Loading Qwen backend %s on %s (%s)", self.backend_name, device, dtype)
 
         aligner = self.aligner_path if self.with_timestamps else None
+        aligner_kwargs = None
+        if aligner is not None:
+            aligner_kwargs = {"device_map": device, "dtype": dtype}
         self._model = Qwen3ASRModel.from_pretrained(
             self.model_path,
             forced_aligner=aligner,
+            forced_aligner_kwargs=aligner_kwargs,
             device_map=device,
-            torch_dtype=dtype,
+            dtype=dtype,
         )
         logger.info("Models loaded.")
 
@@ -86,3 +94,31 @@ class ASREngine:
             language=result.language,
             words=words,
         )
+
+    def close(self) -> None:
+        """Release Qwen/aligner references and the selected device cache."""
+        model = self._model
+        self._model = None
+        if model is not None:
+            # qwen-asr retains the ASR model, processor, and Forced Aligner on
+            # one wrapper. Clear those references before collecting.
+            for attribute in ("forced_aligner", "model", "processor"):
+                if hasattr(model, attribute):
+                    try:
+                        setattr(model, attribute, None)
+                    except Exception:
+                        pass
+            del model
+
+        gc.collect()
+
+        try:
+            import torch
+            if self.backend.device == "cuda" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif self.backend.device == "mps":
+                mps = getattr(torch, "mps", None)
+                if mps is not None and hasattr(mps, "empty_cache"):
+                    mps.empty_cache()
+        except Exception:
+            logger.debug("Qwen backend cache cleanup failed", exc_info=True)
