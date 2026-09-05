@@ -7,7 +7,7 @@
 #
 # Prerequisites:
 #   - Xcode Command Line Tools (swift, codesign)
-#   - Python environment with pyinstaller installed
+#   - Repository environment created by scripts/bootstrap.sh
 #   - create-dmg (brew install create-dmg) OR hdiutil (built-in fallback)
 #
 # The script does NOT sign or notarize — do that separately with:
@@ -21,6 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PYTHON_BIN="${ROOT}/.venv/bin/python"
 
 APP_NAME="AudioAssist"
 DMG_NAME="${APP_NAME}.dmg"
@@ -39,6 +40,12 @@ for arg in "$@"; do
     --skip-pyinstaller)  SKIP_PYINSTALLER=true ;;
   esac
 done
+
+if [ "$SKIP_PYINSTALLER" = false ] && [ ! -x "$PYTHON_BIN" ]; then
+  echo "ERROR: Repository Python not found at $PYTHON_BIN"
+  echo "       Run 'bash scripts/bootstrap.sh' first."
+  exit 1
+fi
 
 # ── Step 1: Build Swift helper ────────────────────────────────────────────────
 if [ "$SKIP_SWIFT" = false ]; then
@@ -59,7 +66,7 @@ fi
 if [ "$SKIP_PYINSTALLER" = false ]; then
   echo "==> [2/3] Running PyInstaller…"
   cd "$ROOT"
-  python -m PyInstaller AudioAssist.spec --noconfirm
+  "$PYTHON_BIN" -m PyInstaller AudioAssist.spec --noconfirm
   echo "    App bundle: $APP_PATH"
 else
   echo "==> [2/3] Skipping PyInstaller (--skip-pyinstaller)"

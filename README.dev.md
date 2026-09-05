@@ -72,27 +72,14 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 ## Setup
 
 ```bash
-# 1. Create virtualenv
-python -m venv .venv
-source .venv/bin/activate        # macOS/Linux
-.venv\Scripts\activate           # Windows
-
-# 2. Install core dependencies (includes Qwen3-ASR + torch)
-pip install -r requirements.txt
-
-# 3. Install Whisper backend — only needed if you want engine="whisper"
-#    Choose ONE depending on your platform:
-#    Apple Silicon (macOS arm64):
-pip install mlx-whisper
-#    Other platforms (Linux / Windows / x86 macOS):
-pip install faster-whisper
+# Install runtime, platform ASR, test, and build dependencies into .venv.
+bash scripts/bootstrap.sh
 ```
 
-> **Note:** `requirements.txt` already includes `qwen-asr`, `torch`, and
-> `pyannote.audio>=4.0` (speaker diarization).
-> The Whisper backends (`mlx-whisper` / `faster-whisper`) are optional add-ons
-> and are **not** included in `requirements.txt` because the correct choice is
-> platform-dependent. Skip step 3 entirely if you only use the Qwen3-ASR engine.
+The bootstrap command uses the committed `uv.lock`, selects `mlx-whisper` on
+Apple Silicon and `faster-whisper` elsewhere, and installs Playwright Chromium.
+See [Development Environment](docs/development-environment.md) for dependency
+policy, canonical commands, and global-command cleanup.
 
 ## Build the Swift helper
 
@@ -145,19 +132,19 @@ Some macOS versions require a full app restart after granting the permission.
 ## Run
 
 ```bash
-python run.py
+.venv/bin/python run.py
 # Debug mode (opens DevTools):
-python run.py --debug
+.venv/bin/python run.py --debug
 ```
 
 ### Local CLI
 
 ```bash
-python -m src.cli --json sessions list
-python -m src.cli --json sessions show JOB_ID
-python -m src.cli --json status JOB_ID
-python -m src.cli --json transcribe /path/to/audio.m4a
-python -m src.cli --json summarize JOB_ID
+.venv/bin/audioassist --json sessions list
+.venv/bin/audioassist --json sessions show JOB_ID
+.venv/bin/audioassist --json status JOB_ID
+.venv/bin/audioassist --json transcribe /path/to/audio.m4a
+.venv/bin/audioassist --json summarize JOB_ID
 ```
 
 See [the R03-a CLI contract](docs/cli-contract.md) for installation, stdout, error, and
@@ -290,7 +277,7 @@ If the microphone is unavailable when Mix mode starts (no mic connected, or micr
 
 ### Dependencies
 
-`sounddevice`, `silero-vad`, and `numpy` are included in `requirements.txt` and installed automatically with `pip install -r requirements.txt`. No manual installation is needed.
+`sounddevice`, `silero-vad`, and `numpy` are declared in `pyproject.toml` and installed automatically by `scripts/bootstrap.sh`. No separate pip command is needed.
 
 `sounddevice` wraps PortAudio. On most platforms PortAudio ships as a binary wheel, but on some Linux systems the system library must be present first:
 
@@ -389,6 +376,6 @@ The agent runs a tool-calling loop (up to 5 iterations): it calls tools as neede
 ## Running tests
 
 ```bash
-pip install pytest
-python -m pytest tests/ -v
+bash scripts/bootstrap.sh
+.venv/bin/python -m pytest tests/ -v
 ```

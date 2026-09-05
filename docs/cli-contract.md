@@ -7,14 +7,16 @@ Status: initial local CLI implemented on 2026-09-05.
 From a development checkout:
 
 ```bash
-python -m src.cli --help
+bash scripts/bootstrap.sh
+.venv/bin/audioassist --help
 ```
 
-Install the checkout to expose the console command:
+The bootstrap command installs the checkout and all locked runtime/test/build
+dependencies into the repository `.venv`. Direct module invocation uses the
+same interpreter:
 
 ```bash
-python -m pip install -e .
-audioassist --help
+.venv/bin/python -m src.cli --help
 ```
 
 Global options must precede the command:

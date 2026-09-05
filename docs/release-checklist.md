@@ -4,8 +4,9 @@ Use this checklist for a packaged release or after changing audio capture, persi
 
 ## Automated checks
 
-- Run `python -m pytest -q --ignore=tests/frontend`.
-- Run `python -m pytest -q tests/frontend` with Playwright Chromium available.
+- Bootstrap or sync the locked repository environment with `bash scripts/bootstrap.sh`.
+- Run `.venv/bin/python -m pytest -q --ignore=tests/frontend`.
+- Run `.venv/bin/python -m pytest -q tests/frontend` with Playwright Chromium available.
 - Build `native/AudioAssistCaptureHelper` in release mode on macOS.
 - Build the packaged application and confirm the helper and required model/runtime data are included.
 

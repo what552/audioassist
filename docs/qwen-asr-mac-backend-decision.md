@@ -404,13 +404,13 @@ checks belong to the release test matrix and must be recorded separately.
 Required repository verification after implementation:
 
 ```bash
-python -m pytest -q
+.venv/bin/python -m pytest -q
 ```
 
 If frontend behavior or labels change, also run:
 
 ```bash
-python -m pytest tests/frontend -q
+.venv/bin/python -m pytest tests/frontend -q
 ```
 
 The development handoff must report exact commands, results, tested hardware,

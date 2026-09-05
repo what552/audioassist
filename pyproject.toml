@@ -7,14 +7,38 @@ name = "audioassist-local"
 version = "0.1.0"
 description = "Local audio and video transcription with speaker diarization"
 readme = "README.md"
-requires-python = ">=3.12"
-dynamic = ["dependencies"]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "huggingface-hub>=0.23",
+    "numpy>=1.24",
+    "openai>=1.0",
+    "platformdirs>=4.0",
+    "pyannote.audio==4.0.4",
+    "pywebview>=5.0",
+    "qwen-asr==0.0.6",
+    "silero-vad>=4.0",
+    "sounddevice>=0.4",
+    "torch==2.10.0",
+]
+
+[project.optional-dependencies]
+mac = [
+    "mlx-whisper==0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+other = [
+    "faster-whisper>=1.1; sys_platform != 'darwin' or platform_machine != 'arm64'",
+]
+dev = [
+    "playwright>=1.40",
+    "pytest>=8.0",
+    "pytest-playwright>=0.4",
+]
+build = [
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
 audioassist = "src.cli:main"
 
 [tool.setuptools]
 packages = ["src"]
-
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}

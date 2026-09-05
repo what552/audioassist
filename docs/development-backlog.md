@@ -18,8 +18,8 @@ Priority meanings:
 | Order | ID | Priority | Status | Task |
 |---:|---|---|---|---|
 | 1 | RUNTIME-01 | P0 | Complete | Enforce local-model-only loading in both realtime capture implementations |
-| 2 | ENV-01 | P1 | Ready | Unify development, CLI, test, and package builds on the repository `.venv` |
-| 3 | QWEN-01 | P1 | Ready after ENV-01 | Add the internal Qwen backend protocol/factory and deterministic model cleanup |
+| 2 | ENV-01 | P1 | Complete | Unify development, CLI, test, and package builds on the repository `.venv` |
+| 3 | QWEN-01 | P1 | Ready | Add the internal Qwen backend protocol/factory and deterministic model cleanup |
 | 4 | QWEN-02 | P1 | Depends on QWEN-01 | Implement and package the full-precision MLX Qwen adapter |
 | 5 | QWEN-03 | P1 | Depends on QWEN-02 | Benchmark CPU, diagnostic MPS, and MLX; decide whether MLX becomes the Mac default |
 | 6 | REL-01 | P1 | Depends on ENV-01/QWEN-03 | Produce and verify a reproducible signed macOS release candidate |

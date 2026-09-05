@@ -10,7 +10,8 @@ Outputs:
 """
 
 import os
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+import sysconfig
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
@@ -21,12 +22,11 @@ HELPER_BIN = os.path.join(
     ".build", "release", "AudioAssistCaptureHelper",
 )
 
-# Virtual-env site-packages used at build time.
+# Active interpreter site-packages used at build time.
 # PyInstaller resolves imports from the active Python env, but data files
 # (model weights, assets) that are loaded via open() / pkg_resources /
 # importlib.resources must be declared explicitly.
-VENV = "/Users/feifei/programing/local asr/.venv"
-SITE = os.path.join(VENV, "lib", "python3.12", "site-packages")
+SITE = sysconfig.get_path("purelib")
 
 # ── Analysis ───────────────────────────────────────────────────────────────────
 a = Analysis(
