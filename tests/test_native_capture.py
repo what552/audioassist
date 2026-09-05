@@ -217,6 +217,25 @@ class TestStop:
         h = _helper()
         h.stop()  # must not raise
 
+    def test_terminate_error_still_cleans_fifo_and_model(self):
+        h = _helper()
+        backend = MagicMock()
+        h._asr = backend
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.terminate.side_effect = RuntimeError("terminate raced")
+        h._process = proc
+        h._fifo_path = "/tmp/audioassist-stop-error.fifo"
+
+        with patch("os.path.exists", return_value=True), patch("os.unlink") as unlink:
+            with pytest.raises(RuntimeError, match="terminate raced"):
+                h.stop()
+
+        proc.wait.assert_called()
+        unlink.assert_called_once_with("/tmp/audioassist-stop-error.fifo")
+        backend.close.assert_called_once()
+        assert h._asr is None
+
 
 # ── pause() / resume() ────────────────────────────────────────────────────────
 

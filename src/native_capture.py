@@ -138,6 +138,14 @@ class NativeCaptureHelper:
         """Load models, create FIFO, launch helper, start reader threads."""
         if not self._output_path:
             raise ValueError("output_path must be set before calling start()")
+        for attribute in ("_pcm_thread", "_event_thread", "_stderr_thread"):
+            thread = getattr(self, attribute)
+            if thread is not None and thread.is_alive():
+                raise RuntimeError(
+                    "Previous native capture threads are still stopping; "
+                    "wait before restarting"
+                )
+            setattr(self, attribute, None)
         if self._worker_thread is not None:
             if self._worker_thread.is_alive():
                 raise RuntimeError(
@@ -295,17 +303,39 @@ class NativeCaptureHelper:
 
     def stop(self) -> None:
         """Stop capture: terminate helper, drain FIFO, flush ASR queue, clean up."""
+        errors: list[Exception] = []
+
         # Step 1: Terminate helper — closes the FIFO write end so _pcm_reader
         # gets EOF and exits naturally.
         proc = self._process
         self._process = None
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
+        process_alive = False
+        if proc is not None:
+            try:
+                process_alive = proc.poll() is None
+            except Exception as exc:
+                errors.append(exc)
+                process_alive = True
+        if proc is not None and process_alive:
+            try:
+                proc.terminate()
+            except Exception as exc:
+                errors.append(exc)
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+                try:
+                    proc.kill()
+                    proc.wait()
+                except Exception as exc:
+                    errors.append(exc)
+            except Exception as exc:
+                errors.append(exc)
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
 
         # Step 2: Belt-and-suspenders signal — wakes the reader out of its
         # select() poll if the write-end EOF hasn't arrived yet.
@@ -314,8 +344,12 @@ class NativeCaptureHelper:
         # Step 3: Wait for the PCM reader to finish draining and exit.
         pcm_drained = True
         if self._pcm_thread is not None:
-            self._pcm_thread.join(timeout=10)
-            if self._pcm_thread.is_alive():
+            try:
+                self._pcm_thread.join(timeout=10)
+            except Exception as exc:
+                errors.append(exc)
+            pcm_alive = self._pcm_thread.is_alive()
+            if pcm_alive:
                 logger.critical(
                     "NativeCaptureHelper: pcm_thread still alive after 10 s — "
                     "skipping flush and ASR drain to avoid deadlock"
@@ -326,19 +360,26 @@ class NativeCaptureHelper:
                 if self._worker_thread is not None and self._worker_thread.is_alive():
                     try:
                         self._transcribe_queue.put(None)
-                    except Exception:
-                        pass
-            self._pcm_thread = None
+                    except Exception as exc:
+                        errors.append(exc)
+            else:
+                self._pcm_thread = None
 
         if pcm_drained:
             # Step 4: Flush any speech remaining in the buffer (reader has fully exited).
             if self._speech_buffer:
-                self._flush_speech()
+                try:
+                    self._flush_speech()
+                except Exception as exc:
+                    errors.append(exc)
 
             # Step 5: Drain the ASR worker.
             if self._worker_thread is not None and self._worker_thread.is_alive():
-                self._transcribe_queue.put(None)  # sentinel
-                self._worker_thread.join(timeout=30)
+                try:
+                    self._transcribe_queue.put(None)  # sentinel
+                    self._worker_thread.join(timeout=30)
+                except Exception as exc:
+                    errors.append(exc)
                 if self._worker_thread.is_alive():
                     logger.error(
                         "NativeCaptureHelper: worker thread did not exit within 30 s timeout"
@@ -352,16 +393,27 @@ class NativeCaptureHelper:
         if fd is not None:
             try:
                 os.close(fd)
-            except OSError:
-                pass
+            except OSError as exc:
+                errors.append(exc)
 
         # Step 7: Remove FIFO from filesystem.
         if self._fifo_path and os.path.exists(self._fifo_path):
             try:
                 os.unlink(self._fifo_path)
-            except OSError:
-                pass
+            except OSError as exc:
+                errors.append(exc)
             self._fifo_path = None
+
+        # Reader threads should finish after the helper and FIFO are closed.
+        for attribute in ("_event_thread", "_stderr_thread"):
+            thread = getattr(self, attribute)
+            if thread is not None and thread.is_alive():
+                try:
+                    thread.join(timeout=5)
+                except Exception as exc:
+                    errors.append(exc)
+            if thread is None or not thread.is_alive():
+                setattr(self, attribute, None)
 
         self._running = False
 
@@ -374,6 +426,8 @@ class NativeCaptureHelper:
             self._flush_count,
             self._chunks_read,
         )
+        if errors:
+            raise errors[0]
 
     def get_segments(self) -> list:
         """Return a copy of accumulated realtime transcription segments."""

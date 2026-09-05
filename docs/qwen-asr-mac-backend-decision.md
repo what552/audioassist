@@ -430,7 +430,9 @@ and timestamp output. Those runs are compatibility checks, not QWEN-03
 performance measurements. Checkpoints pin the selected internal backend for
 remaining chunks while legacy checkpoints adopt and then record the current
 selection. Realtime/native restart is blocked until any timed-out worker exits
-and releases the exact model instance it used.
+and releases the exact model instance it used. Capture stop/start cleanup is
+best-effort across process, stream, FIFO, queue, and device errors, and reports
+the first failure only after later lifecycle cleanup has run.
 
 - Introduce the internal protocol/factory without changing public behavior.
 - Make local model paths explicit in offline and realtime flows.
