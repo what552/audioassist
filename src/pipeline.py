@@ -128,9 +128,14 @@ def run(
         # 2. ASR — validate local models (F1: no auto-download)
         mm = ModelManager()
         if engine == "whisper":
+            whisper_id = asr_model_id or "whisper-large-v3-turbo"
+            whisper_path = _validate_model_local(mm, whisper_id)
             _progress(0.05, "Loading Whisper ASR model...")
-            size = _WHISPER_SIZE_MAP.get(asr_model_id or "", "turbo")
-            asr: ASREngine | WhisperASREngine = WhisperASREngine(size=size)
+            size = _WHISPER_SIZE_MAP.get(whisper_id, "turbo")
+            asr: ASREngine | WhisperASREngine = WhisperASREngine(
+                size=size,
+                model_path=whisper_path,
+            )
         else:
             asr_id     = asr_model_id or "qwen3-asr-1.7b"
             aligner_id = "qwen3-forced-aligner"

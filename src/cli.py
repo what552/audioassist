@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -30,6 +31,15 @@ DEFAULT_SUMMARY_PROMPT = (
 )
 
 
+class CLIUsageError(ValueError):
+    """Raised instead of exiting so JSON callers receive the normal envelope."""
+
+
+class AudioAssistArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise CLIUsageError(message)
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
@@ -38,7 +48,7 @@ def _positive_int(value: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = AudioAssistArgumentParser(
         prog="audioassist",
         description="Inspect and process AudioAssist sessions without opening the GUI.",
     )
@@ -122,6 +132,13 @@ def _emit(payload: dict, *, json_output: bool, human_text: str | None = None) ->
         print(human_text)
 
 
+def _emit_error(payload: dict, *, json_output: bool, human_text: str) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(human_text, file=sys.stderr)
+
+
 def _human_sessions(items: list[dict]) -> str:
     if not items:
         return "No sessions found."
@@ -177,36 +194,59 @@ def _run(args: argparse.Namespace, service: AudioAssistService) -> tuple[dict, s
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    json_requested = "--json" in raw_argv
+    try:
+        args = parser.parse_args(raw_argv)
+    except CLIUsageError as error:
+        _emit_error(
+            _failure("invalid_arguments", str(error)),
+            json_output=json_requested,
+            human_text=f"Error: {error}",
+        )
+        return EXIT_USAGE
     output_dir, config_path = _resolve_paths(args)
     service = AudioAssistService(output_dir, config_path)
     try:
-        payload, human_text = _run(args, service)
+        if args.json_output:
+            # Some ML dependencies print directly instead of using logging.
+            # Keep the machine-readable stdout contract even in that case.
+            with contextlib.redirect_stdout(sys.stderr):
+                payload, human_text = _run(args, service)
+        else:
+            payload, human_text = _run(args, service)
         _emit(payload, json_output=args.json_output, human_text=human_text)
         return EXIT_OK
     except SessionNotFoundError as error:
-        _emit(
+        _emit_error(
             _failure(error.code, str(error)),
             json_output=args.json_output,
             human_text=f"Error: {error}",
         )
         return EXIT_NOT_FOUND
     except FileNotFoundError as error:
-        _emit(
+        _emit_error(
             _failure("file_not_found", str(error)),
             json_output=args.json_output,
             human_text=f"Error: {error}",
         )
         return EXIT_NOT_FOUND
     except ConfigurationError as error:
-        _emit(
+        _emit_error(
             _failure(error.code, str(error)),
             json_output=args.json_output,
             human_text=f"Error: {error}",
         )
         return EXIT_NOT_READY
+    except ImportError as error:
+        _emit_error(
+            _failure("dependency_not_ready", str(error)),
+            json_output=args.json_output,
+            human_text=f"Error: {error}",
+        )
+        return EXIT_NOT_READY
     except AudioAssistError as error:
-        _emit(
+        _emit_error(
             _failure(error.code, str(error)),
             json_output=args.json_output,
             human_text=f"Error: {error}",
@@ -215,7 +255,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as error:
         error_code = "model_not_ready" if error.__class__.__name__ == "ModelNotReadyError" else "processing_failed"
         exit_code = EXIT_NOT_READY if error_code == "model_not_ready" else EXIT_PROCESSING
-        _emit(
+        _emit_error(
             _failure(error_code, str(error)),
             json_output=args.json_output,
             human_text=f"Error: {error}",

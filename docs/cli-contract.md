@@ -58,6 +58,10 @@ Errors use the same envelope:
 {"ok":false,"data":null,"error":{"code":"session_not_found","message":"Session not found: example"}}
 ```
 
+Argument errors also use this envelope when `--json` is present. Direct output from model
+libraries is redirected to stderr so it cannot corrupt stdout. A missing Python inference
+package reports `dependency_not_ready` with exit code 4.
+
 Fields may be added to `data` compatibly. Removing or renaming existing fields, changing
 their types, or changing exit-code meaning requires a documented contract revision.
 

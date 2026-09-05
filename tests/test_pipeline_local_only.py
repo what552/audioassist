@@ -63,6 +63,55 @@ def test_run_raises_model_incomplete(tmp_path):
     assert exc_info.value.reason == "model_incomplete"
 
 
+def test_whisper_run_raises_when_local_model_missing(tmp_path):
+    audio = tmp_path / "test.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 36)
+    mm = _make_mm(is_downloaded=False)
+
+    with patch("src.pipeline.ModelManager", return_value=mm), \
+         patch("src.pipeline.to_wav", return_value=(str(audio), False)), \
+         patch("src.pipeline.split_to_chunks", return_value=[(str(audio), 0.0)]):
+        from src.pipeline import run
+        with pytest.raises(ModelNotReadyError) as exc_info:
+            run(
+                audio_path=str(audio),
+                output_dir=str(tmp_path),
+                engine="whisper",
+                asr_model_id="whisper-large-v3-turbo",
+            )
+
+    assert exc_info.value.reason == "model_not_downloaded"
+    assert exc_info.value.model_id == "whisper-large-v3-turbo"
+
+
+def test_whisper_engine_receives_validated_local_path(tmp_path):
+    audio = tmp_path / "test.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 36)
+    local_model = tmp_path / "whisper-model"
+    local_model.mkdir()
+    mock_engine = MagicMock()
+    mock_engine.load.side_effect = RuntimeError("stop after model construction")
+    mock_engine_class = MagicMock(return_value=mock_engine)
+    mm = _make_mm(is_downloaded=True, local_path=str(local_model))
+
+    with patch("src.pipeline.ModelManager", return_value=mm), \
+         patch("src.pipeline.to_wav", return_value=(str(audio), False)), \
+         patch("src.pipeline.split_to_chunks", return_value=[(str(audio), 0.0)]), \
+         patch("src.pipeline.WhisperASREngine", mock_engine_class):
+        from src.pipeline import run
+        with pytest.raises(RuntimeError, match="stop after model construction"):
+            run(
+                audio_path=str(audio),
+                output_dir=str(tmp_path),
+                engine="whisper",
+                asr_model_id="whisper-large-v3-turbo",
+            )
+
+    mock_engine_class.assert_called_once_with(
+        size="turbo", model_path=str(local_model)
+    )
+
+
 def test_validate_model_local_raises_not_downloaded():
     mm = _make_mm(is_downloaded=False)
     with pytest.raises(ModelNotReadyError) as exc_info:

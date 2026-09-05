@@ -366,7 +366,9 @@ class TestAsrModelId:
             run("/audio/test.mp3", str(tmp_path), engine="whisper",
                 asr_model_id="whisper-large-v3-turbo")
 
-        mock_whisper_cls.assert_called_once_with(size="turbo")
+        mock_whisper_cls.assert_called_once_with(
+            size="turbo", model_path="/fake/model/path"
+        )
 
     def test_asr_model_id_whisper_large(self, tmp_path):
         """asr_model_id='whisper-large-v3' → WhisperASREngine(size='large')."""
@@ -394,7 +396,9 @@ class TestAsrModelId:
             run("/audio/test.mp3", str(tmp_path), engine="whisper",
                 asr_model_id="whisper-large-v3")
 
-        mock_whisper_cls.assert_called_once_with(size="large")
+        mock_whisper_cls.assert_called_once_with(
+            size="large", model_path="/fake/model/path"
+        )
 
     def test_no_asr_model_id_whisper_defaults_to_turbo(self, tmp_path):
         """When asr_model_id=None, WhisperASREngine defaults to size='turbo'."""
@@ -421,4 +425,6 @@ class TestAsrModelId:
             from src.pipeline import run
             run("/audio/test.mp3", str(tmp_path), engine="whisper")
 
-        mock_whisper_cls.assert_called_once_with(size="turbo")
+        mock_whisper_cls.assert_called_once_with(
+            size="turbo", model_path="/fake/model/path"
+        )

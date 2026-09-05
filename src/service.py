@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -54,6 +55,8 @@ class ConfigurationError(AudioAssistError):
 
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _REALTIME_WAV_PREFIX = "realtime_recording"
+_summary_locks: dict[str, threading.Lock] = {}
+_summary_locks_guard = threading.Lock()
 
 
 def language_instruction(language: str, text: str) -> str:
@@ -94,6 +97,11 @@ def _write_json_atomic(path: str, data: Any) -> None:
     os.replace(temporary, path)
 
 
+def _summary_lock(path: str) -> threading.Lock:
+    with _summary_locks_guard:
+        return _summary_locks.setdefault(path, threading.Lock())
+
+
 class AudioAssistService:
     """Synchronous use cases with no GUI or web-framework dependencies."""
 
@@ -126,13 +134,15 @@ class AudioAssistService:
     def save_summary_version(self, job_id: str, text: str) -> dict:
         job_id = validate_job_id(job_id)
         path = resolve_summary_path(self.output_dir, job_id)
-        versions = self.get_summary_versions(job_id)
         version = {
             "text": text,
             "created_at": time.strftime("%Y-%m-%d %H:%M"),
         }
-        versions.append(version)
-        _write_json_atomic(path, versions[-3:])
+        with _summary_lock(path):
+            data = _read_json(path, [])
+            versions = data if isinstance(data, list) else []
+            versions.append(version)
+            _write_json_atomic(path, versions[-3:])
         return version
 
     def list_sessions(self) -> list[dict]:
@@ -152,7 +162,7 @@ class AudioAssistService:
                 transcript_path = os.path.join(session_dir, "transcript.json")
                 if os.path.exists(transcript_path):
                     data = _read_json(transcript_path, None)
-                    if isinstance(data, dict):
+                    if self._is_transcript(data):
                         seen_job_ids.add(job_id)
                         result.append(self._history_entry(job_id, data))
                     continue
@@ -182,7 +192,7 @@ class AudioAssistService:
             if basename.endswith(("_summary.json", "_meta.json", "_agent_chat.json")):
                 continue
             data = _read_json(path, None)
-            if not isinstance(data, dict):
+            if not self._is_transcript(data):
                 continue
             job_id = os.path.splitext(basename)[0]
             if job_id in seen_job_ids:
@@ -433,6 +443,10 @@ class AudioAssistService:
             "audio_path": data.get("audio", ""),
             "type": "file",
         }
+
+    @staticmethod
+    def _is_transcript(data: Any) -> bool:
+        return isinstance(data, dict) and isinstance(data.get("segments"), list)
 
     @staticmethod
     def _find_realtime_wav(session_dir: str) -> str | None:

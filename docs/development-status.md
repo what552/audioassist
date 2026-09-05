@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03 has
 | R03-a | In progress | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs and explicit background-job lifecycle |
 
-The R03-a feature branch baseline is 613 automated tests: 610 Python/backend tests and
+The R03-a hardening branch baseline is 669 automated tests: 666 Python/backend tests and
 3 browser tests. Real model, audio-device, permission, and packaged-app behavior remains
 release-level manual validation rather than CI coverage.
 

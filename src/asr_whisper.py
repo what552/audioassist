@@ -20,7 +20,8 @@ def _is_apple_silicon() -> bool:
     return sys.platform == "darwin" and platform.machine() == "arm64"
 
 
-# mlx-whisper model IDs (auto-downloaded from HuggingFace or local path)
+# Catalog fallbacks for standalone callers. The file-transcription pipeline passes
+# an explicit validated local path so a job never downloads model weights.
 MLX_MODELS = {
     "tiny":   "mlx-community/whisper-tiny-mlx",
     "small":  "mlx-community/whisper-small-mlx",
@@ -51,10 +52,12 @@ class WhisperASREngine:
         size: str = "turbo",
         language: Optional[str] = None,
         hf_endpoint: Optional[str] = None,
+        model_path: Optional[str] = None,
     ):
         self.size = size
         self.language = language
         self.hf_endpoint = hf_endpoint
+        self.model_path = model_path
         self._model = None
         self._backend: str = "mlx" if _is_apple_silicon() else "faster-whisper"
 
@@ -75,7 +78,7 @@ class WhisperASREngine:
             os.environ.setdefault("HF_ENDPOINT", self.hf_endpoint)
             os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-        model_id = MLX_MODELS.get(self.size, MLX_MODELS["turbo"])
+        model_id = self.model_path or MLX_MODELS.get(self.size, MLX_MODELS["turbo"])
         logger.info(f"Loading mlx-whisper: {model_id}")
         self._model = model_id
         self._mlx_whisper = mlx_whisper
@@ -87,7 +90,7 @@ class WhisperASREngine:
         except ImportError:
             raise ImportError("Run: pip install faster-whisper")
 
-        model_id = FW_MODELS.get(self.size, "large-v3")
+        model_id = self.model_path or FW_MODELS.get(self.size, "large-v3")
         logger.info(f"Loading faster-whisper: {model_id}")
         self._model = WhisperModel(model_id, device="cpu", compute_type="int8")
         logger.info("faster-whisper ready.")
