@@ -408,6 +408,21 @@ class TestStop:
         mock_stream.close.assert_called_once()
         assert rt._stream is None
 
+    def test_stop_still_cleans_worker_and_model_when_stream_stop_fails(self):
+        rt, _ = _make_rt()
+        backend = MagicMock()
+        rt._asr = backend
+        stream = MagicMock()
+        stream.stop.side_effect = RuntimeError("device stop failed")
+        rt._stream = stream
+
+        with pytest.raises(RuntimeError, match="device stop failed"):
+            rt.stop()
+
+        stream.close.assert_called_once()
+        backend.close.assert_called_once()
+        assert rt._asr is None
+
 
 # ── pause / resume ────────────────────────────────────────────────────────────
 

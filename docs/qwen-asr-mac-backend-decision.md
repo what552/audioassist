@@ -427,7 +427,10 @@ supports `AUDIOASSIST_QWEN_BACKEND=pytorch-mps` as a diagnostic override, and
 releases Qwen before diarization and on realtime stop/error paths. Source-tree
 forced-offline 30-second CPU and MPS smoke jobs produced identical transcript
 and timestamp output. Those runs are compatibility checks, not QWEN-03
-performance measurements.
+performance measurements. Checkpoints pin the selected internal backend for
+remaining chunks while legacy checkpoints adopt and then record the current
+selection. Realtime/native restart is blocked until any timed-out worker exits
+and releases the exact model instance it used.
 
 - Introduce the internal protocol/factory without changing public behavior.
 - Make local model paths explicit in offline and realtime flows.

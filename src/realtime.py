@@ -58,6 +58,7 @@ class RealtimeTranscriber:
         self._running    = False
         self._stream     = None
         self._asr        = None
+        self._asr_lock   = threading.Lock()
         self._vad        = None
         self._wav_writer = None  # wave.Wave_write for session recording
 
@@ -81,6 +82,12 @@ class RealtimeTranscriber:
 
     def start(self) -> None:
         """Load models then open the microphone stream."""
+        if self._worker_thread is not None:
+            if self._worker_thread.is_alive():
+                raise RuntimeError(
+                    "Previous realtime ASR worker is still stopping; wait before restarting"
+                )
+            self._worker_thread = None
         self._load_models()
         try:
             self._running = True
@@ -137,23 +144,44 @@ class RealtimeTranscriber:
     def stop(self) -> None:
         """Stop the microphone stream and flush any pending speech."""
         self._running = False
-        if self._stream is not None:
-            self._stream.stop()   # blocks until audio callback finishes
-            self._stream.close()
-            self._stream = None
+        errors: list[Exception] = []
+        stream = self._stream
+        self._stream = None
+        if stream is not None:
+            try:
+                stream.stop()   # blocks until audio callback finishes
+            except Exception as exc:
+                errors.append(exc)
+            try:
+                stream.close()
+            except Exception as exc:
+                errors.append(exc)
         # Stream is fully stopped — safe to close WAV writer (no more callbacks)
-        if self._wav_writer is not None:
-            self._wav_writer.close()
-            self._wav_writer = None
+        writer = self._wav_writer
+        self._wav_writer = None
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception as exc:
+                errors.append(exc)
         if self._speech_buffer:
-            self._flush_speech()
+            try:
+                self._flush_speech()
+            except Exception as exc:
+                errors.append(exc)
         # Signal worker to stop after it drains remaining items, then wait
         if self._worker_thread is not None and self._worker_thread.is_alive():
-            self._transcribe_queue.put(None)  # sentinel
-            self._worker_thread.join()
+            try:
+                self._transcribe_queue.put(None)  # sentinel
+                self._worker_thread.join()
+            except Exception as exc:
+                errors.append(exc)
+        if self._worker_thread is None or not self._worker_thread.is_alive():
             self._worker_thread = None
-        self._close_asr()
+            self._close_asr()
         logger.info("Realtime transcription stopped")
+        if errors:
+            raise errors[0]
 
     def pause(self) -> None:
         """Pause microphone capture; WAV writer stays open."""
@@ -210,9 +238,12 @@ class RealtimeTranscriber:
             resolved.local_path,
         )
 
-    def _close_asr(self) -> None:
-        asr = self._asr
-        self._asr = None
+    def _close_asr(self, expected: object | None = None) -> None:
+        with self._asr_lock:
+            if expected is not None and self._asr is not expected:
+                return
+            asr = self._asr
+            self._asr = None
         close = getattr(asr, "close", None)
         if callable(close):
             try:
@@ -281,16 +312,20 @@ class RealtimeTranscriber:
         The worker exits when it dequeues the ``None`` sentinel value (sent by
         ``stop()`` after the audio stream is closed).
         """
-        while True:
-            item = self._transcribe_queue.get()
-            if item is None:  # sentinel — time to exit
-                self._transcribe_queue.task_done()
-                break
-            try:
-                buf, start_sec, end_sec = item
-                self._transcribe_segment(buf, start_sec, end_sec)
-            finally:
-                self._transcribe_queue.task_done()
+        backend = self._asr
+        try:
+            while True:
+                item = self._transcribe_queue.get()
+                if item is None:  # sentinel — time to exit
+                    self._transcribe_queue.task_done()
+                    break
+                try:
+                    buf, start_sec, end_sec = item
+                    self._transcribe_segment(buf, start_sec, end_sec)
+                finally:
+                    self._transcribe_queue.task_done()
+        finally:
+            self._close_asr(expected=backend)
 
     def _transcribe_segment(
         self, audio_chunks: list, start_sec: float = 0.0, end_sec: float = 0.0

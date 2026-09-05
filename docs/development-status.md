@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The QWEN-01 integration baseline is 702 automated tests: 699 Python/backend tests and
+The QWEN-01 integration baseline is 710 automated tests: 707 Python/backend tests and
 3 browser tests, all running from the repository `.venv`. Forced-offline 30-second Qwen
 CPU and diagnostic MPS CLI smoke jobs produced identical language, text, speaker blocks,
 and timestamps; the environment-level Whisper smoke also passes. Real audio-device,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,19 @@ from src.asr_factory import (
     create_qwen_engine,
     select_qwen_backend,
 )
+
+
+def test_importing_factory_does_not_import_qwen_runtime():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import src.asr_factory; "
+            "raise SystemExit(1 if 'qwen_asr' in sys.modules else 0)",
+        ],
+        check=False,
+    )
+    assert completed.returncode == 0
 
 
 def _torch(*, cuda: bool = False, mps: bool = False):
@@ -152,3 +166,33 @@ def test_close_clears_model_references_and_mps_cache():
     assert model.processor is None
     assert model.forced_aligner is None
     empty_cache.assert_called_once()
+
+
+def test_pytorch_adapter_converts_qwen_timestamp_result():
+    from src.asr import ASREngine
+
+    timestamp = SimpleNamespace(text="你好", start_time=0.25, end_time=0.75)
+    result = SimpleNamespace(
+        text="你好",
+        language="Chinese",
+        time_stamps=SimpleNamespace(items=[timestamp]),
+    )
+    model = MagicMock()
+    model.transcribe.return_value = [result]
+    engine = ASREngine(
+        with_timestamps=True,
+        model_path="/models/qwen",
+        aligner_path="/models/aligner",
+    )
+    engine._model = model
+
+    converted = engine.transcribe("/audio/sample.wav")
+
+    assert converted.text == "你好"
+    assert converted.language == "Chinese"
+    assert [(word.word, word.start, word.end) for word in converted.words] == [
+        ("你好", 0.25, 0.75)
+    ]
+    model.transcribe.assert_called_once_with(
+        "/audio/sample.wav", return_time_stamps=True
+    )

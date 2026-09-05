@@ -641,6 +641,50 @@ class TestMixModeRouting:
 # ── start() 异常路径清理（P2 修复验证）────────────────────────────────────────
 
 class TestStartCleanupOnError:
+    def test_model_closed_when_mkfifo_raises(self):
+        h = _helper()
+        backend = MagicMock()
+
+        def load_models():
+            h._asr = backend
+
+        with patch.object(h, "_load_models", side_effect=load_models), patch(
+            "os.path.exists", return_value=False
+        ), patch("os.mkfifo", side_effect=OSError("fifo failed")):
+            with pytest.raises(OSError, match="fifo failed"):
+                h.start()
+
+        backend.close.assert_called_once()
+        assert h._fifo_path is None
+
+    def test_post_popen_thread_failure_terminates_helper_and_closes_model(self):
+        h = _helper()
+        backend = MagicMock()
+        proc = _FakeProcess()
+        original_start = threading.Thread.start
+
+        def load_models():
+            h._asr = backend
+
+        def fail_event_start(thread):
+            if thread.name == "native-event-reader":
+                raise RuntimeError("event thread failed")
+            return original_start(thread)
+
+        with patch.object(h, "_load_models", side_effect=load_models), patch(
+            "os.mkfifo"
+        ), patch("os.path.exists", return_value=False), patch(
+            "os.open", return_value=7
+        ), patch("os.close"), patch("fcntl.fcntl", return_value=0), patch(
+            "subprocess.Popen", return_value=proc
+        ), patch.object(threading.Thread, "start", fail_event_start):
+            with pytest.raises(RuntimeError, match="event thread failed"):
+                h.start()
+
+        assert proc._terminated is True
+        backend.close.assert_called_once()
+        assert h._worker_thread is None
+
     def test_fifo_cleaned_up_when_popen_raises(self):
         """Popen 失败时，已创建的 FIFO 文件和 fd 不应泄漏。"""
         unlinked = []
@@ -771,6 +815,44 @@ class TestWarningEventHandling:
 
 class TestStopDrainTiming:
     """Verify that stop() drains the FIFO tail before flushing speech buffer."""
+
+    def test_worker_timeout_closes_backend_when_inference_eventually_finishes(self):
+        h = _helper()
+        backend = MagicMock()
+        h._asr = backend
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_transcribe(*_args):
+            entered.set()
+            release.wait(timeout=5)
+
+        h._transcribe_queue.put(([], 0.0, 1.0))
+        with patch.object(h, "_transcribe_segment", side_effect=slow_transcribe):
+            worker = threading.Thread(
+                target=h._transcription_worker,
+                daemon=True,
+                name="native-transcribe-worker",
+            )
+            h._worker_thread = worker
+            worker.start()
+            assert entered.wait(timeout=2)
+            real_join = worker.join
+
+            # Simulate the production 30-second join timing out immediately.
+            with patch.object(worker, "join", return_value=None):
+                h.stop()
+
+            backend.close.assert_not_called()
+            with pytest.raises(RuntimeError, match="still stopping"):
+                h.start()
+
+            release.set()
+            real_join(timeout=2)
+
+        assert not worker.is_alive()
+        backend.close.assert_called_once()
+        assert h._asr is None
 
     def test_pcm_reader_exits_on_eof_not_running_flag(self):
         """_pcm_reader must exit when os.read returns b'' (EOF), not on _running."""

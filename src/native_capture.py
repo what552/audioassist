@@ -102,6 +102,7 @@ class NativeCaptureHelper:
         # Background threads
         self._event_thread:  Optional[threading.Thread] = None
         self._pcm_thread:    Optional[threading.Thread] = None
+        self._stderr_thread: Optional[threading.Thread] = None
         self._worker_thread: Optional[threading.Thread] = None
 
         # Runtime state
@@ -129,6 +130,7 @@ class NativeCaptureHelper:
         # Lazy-loaded models
         self._vad = None
         self._asr = None
+        self._asr_lock = threading.Lock()
 
     # ── Public interface ───────────────────────────────────────────────────────
 
@@ -136,20 +138,26 @@ class NativeCaptureHelper:
         """Load models, create FIFO, launch helper, start reader threads."""
         if not self._output_path:
             raise ValueError("output_path must be set before calling start()")
+        if self._worker_thread is not None:
+            if self._worker_thread.is_alive():
+                raise RuntimeError(
+                    "Previous native ASR worker is still stopping; wait before restarting"
+                )
+            self._worker_thread = None
 
         self._stop_event.clear()
         self._load_models()
 
-        # Create FIFO
-        self._fifo_path = os.path.join(
-            tempfile.gettempdir(),
-            f"audioassist-{os.getpid()}.fifo",
-        )
-        if os.path.exists(self._fifo_path):
-            os.unlink(self._fifo_path)
-        os.mkfifo(self._fifo_path)
-
         try:
+            # Create FIFO
+            self._fifo_path = os.path.join(
+                tempfile.gettempdir(),
+                f"audioassist-{os.getpid()}.fifo",
+            )
+            if os.path.exists(self._fifo_path):
+                os.unlink(self._fifo_path)
+            os.mkfifo(self._fifo_path)
+
             # Open FIFO read-end BEFORE launching the helper so the helper's
             # blocking O_WRONLY open completes immediately.
             self._fifo_fd = os.open(self._fifo_path, os.O_RDONLY | os.O_NONBLOCK)
@@ -180,53 +188,83 @@ class NativeCaptureHelper:
                 stderr=subprocess.PIPE,
                 text=True,
             )
+
+            # Event reader thread (parses stdout NDJSON)
+            self._event_thread = threading.Thread(
+                target=self._event_reader,
+                daemon=True,
+                name="native-event-reader",
+            )
+            self._event_thread.start()
+
+            # Stderr drain thread — prevents helper pipe backpressure.
+            self._stderr_thread = threading.Thread(
+                target=self._stderr_reader,
+                daemon=True,
+                name="native-stderr-reader",
+            )
+            self._stderr_thread.start()
+
+            # PCM reader thread (reads FIFO, runs VAD + ASR)
+            self._pcm_thread = threading.Thread(
+                target=self._pcm_reader,
+                daemon=True,
+                name="native-pcm-reader",
+            )
+            self._pcm_thread.start()
+
+            self._running = True
         except Exception:
-            # Clean up FIFO fd and worker thread on any startup failure
-            if self._fifo_fd is not None:
-                try:
-                    os.close(self._fifo_fd)
-                except OSError:
-                    pass
-                self._fifo_fd = None
-            if self._fifo_path and os.path.exists(self._fifo_path):
-                try:
-                    os.unlink(self._fifo_path)
-                except OSError:
-                    pass
-                self._fifo_path = None
-            if self._worker_thread is not None and self._worker_thread.is_alive():
-                self._transcribe_queue.put(None)
-                self._worker_thread.join(timeout=5)
-            self._worker_thread = None
-            self._close_asr()
+            self._cleanup_failed_start()
             raise
 
-        self._running = True
-
-        # Event reader thread (parses stdout NDJSON)
-        self._event_thread = threading.Thread(
-            target=self._event_reader,
-            daemon=True,
-            name="native-event-reader",
-        )
-        self._event_thread.start()
-
-        # Stderr drain thread — prevents helper from blocking when stderr pipe fills.
-        threading.Thread(
-            target=self._stderr_reader,
-            daemon=True,
-            name="native-stderr-reader",
-        ).start()
-
-        # PCM reader thread (reads FIFO, runs VAD + ASR)
-        self._pcm_thread = threading.Thread(
-            target=self._pcm_reader,
-            daemon=True,
-            name="native-pcm-reader",
-        )
-        self._pcm_thread.start()
-
         logger.info("NativeCaptureHelper started (mode=%s)", self._mode)
+
+    def _cleanup_failed_start(self) -> None:
+        """Best-effort cleanup for failures at any native startup stage."""
+        self._running = False
+        self._stop_event.set()
+
+        proc = self._process
+        self._process = None
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+        fd = self._fifo_fd
+        self._fifo_fd = None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+        for attribute in ("_pcm_thread", "_event_thread", "_stderr_thread"):
+            thread = getattr(self, attribute)
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=5)
+            setattr(self, attribute, None)
+
+        worker = self._worker_thread
+        if worker is not None and worker.is_alive():
+            self._transcribe_queue.put(None)
+            worker.join(timeout=5)
+        if worker is None or not worker.is_alive():
+            self._worker_thread = None
+            self._close_asr()
+
+        if self._fifo_path and os.path.exists(self._fifo_path):
+            try:
+                os.unlink(self._fifo_path)
+            except OSError:
+                pass
+        self._fifo_path = None
 
     def pause(self) -> None:
         """Pause capture: send SIGUSR1 to helper, flush pending speech."""
@@ -376,9 +414,12 @@ class NativeCaptureHelper:
             resolved.local_path,
         )
 
-    def _close_asr(self) -> None:
-        asr = self._asr
-        self._asr = None
+    def _close_asr(self, expected: object | None = None) -> None:
+        with self._asr_lock:
+            if expected is not None and self._asr is not expected:
+                return
+            asr = self._asr
+            self._asr = None
         close = getattr(asr, "close", None)
         if callable(close):
             try:
@@ -552,16 +593,22 @@ class NativeCaptureHelper:
 
     def _transcription_worker(self) -> None:
         """Serial ASR worker — drains the transcription queue."""
-        while True:
-            item = self._transcribe_queue.get()
-            if item is None:  # sentinel
-                self._transcribe_queue.task_done()
-                break
-            try:
-                buf, start_sec, end_sec = item
-                self._transcribe_segment(buf, start_sec, end_sec)
-            finally:
-                self._transcribe_queue.task_done()
+        backend = self._asr
+        try:
+            while True:
+                item = self._transcribe_queue.get()
+                if item is None:  # sentinel
+                    self._transcribe_queue.task_done()
+                    break
+                try:
+                    buf, start_sec, end_sec = item
+                    self._transcribe_segment(buf, start_sec, end_sec)
+                finally:
+                    self._transcribe_queue.task_done()
+        finally:
+            # If stop() timed out, the exact backend is released here once its
+            # last in-flight inference has really returned.
+            self._close_asr(expected=backend)
 
     def _transcribe_segment(
         self, audio_chunks: list, start_sec: float, end_sec: float

@@ -289,6 +289,59 @@ class TestASRLifecycle:
 
         assert "Using Qwen backend: pytorch-cpu" in progress
 
+    def test_resume_pins_recorded_qwen_backend(self, tmp_path, mock_pipeline_deps):
+        from src.pipeline import run
+
+        mock_pipeline_deps["asr_instance"].backend_name = "pytorch-cpu"
+        checkpoint_data = {
+            "job_id": "resume-job",
+            "engine": "qwen",
+            "model_id": "qwen3-asr-1.7b",
+            "qwen_backend": "pytorch-cpu",
+            "status": "interrupted",
+            "chunks": [],
+        }
+        with patch(f"{PIPELINE}.checkpoint.read", return_value=checkpoint_data), patch(
+            f"{PIPELINE}.checkpoint.write"
+        ) as write_checkpoint, patch(f"{PIPELINE}.checkpoint.delete"):
+            run(
+                "/audio/test.mp3",
+                str(tmp_path),
+                engine="qwen",
+                session_dir=str(tmp_path / "session"),
+            )
+
+        factory_kwargs = mock_pipeline_deps["asr_cls"].call_args.kwargs
+        assert factory_kwargs["backend_override"] == "pytorch-cpu"
+        first_payload = write_checkpoint.call_args_list[0].args[1]
+        assert first_payload["qwen_backend"] == "pytorch-cpu"
+
+    def test_legacy_checkpoint_records_selected_backend(self, tmp_path, mock_pipeline_deps):
+        from src.pipeline import run
+
+        mock_pipeline_deps["asr_instance"].backend_name = "pytorch-mps"
+        legacy_checkpoint = {
+            "job_id": "legacy-job",
+            "engine": "qwen",
+            "model_id": "qwen3-asr-1.7b",
+            "status": "interrupted",
+            "chunks": [],
+        }
+        with patch(f"{PIPELINE}.checkpoint.read", return_value=legacy_checkpoint), patch(
+            f"{PIPELINE}.checkpoint.write"
+        ) as write_checkpoint, patch(f"{PIPELINE}.checkpoint.delete"):
+            run(
+                "/audio/test.mp3",
+                str(tmp_path),
+                engine="qwen",
+                session_dir=str(tmp_path / "session"),
+            )
+
+        factory_kwargs = mock_pipeline_deps["asr_cls"].call_args.kwargs
+        assert factory_kwargs["backend_override"] is None
+        first_payload = write_checkpoint.call_args_list[0].args[1]
+        assert first_payload["qwen_backend"] == "pytorch-mps"
+
 
 # ── local-model-only (F1) ─────────────────────────────────────────────────────
 # Note: auto-download was removed in r02-b5 (F1). Models must be pre-downloaded.

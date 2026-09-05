@@ -5,6 +5,7 @@ Data file: {session_dir}/transcription_task.json
 Format:
     {
         "job_id": "...", "source_audio": "...", "engine": "qwen", "model_id": "...",
+        "qwen_backend": "pytorch-cpu",  # optional for legacy checkpoints
         "status": "running",
         "chunks": [
             {"index": 0, "offset": 0.0, "status": "done", "text": "...", "words": [...], "language": ""},

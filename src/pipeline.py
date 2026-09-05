@@ -151,6 +151,7 @@ def run(
                 with_timestamps=with_timestamps,
                 model_path=asr_path,
                 aligner_path=aligner_path,
+                backend_override=(ckpt_data or {}).get("qwen_backend"),
             )
         try:
             asr.load()
@@ -187,6 +188,8 @@ def run(
                     "completed_chunks": sum(1 for c in ckpt_chunks.values() if c.get("status") == "done"),
                     "total_chunks": len(chunks),
                 }
+                if engine == "qwen" and backend_name:
+                    ckpt_payload["qwen_backend"] = backend_name
                 checkpoint.write(session_dir, ckpt_payload)
         except Exception:
             _close_asr_engine(asr)
