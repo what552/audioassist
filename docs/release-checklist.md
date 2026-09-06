@@ -64,11 +64,44 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
 
 ## Realtime capture
 
+- For an ad-hoc local candidate, expect every changed build to have a new CDHash and
+  re-authorize microphone/screen capture before judging device initialization. A
+  Developer ID signed upgrade must retain the stable designated requirement instead.
+- On a fresh microphone decision, confirm the system prompt appears before model loading
+  and Session/WAV creation; cancel and timeout must restore idle controls without a
+  header-only recording.
+- Confirm the packaged Python-to-AVFoundation callback bridge actually reaches the
+  native prompt; a mocked authorization result or a Settings link is not sufficient.
+  Before the first request, the UI must not instruct users to enable a missing app row.
 - Verify microphone, system, and mix modes independently.
+- Verify the permission matrix explicitly: Mic requests only Microphone, System requests
+  only Screen & System Audio Recording, and Mix reports/requests both independently.
 - Verify pause, playback while paused, resume, finish, and short-recording discard.
 - Confirm Screen Recording permission guidance and missing-helper errors are actionable.
-- Confirm a denied/unavailable microphone degrades mix mode to system-only without ending the session.
+- Confirm a missing Microphone permission blocks Mix before startup, while a microphone
+  device/converter failure after both permissions pass degrades Mix to system-only.
 - Confirm the final WAV and diarized transcript stay aligned.
+
+## Privacy permission installation and upgrade gates
+
+- Before testing an ad-hoc local candidate, quit every AudioAssist process, ensure the
+  intended packaged app is the only copy being exercised, reset AudioAssist's Microphone
+  and Screen & System Audio Recording decisions, and authorize the candidate again. This
+  validates a fresh local build only; it is not evidence that upgrades preserve access.
+- Test a distributable upgrade without resetting TCC: install the previous released app,
+  grant both recording permissions, successfully record in Mic/System/Mix, install the
+  new signed DMG over it, and confirm all three modes still record without another prompt,
+  Settings toggle, or permission reset.
+- Test first installation independently on a clean macOS account or after an intentional
+  TCC reset. Confirm Mic asks only for Microphone, System asks only for Screen & System
+  Audio Recording, and Mix requests whichever of the two is still missing.
+- Record the old and new signing authorities, TeamIdentifier, bundle identifier, and
+  designated requirements in the release evidence. CDHash may change across a properly
+  signed upgrade, but the new app must satisfy the previously recorded designated
+  requirement.
+- Block distribution if an upgrade loses recording permission or if recovery instructions
+  would require ordinary users to run `tccutil`, remove privacy rows, or repeatedly toggle
+  permissions in System Settings.
 
 ## Session outputs
 

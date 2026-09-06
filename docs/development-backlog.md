@@ -32,6 +32,113 @@ Priority meanings:
 | 13 | TEXT-01 | P2 | Complete | Add conservative, language-aware punctuation without semantic rewriting |
 | 14 | R03-B1 | P2 | Complete: go | Foreground/read-only and visible-app server modes have explicit lifecycle, locking, recovery, cancellation, schema, and security boundaries |
 | 15 | R03-B2 | P2 | Complete | Authenticated desktop/read-only HTTP service and eight-tool stdio MCP adapter, without a daemon |
+| 16 | REALTIME-DIAG-01 | P1 | Complete | Prove the 44-byte WAV failure is a TCC code-requirement mismatch after replacing an ad-hoc signed build |
+| 17 | REALTIME-START-01 | P1 | Complete | Request microphone access before PortAudio/model/session startup, with cancel and timeout recovery; installed 2.0.1 gate passed |
+| 18 | PLAYER-02 | P2 | Ready | Prevent playback position and active playback from leaking across session switches |
+| 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
+| 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
+| 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
+| 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
+
+### REALTIME-DIAG-01 — Intermittent packaged microphone startup
+
+The installed 2.0.0 app produced one microphone session that remained in
+`starting` with a header-only 44-byte WAV, followed by a successful recording in
+the same app process. Re-signed isolated app copies produced similar symptoms but
+are not valid permission evidence because changing their signature invalidated
+their TCC identity.
+
+- Persist a bounded desktop runtime log because the Finder-launched PyInstaller
+  app has no console.
+- Correlate each attempt across model loading, WAV creation, sounddevice import,
+  PortAudio stream open/start, the first audio callback, and UI confirmation.
+- Reproduce with the formally installed app and compare cold/warm Qwen and Whisper
+  attempts without changing production capture parameters first.
+- Do not select a sample-rate, timeout, retry, or permission fix until the last
+  completed stage of a failed attempt is captured.
+
+Acceptance:
+
+- Runtime logs rotate and never contain transcript or audio content.
+- Unit tests prove one handler is installed and startup stage markers remain
+  correlated and ordered.
+- At least one installed-app failure or a bounded repeated-pass result is recorded
+  before REALTIME-START-01 changes behavior.
+
+Result: the diagnostic build reproduced the failure on its first attempt. The
+last application marker was `stream_open.begin`; the thread was blocked inside
+PortAudio `Pa_OpenStream` while CoreAudio requested microphone access. macOS TCC
+then reported that the prior permission's code requirement did not match the new
+ad-hoc build CDHash and remained in `AUTHREQ_PROMPTING`. The default device was
+the 48 kHz built-in MacBook Pro microphone, but the block occurred while assigning
+the AUHAL device/IOProc, before stream activation; sample rate is not the proven
+cause. See `docs/realtime-start-diagnosis.md`.
+
+### REALTIME-START-01 — Bounded microphone authorization
+
+- Query TCC before recording and request first-use access through AVFoundation,
+  before loading a model, creating a Session/WAV, or opening PortAudio.
+- Enforce the same authorization boundary inside `API.start_realtime`; HTTP/MCP
+  also preflights Mic and returns `capture_unavailable` rather than prompting.
+- Keep the permission wait cancelable in the UI and bound the native request to
+  60 seconds. Denial, timeout, cancellation, or bridge failure restores the idle
+  controls and never calls the realtime backend.
+- Persist only explicitly marked startup diagnostics. Rotation is serialized
+  across overlapping app processes, and the audio callback only signals an
+  event; ordinary logs, transcript text, paths, and file I/O stay out of it.
+- Treat stable Developer ID signing/notarization as the production upgrade fix;
+  an edited ad-hoc build still has to be authorized as a new code identity.
+
+Acceptance passed on installed 2.0.1: the first-use native prompt was restored,
+the owner confirmed Mic recording, repeated System capture passed after resetting
+the stale 2.0.0 ad-hoc TCC row, and Mix passed start/pause/resume/stop with a
+non-empty signal. Stable Developer ID upgrade continuity remains REL-TCC-01.
+
+2026-09-06 follow-up: after resetting the stale ad-hoc TCC grant, first-use Mic
+still failed without a prompt. The dynamic AVFoundation loader lacked PyObjC
+completion-block metadata; the real call raised `TypeError: Argument 3 is a block,
+but no signature available` before reaching TCC. Mock-only tests missed this.
+The 2.0.1 candidate registers the native `void (^)(BOOL)` signature explicitly,
+adds a fresh-process macOS bridge regression, and records request exceptions in
+startup diagnostics. Undetermined permission now invites the native request,
+not a visit to a Settings list where the app does not yet exist. This is a
+separate defect from ad-hoc signing identity continuity above.
+
+### CAPTURE-PERM-01 — Mode-specific macOS permission UX
+
+- Mic requires only Microphone; System requires only Screen & System Audio Recording;
+  Mix requires both.
+- Preflight reports both statuses and an ordered `missing_permissions` list. The GUI
+  requests each missing permission separately and exposes separate settings actions.
+- The synchronous CoreGraphics system-audio request is process-wide single-flight, so
+  cancel, timeout, and immediate retry cannot create concurrent native requests.
+- HTTP/MCP never trigger privacy prompts and reject any missing permission before
+  model, Session/WAV, helper, or stream startup.
+- Package both `NSScreenCaptureUsageDescription` and the newer
+  `NSAudioCaptureUsageDescription`, in addition to the microphone description.
+- Preserve runtime Mix degradation for device/converter failure only after both
+  required permissions have passed preflight.
+
+Installed 2.0.1 acceptance: System session `acda4f17` captured 8.80 seconds
+with peak volume -20.9 dB; Mix session `66212e94` passed pause/resume and captured
+6.88 seconds with peak volume -30.1 dB. The permission reset removed the prior
+ad-hoc CDHash mismatch; no later `Failed to match existing code requirement`
+event was present.
+
+### REL-TCC-01 — Recording permission continuity across upgrades
+
+- Ad-hoc candidates must be labeled local-only. Reset and re-authorize their Microphone
+  and Screen & System Audio Recording decisions before fresh-build capture testing, since
+  a rebuilt ad-hoc binary has a different code identity.
+- A distributable release must use a stable signing identity and pass an upgrade test from
+  the previous released DMG without resetting TCC. Mic, System, and Mix must all keep
+  working under the existing grants.
+- Run the clean-install permission flow independently after an intentional reset or in a
+  clean macOS account. Do not use that reset flow as evidence of upgrade compatibility.
+- Capture both releases' signing authority, TeamIdentifier, bundle ID, designated
+  requirement, permission state, and successful non-empty recordings in release evidence.
+- If an ordinary upgrade needs `tccutil`, permission-row deletion, or repeated Settings
+  toggles, it is release-blocking rather than a user workaround.
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent

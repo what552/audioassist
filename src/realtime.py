@@ -19,6 +19,7 @@ import os
 import queue
 import tempfile
 import threading
+import time
 import wave
 from typing import Callable, Optional
 
@@ -48,12 +49,14 @@ class RealtimeTranscriber:
         on_error: Optional[Callable[[str], None]] = None,
         output_path: Optional[str] = None,
         model_id: Optional[str] = None,
+        diagnostic_id: Optional[str] = None,
     ):
         self._engine      = engine
         self._on_result   = on_result or (lambda text: None)
         self._on_error    = on_error  or (lambda msg: None)
         self._output_path = output_path
         self._model_id    = model_id
+        self._diagnostic_id = diagnostic_id or "unassigned"
 
         self._running    = False
         self._stream     = None
@@ -77,6 +80,45 @@ class RealtimeTranscriber:
         # Serial transcription worker — prevents concurrent Metal GPU usage
         self._transcribe_queue: queue.Queue = queue.Queue()
         self._worker_thread: Optional[threading.Thread] = None
+        self._first_audio_frame_event = threading.Event()
+        self._first_audio_frame_info: Optional[tuple[int, str]] = None
+        self._diagnostic_thread: Optional[threading.Thread] = None
+
+    def _log_start_stage(self, stage: str, started: Optional[float] = None, **fields) -> None:
+        """Emit a correlation-friendly marker for packaged-app diagnostics."""
+        details = " ".join(f"{key}={value}" for key, value in fields.items())
+        elapsed = ""
+        if started is not None:
+            elapsed = f" elapsed_ms={(time.monotonic() - started) * 1000:.1f}"
+        suffix = f" {details}" if details else ""
+        logger.info(
+            "Realtime mic start attempt=%s stage=%s%s%s",
+            self._diagnostic_id,
+            stage,
+            elapsed,
+            suffix,
+            extra={"audioassist_diagnostic": True},
+        )
+
+    def _wait_for_first_audio_frame(self) -> None:
+        """Move first-frame file logging off the realtime audio callback."""
+        if not self._first_audio_frame_event.wait(timeout=10.0):
+            return
+        info = self._first_audio_frame_info
+        if info is not None:
+            frames, status = info
+            self._log_start_stage(
+                "first_audio_frame",
+                frames=frames,
+                status=status,
+            )
+
+    def _stop_diagnostic_waiter(self) -> None:
+        self._first_audio_frame_event.set()
+        thread = self._diagnostic_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.2)
+        self._diagnostic_thread = None
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -88,7 +130,10 @@ class RealtimeTranscriber:
                     "Previous realtime ASR worker is still stopping; wait before restarting"
                 )
             self._worker_thread = None
+        started = time.monotonic()
+        self._log_start_stage("model_load.begin")
         self._load_models()
+        self._log_start_stage("model_load.done", started)
         try:
             self._running = True
 
@@ -102,6 +147,8 @@ class RealtimeTranscriber:
 
             # Open session WAV writer before the stream captures audio
             if self._output_path is not None:
+                wav_started = time.monotonic()
+                self._log_start_stage("wav_open.begin")
                 parent = os.path.dirname(self._output_path)
                 if parent:
                     os.makedirs(parent, exist_ok=True)
@@ -109,8 +156,23 @@ class RealtimeTranscriber:
                 self._wav_writer.setnchannels(1)
                 self._wav_writer.setsampwidth(2)
                 self._wav_writer.setframerate(SAMPLE_RATE)
+                self._log_start_stage("wav_open.done", wav_started)
 
+            import_started = time.monotonic()
+            self._log_start_stage("sounddevice_import.begin")
             import sounddevice as sd
+            self._log_start_stage(
+                "sounddevice_import.done",
+                import_started,
+                sounddevice=getattr(sd, "__version__", "unknown"),
+            )
+            stream_started = time.monotonic()
+            self._log_start_stage(
+                "stream_open.begin",
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                blocksize=CHUNK_SIZE,
+            )
             self._stream = sd.InputStream(
                 samplerate=SAMPLE_RATE,
                 channels=1,
@@ -118,7 +180,19 @@ class RealtimeTranscriber:
                 blocksize=CHUNK_SIZE,
                 callback=self._audio_callback,
             )
+            self._log_start_stage("stream_open.done", stream_started)
+            activate_started = time.monotonic()
+            self._log_start_stage("stream_start.begin")
+            self._first_audio_frame_info = None
+            self._first_audio_frame_event.clear()
+            self._diagnostic_thread = threading.Thread(
+                target=self._wait_for_first_audio_frame,
+                daemon=True,
+                name="realtime-first-frame-diagnostic",
+            )
+            self._diagnostic_thread.start()
             self._stream.start()
+            self._log_start_stage("stream_start.done", activate_started)
         except Exception:
             self._running = False
             if self._stream is not None:
@@ -137,6 +211,7 @@ class RealtimeTranscriber:
                 self._transcribe_queue.put(None)
                 self._worker_thread.join()
             self._worker_thread = None
+            self._stop_diagnostic_waiter()
             self._close_asr()
             raise
         logger.info("Realtime transcription started (engine=%s)", self._engine)
@@ -179,6 +254,7 @@ class RealtimeTranscriber:
         if self._worker_thread is None or not self._worker_thread.is_alive():
             self._worker_thread = None
             self._close_asr()
+        self._stop_diagnostic_waiter()
         logger.info("Realtime transcription stopped")
         if errors:
             raise errors[0]
@@ -256,6 +332,9 @@ class RealtimeTranscriber:
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         if not self._running:
             return
+        if not self._first_audio_frame_event.is_set():
+            self._first_audio_frame_info = (frames, str(status or "ok"))
+            self._first_audio_frame_event.set()
         import torch
 
         chunk = indata[:, 0].copy()  # mono, shape (CHUNK_SIZE,)

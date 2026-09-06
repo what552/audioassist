@@ -194,6 +194,8 @@ app = BUNDLE(
         # ScreenCaptureKit (system / mix capture modes)
         "NSScreenCaptureUsageDescription":
             "AudioAssist needs screen recording permission to capture system audio.",
+        "NSAudioCaptureUsageDescription":
+            "AudioAssist needs system audio recording access for System and Mix capture modes.",
         "LSUIElement": False,
     },
 )

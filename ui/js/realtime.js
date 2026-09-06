@@ -16,6 +16,8 @@ const Realtime = (() => {
   let _captureMode = 'mic';      // 'mic' | 'system' | 'mix'
   let _onStateChange = null;
   let _canStart = null;
+  let _awaitingPermission = false;
+  let _permissionRequestGeneration = 0;
   let dom = {};
 
   const MODE_LABELS = { mic: '麦克风', system: '系统音频', mix: '混合' };
@@ -33,13 +35,19 @@ const Realtime = (() => {
       modeButtons:  Array.from(document.querySelectorAll('.btn-mode')),
       permNotice:   document.getElementById('capture-perm-notice'),
       permText:     document.getElementById('capture-perm-text'),
-      btnOpenPriv:  document.getElementById('btn-open-privacy'),
+      btnOpenMic:   document.getElementById('btn-open-microphone-privacy'),
+      btnOpenScreen: document.getElementById('btn-open-screen-privacy'),
     };
     dom.btnToggle.addEventListener('click', _onToggle);
     dom.modeButtons.forEach(btn => btn.addEventListener('click', _onModeClick));
-    if (dom.btnOpenPriv) {
-      dom.btnOpenPriv.addEventListener('click', () => {
-        window.pywebview.api.open_privacy_settings().catch(() => {});
+    if (dom.btnOpenMic) {
+      dom.btnOpenMic.addEventListener('click', () => {
+        window.pywebview.api.open_privacy_settings('microphone').catch(() => {});
+      });
+    }
+    if (dom.btnOpenScreen) {
+      dom.btnOpenScreen.addEventListener('click', () => {
+        window.pywebview.api.open_privacy_settings('screen').catch(() => {});
       });
     }
   }
@@ -67,6 +75,14 @@ const Realtime = (() => {
   // ── Toggle ────────────────────────────────────────────────────────────────
 
   async function _onToggle() {
+    if (_awaitingPermission) {
+      _permissionRequestGeneration += 1;
+      _awaitingPermission = false;
+      _setLoading(false);
+      _disableModeButtons(false);
+      _setStatus('Permission request canceled');
+      return;
+    }
     if (_recording) {
       _setLoading(true, 'Stopping…');
       try {
@@ -80,38 +96,111 @@ const Realtime = (() => {
 
     if (_canStart && !_canStart()) return;
     _setLoading(true, 'Loading…');
+    _disableModeButtons(true);
 
-    // Preflight check for system / mix modes
-    if (_captureMode !== 'mic') {
-      _setStatus('Checking…');
-      let pre;
-      try {
-        pre = await window.pywebview.api.preflight_capture(_captureMode);
-      } catch (e) {
-        console.error('[Realtime] preflight error:', e);
-        _setLoading(false);
-        _setStatus('Error');
-        return;
-      }
-      if (!pre.supported) {
-        _setLoading(false);
-        _setStatus('Unavailable');
-        _showPermNotice(pre);
-        return;
-      }
-      _hidePermNotice();
+    _setStatus('Checking…');
+    let pre;
+    try {
+      pre = await window.pywebview.api.preflight_capture(_captureMode);
+    } catch (e) {
+      console.error('[Realtime] preflight error:', e);
+      _setLoading(false);
+      _disableModeButtons(false);
+      _setStatus('Error');
+      return;
     }
+    if (pre && pre.supported === false) {
+      _setLoading(false);
+      _disableModeButtons(false);
+      _setStatus('Unavailable');
+      _showPermNotice(pre);
+      return;
+    }
+    const missingPermissions = _missingPermissions(pre);
+    if (missingPermissions.length) {
+      const requestGeneration = ++_permissionRequestGeneration;
+      _awaitingPermission = true;
+      _setLoading(true, 'Cancel Permission Wait');
+      dom.btnToggle.disabled = false;
+      let permissionFailure = null;
+
+      if (missingPermissions.includes('microphone')) {
+        _setStatus('Waiting for microphone permission…');
+        if (pre.microphone_permission !== 'not_determined') {
+          permissionFailure = { kind: 'microphone', status: pre.microphone_permission };
+        } else {
+          try {
+            const permission = await window.pywebview.api.request_microphone_permission();
+            if (!permission || !permission.authorized) {
+              permissionFailure = {
+                kind: 'microphone',
+                status: (permission && permission.status) || 'unknown',
+              };
+            }
+          } catch (e) {
+            console.error('[Realtime] microphone permission request error:', e);
+            permissionFailure = { kind: 'microphone', status: 'unknown' };
+          }
+        }
+      }
+      if (requestGeneration !== _permissionRequestGeneration) return;
+
+      if (!permissionFailure && missingPermissions.includes('screen_recording')) {
+        _setStatus('Waiting for Screen & System Audio permission…');
+        try {
+          const permission = await window.pywebview.api.request_screen_recording_permission();
+          if (!permission || !permission.authorized) {
+            permissionFailure = {
+              kind: 'screen_recording',
+              status: (permission && permission.status) || 'unknown',
+            };
+          }
+        } catch (e) {
+          console.error('[Realtime] screen recording permission request error:', e);
+          permissionFailure = { kind: 'screen_recording', status: 'unknown' };
+        }
+      }
+      if (requestGeneration !== _permissionRequestGeneration) return;
+      _awaitingPermission = false;
+      if (permissionFailure) {
+        let refreshed = pre;
+        try {
+          refreshed = await window.pywebview.api.preflight_capture(_captureMode);
+        } catch (_) {}
+        _setLoading(false);
+        _disableModeButtons(false);
+        _setStatus(_permissionFailureStatus(
+          permissionFailure.kind,
+          permissionFailure.status,
+        ));
+        _showPermNotice({ ...refreshed, request_failure: permissionFailure });
+        return;
+      }
+      _setLoading(true, 'Loading…');
+      _setStatus('Loading…');
+    } else {
+      _setStatus('Loading…');
+    }
+    _hidePermNotice();
 
     const model_id = document.getElementById('sel-engine').value;
-    _setStatus('Loading…');
     try {
-      await window.pywebview.api.start_realtime({
+      const startResult = await window.pywebview.api.start_realtime({
         model_id,
         capture_mode: _captureMode,
       });
+      if (startResult && startResult.status === 'permission_required') {
+        _setLoading(false);
+        _disableModeButtons(false);
+        const missing = _missingPermissions(startResult);
+        const kind = missing.length === 1 ? missing[0] : null;
+        _setStatus(_permissionFailureStatus(kind, null));
+        _showPermNotice(startResult);
+      }
     } catch (e) {
       console.error('[Realtime] start error:', e);
       _setLoading(false);
+      _disableModeButtons(false);
       _setStatus('Error');
     }
   }
@@ -203,18 +292,67 @@ const Realtime = (() => {
 
   // ── Permission notice ─────────────────────────────────────────────────────
 
+  function _missingPermissions(info) {
+    info = info || {};
+    const missing = new Set(info.missing_permissions || []);
+    if (info.microphone_permission &&
+        !['authorized', 'not_applicable'].includes(info.microphone_permission)) {
+      missing.add('microphone');
+    }
+    if (info.screen_recording_permission &&
+        !['authorized', 'not_applicable'].includes(info.screen_recording_permission)) {
+      missing.add('screen_recording');
+    }
+    const reason = info.reason || '';
+    if (reason.startsWith('microphone_permission_')) missing.add('microphone');
+    if (reason.includes('screen_recording')) {
+      missing.add('screen_recording');
+    }
+    if (reason.startsWith('permission_required:')) {
+      const requested = reason.slice('permission_required:'.length).split(',');
+      if (requested.some(item => ['mic', 'microphone'].includes(item.trim()))) {
+        missing.add('microphone');
+      }
+      if (requested.some(item => ['screen', 'system', 'screen_recording'].includes(item.trim()))) {
+        missing.add('screen_recording');
+      }
+    }
+    return Array.from(missing);
+  }
+
+  function _permissionFailureStatus(kind, status) {
+    if (status === 'timeout') return 'Permission timed out';
+    if (status === 'in_progress') return 'Permission request in progress';
+    if (kind === 'microphone') return 'Microphone unavailable';
+    if (kind === 'screen_recording') return 'Screen & System Audio unavailable';
+    return 'Permissions required';
+  }
+
   function _showPermNotice(info) {
     const reason = info.reason || '';
+    const missing = new Set(_missingPermissions(info));
     let msg = '';
-    let showOpenBtn = false;
 
     if (reason === 'screencapturekit_requires_macos_13_0') {
       msg = '需要 macOS 13.0 或更高版本才能使用系统音频捕获。';
     } else if (reason === 'helper_not_found') {
       msg = '系统音频助手未构建。请先运行: swift build -c release';
-    } else if (reason.includes('screen_recording') || reason.includes('permission_required')) {
-      msg = '需要「屏幕录制」权限才能捕获系统音频。请在系统设置中授权。';
-      showOpenBtn = true;
+    } else if (missing.size) {
+      const messages = [];
+      if (missing.has('microphone')) {
+        if (info.request_failure && info.request_failure.kind === 'microphone' &&
+            info.request_failure.status === 'unknown') {
+          messages.push('无法发起麦克风授权请求。请重试；若持续失败，请提供应用诊断日志。');
+        } else if (info.microphone_permission === 'not_determined') {
+          messages.push('尚未申请麦克风权限。点击 Start Recording 后，请在系统弹窗中允许访问。');
+        } else {
+          messages.push('麦克风权限：Mic 和 Mix 模式需要；System 模式不需要。');
+        }
+      }
+      if (missing.has('screen_recording')) {
+        messages.push('屏幕与系统音频录制权限：System 和 Mix 模式需要；Mic 模式不需要。');
+      }
+      msg = messages.join('\n');
     } else if (reason === 'mic_capture_failed' || reason === 'mic_unavailable') {
       msg = '无法访问麦克风。混合模式将仅录制系统音频。';
     } else if (reason) {
@@ -224,7 +362,9 @@ const Realtime = (() => {
     }
 
     if (dom.permText)  dom.permText.textContent = msg;
-    if (dom.btnOpenPriv) dom.btnOpenPriv.hidden = !showOpenBtn;
+    if (dom.btnOpenMic) dom.btnOpenMic.hidden = !missing.has('microphone') ||
+      info.microphone_permission === 'not_determined';
+    if (dom.btnOpenScreen) dom.btnOpenScreen.hidden = !missing.has('screen_recording');
     if (dom.permNotice) dom.permNotice.removeAttribute('hidden');
   }
 

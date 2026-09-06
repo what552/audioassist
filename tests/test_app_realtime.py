@@ -14,7 +14,12 @@ def _wait(timeout=0.5):
 
 @pytest.fixture(autouse=True)
 def _output_dir(tmp_path):
-    with patch.object(app_module, "OUTPUT_DIR", str(tmp_path)):
+    with patch.object(app_module, "OUTPUT_DIR", str(tmp_path)), \
+         patch.object(
+             app_module, "_macos_microphone_permission_status", return_value="authorized"
+         ), patch.object(
+             app_module, "_macos_screen_recording_permission_status", return_value="authorized"
+         ):
         yield
 
 
@@ -34,6 +39,55 @@ class TestReturnValues:
         api._realtime = MagicMock()  # simulate active session
         result = api.start_realtime()
         assert result["status"] == "already_running"
+
+    @pytest.mark.parametrize("status", [
+        "not_determined", "denied", "restricted", "unknown",
+    ])
+    def test_mic_start_requires_permission_before_session_or_backend(self, status):
+        api = API()
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value=status
+        ), patch("src.realtime.RealtimeTranscriber") as realtime, \
+             patch.object(app_module.os, "makedirs") as makedirs, \
+             patch.object(api, "_caffeinate_start") as caffeinate:
+            result = api.start_realtime({"capture_mode": "mic"})
+
+        assert result == {
+            "status": "permission_required",
+            "missing_permissions": ["microphone"],
+            "microphone_permission": status,
+        }
+        assert api._realtime is None
+        assert api.get_recording_status()["state"] == "idle"
+        realtime.assert_not_called()
+        makedirs.assert_not_called()
+        caffeinate.assert_not_called()
+
+    @pytest.mark.parametrize(("capture_mode", "mic_status", "screen_status", "missing"), [
+        ("system", "authorized", "required", ["screen_recording"]),
+        ("mix", "denied", "authorized", ["microphone"]),
+        ("mix", "authorized", "required", ["screen_recording"]),
+        ("mix", "denied", "required", ["microphone", "screen_recording"]),
+    ])
+    def test_system_and_mix_require_their_exact_permission_set(
+        self, capture_mode, mic_status, screen_status, missing
+    ):
+        api = API()
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value=mic_status
+        ), patch.object(
+            app_module, "_macos_screen_recording_permission_status", return_value=screen_status
+        ), patch("src.native_capture.NativeCaptureHelper") as native, \
+             patch.object(app_module.os, "makedirs") as makedirs, \
+             patch.object(api, "_caffeinate_start") as caffeinate:
+            result = api.start_realtime({"capture_mode": capture_mode})
+
+        assert result["status"] == "permission_required"
+        assert result["missing_permissions"] == missing
+        assert api._realtime is None
+        native.assert_not_called()
+        makedirs.assert_not_called()
+        caffeinate.assert_not_called()
 
     def test_stop_returns_not_running(self):
         api = API()
@@ -88,6 +142,7 @@ class TestJSEvents:
 
         def capture_init(*args, **kwargs):
             captured["output_path"] = kwargs.get("output_path")
+            captured["diagnostic_id"] = kwargs.get("diagnostic_id")
             inst = MagicMock()
             inst.start.return_value = None
             return inst
@@ -103,6 +158,7 @@ class TestJSEvents:
         match = re.fullmatch(r"realtime_recording_([0-9a-f]{8})\.wav", basename)
         assert match, basename
         assert parent.startswith(match.group(1))
+        assert captured["diagnostic_id"] == parent
 
     def test_start_exception_pushes_onRealtimeError(self):
         api = API()

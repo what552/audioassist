@@ -21,6 +21,22 @@ import pytest
 from src.native_capture import NativeCaptureHelper, _default_helper_path
 
 
+@pytest.fixture(autouse=True)
+def _authorized_app_capture_permissions(request):
+    # Permission implementation tests must exercise the real helpers rather than
+    # the authorized defaults used by the capture-routing tests in this module.
+    if request.cls in {
+        TestPreflightCapture,
+        TestMicrophonePermissionRequest,
+        TestScreenRecordingPermission,
+    }:
+        yield
+        return
+    with patch("app._macos_microphone_permission_status", return_value="authorized"), \
+         patch("app._macos_screen_recording_permission_status", return_value="authorized"):
+        yield
+
+
 # ── Test fixtures / helpers ────────────────────────────────────────────────────
 
 class _FakeProcess:
@@ -472,6 +488,7 @@ class TestAppCaptureMode:
 
         with patch("src.realtime.RealtimeTranscriber", side_effect=capture_rt_init), \
              patch.object(app_module, "_push"), \
+             patch.object(app_module, "_macos_microphone_permission_status", return_value="authorized"), \
              patch.object(app_module, "OUTPUT_DIR", "/tmp"):
             api.start_realtime({"capture_mode": "mic"})
             time.sleep(0.3)
@@ -493,6 +510,7 @@ class TestAppCaptureMode:
 
         with patch("src.realtime.RealtimeTranscriber", side_effect=capture_rt_init), \
              patch.object(app_module, "_push"), \
+             patch.object(app_module, "_macos_microphone_permission_status", return_value="authorized"), \
              patch.object(app_module, "OUTPUT_DIR", "/tmp"):
             api.start_realtime({})  # no capture_mode → defaults to mic
             time.sleep(0.3)
@@ -551,11 +569,57 @@ class TestAppCaptureMode:
 # ── app.py: preflight_capture ─────────────────────────────────────────────────
 
 class TestPreflightCapture:
-    def test_mic_mode_always_supported(self):
+    @pytest.mark.parametrize("raw, expected", [
+        (0, "not_determined"),
+        (1, "restricted"),
+        (2, "denied"),
+        (3, "authorized"),
+        (99, "unknown"),
+    ])
+    def test_macos_microphone_status_mapping(self, raw, expected):
+        import sys
+        import types
+        import app as app_module
+
+        capture_device = MagicMock()
+        capture_device.authorizationStatusForMediaType_.return_value = raw
+        objc = types.ModuleType("objc")
+        objc.loadBundle = MagicMock()
+        objc.lookUpClass = MagicMock(return_value=capture_device)
+
+        with patch.object(app_module.sys, "platform", "darwin"), \
+             patch.dict(sys.modules, {"objc": objc}):
+            assert app_module._macos_microphone_permission_status() == expected
+
+        capture_device.authorizationStatusForMediaType_.assert_called_once_with("soun")
+
+    def test_mic_mode_supported_when_authorized(self):
         from app import API
         api = API()
-        result = api.preflight_capture("mic")
+        with patch("app._macos_microphone_permission_status", return_value="authorized"):
+            result = api.preflight_capture("mic")
         assert result["supported"] is True
+        assert result["microphone_permission"] == "authorized"
+        assert result["missing_permissions"] == []
+
+    @pytest.mark.parametrize("status", ["denied", "restricted"])
+    def test_mic_mode_reports_blocked_permission(self, status):
+        from app import API
+        api = API()
+        with patch("app._macos_microphone_permission_status", return_value=status):
+            result = api.preflight_capture("mic")
+        assert result["supported"] is False
+        assert result["missing_permissions"] == ["microphone"]
+        assert result["reason"] == f"microphone_permission_{status}"
+
+    def test_mic_mode_allows_system_prompt_when_not_determined(self):
+        from app import API
+        api = API()
+        with patch("app._macos_microphone_permission_status", return_value="not_determined"):
+            result = api.preflight_capture("mic")
+        assert result["supported"] is True
+        assert result["microphone_permission"] == "not_determined"
+        assert result["missing_permissions"] == ["microphone"]
 
     def test_system_mode_unsupported_on_old_macos(self):
         from app import API
@@ -572,9 +636,68 @@ class TestPreflightCapture:
         with patch("platform.mac_ver", return_value=("13.0.0", ("", "", ""), "")), \
              patch("src.native_capture._default_helper_path", return_value=fake_helper), \
              patch("os.path.isfile", return_value=True), \
-             patch("os.access", return_value=True):
+             patch("os.access", return_value=True), \
+             patch("app._macos_screen_recording_permission_status", return_value="authorized"):
             result = api.preflight_capture("system")
         assert result["supported"] is True
+        assert result["missing_permissions"] == []
+
+    def test_capture_mode_permission_matrix_is_explicit(self):
+        from app import API
+
+        api = API()
+        fake_helper = "/fake/helper/binary"
+        common = [
+            patch("platform.mac_ver", return_value=("26.0.0", ("", "", ""), "")),
+            patch("src.native_capture._default_helper_path", return_value=fake_helper),
+            patch("os.path.isfile", return_value=True),
+            patch("os.access", return_value=True),
+        ]
+        with common[0], common[1], common[2], common[3], \
+             patch("app._macos_microphone_permission_status", return_value="denied"), \
+             patch("app._macos_screen_recording_permission_status", return_value="required"):
+            mic = api.preflight_capture("mic")
+            system = api.preflight_capture("system")
+            mix = api.preflight_capture("mix")
+
+        assert mic["missing_permissions"] == ["microphone"]
+        assert "screen_recording_permission" not in mic
+        assert system["missing_permissions"] == ["screen_recording"]
+        assert "microphone_permission" not in system
+        assert mix["missing_permissions"] == ["microphone", "screen_recording"]
+        assert mix["reason"] == "capture_permissions_required"
+
+    def test_mic_preflight_never_queries_screen_recording_permission(self):
+        from app import API
+
+        with patch(
+            "app._macos_microphone_permission_status", return_value="authorized"
+        ) as microphone, patch(
+            "app._macos_screen_recording_permission_status"
+        ) as screen_recording:
+            result = API().preflight_capture("mic")
+
+        assert result["supported"] is True
+        microphone.assert_called_once_with()
+        screen_recording.assert_not_called()
+
+    def test_system_preflight_never_queries_microphone_permission(self):
+        from app import API
+
+        fake_helper = "/fake/helper/binary"
+        with patch("platform.mac_ver", return_value=("26.0.0", ("", "", ""), "")), \
+             patch("src.native_capture._default_helper_path", return_value=fake_helper), \
+             patch("os.path.isfile", return_value=True), \
+             patch("os.access", return_value=True), \
+             patch("app._macos_microphone_permission_status") as microphone, \
+             patch(
+                 "app._macos_screen_recording_permission_status", return_value="authorized"
+             ) as screen_recording:
+            result = API().preflight_capture("system")
+
+        assert result["supported"] is True
+        microphone.assert_not_called()
+        screen_recording.assert_called_once_with()
 
     def test_system_mode_unsupported_when_helper_missing(self):
         from app import API
@@ -590,9 +713,160 @@ class TestPreflightCapture:
     def test_returns_os_version(self):
         from app import API
         api = API()
-        with patch("platform.mac_ver", return_value=("14.2.1", ("", "", ""), "")):
+        with patch("platform.mac_ver", return_value=("14.2.1", ("", "", ""), "")), \
+             patch("app._macos_microphone_permission_status", return_value="authorized"):
             result = api.preflight_capture("mic")
         assert result["os_version"] == "14.2.1"
+
+
+class TestMicrophonePermissionRequest:
+    @pytest.mark.skipif(sys.platform != "darwin", reason="real macOS bridge required")
+    def test_native_request_has_boolean_block_metadata_in_fresh_process(self):
+        # This must not mock objc: mock-only tests missed the missing block ABI.
+        # A fresh process also prevents another framework import masking the bug.
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-c", """
+import app
+import objc
+request = app._microphone_permission_request_method()
+block = request.__metadata__()['arguments'][3]['callable']
+assert block['retval']['type'] == b'v'
+assert block['arguments'][0]['type'] == b'^v'
+assert block['arguments'][1]['type'] == objc._C_NSBOOL
+"""], capture_output=True, text=True, timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize("status", [
+        "authorized", "denied", "restricted", "unknown", "not_applicable",
+    ])
+    def test_existing_status_returns_without_prompt(self, status):
+        import app as app_module
+
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value=status
+        ), patch.dict(sys.modules, {"objc": MagicMock()}) as modules:
+            assert app_module._request_macos_microphone_permission() == status
+            modules["objc"].lookUpClass.assert_not_called()
+
+    @pytest.mark.parametrize("granted, expected", [
+        (True, "authorized"),
+        (False, "denied"),
+    ])
+    def test_not_determined_requests_avfoundation_permission(self, granted, expected):
+        import app as app_module
+
+        capture_device = MagicMock()
+        capture_device.requestAccessForMediaType_completionHandler_.side_effect = (
+            lambda media_type, callback: callback(granted)
+        )
+        objc = types.ModuleType("objc")
+        objc.registerMetaDataForSelector = MagicMock()
+        objc._C_NSBOOL = b"Z"
+        objc.loadBundle = MagicMock()
+        objc.lookUpClass = MagicMock(return_value=capture_device)
+
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value="not_determined"
+        ), patch.dict(sys.modules, {"objc": objc}):
+            status = app_module._request_macos_microphone_permission(timeout_seconds=0.1)
+
+        assert status == expected
+        capture_device.requestAccessForMediaType_completionHandler_.assert_called_once()
+        assert capture_device.requestAccessForMediaType_completionHandler_.call_args.args[0] == "soun"
+
+    def test_not_determined_permission_request_is_bounded(self):
+        import app as app_module
+
+        capture_device = MagicMock()
+        objc = types.ModuleType("objc")
+        objc.registerMetaDataForSelector = MagicMock()
+        objc._C_NSBOOL = b"Z"
+        objc.loadBundle = MagicMock()
+        objc.lookUpClass = MagicMock(return_value=capture_device)
+
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value="not_determined"
+        ), patch.dict(sys.modules, {"objc": objc}):
+            status = app_module._request_macos_microphone_permission(timeout_seconds=0)
+
+        assert status == "timeout"
+
+    def test_api_returns_json_serializable_permission_result(self):
+        from app import API
+
+        with patch("app._request_macos_microphone_permission", return_value="authorized"):
+            result = API().request_microphone_permission()
+
+        assert result == {"status": "authorized", "authorized": True}
+
+
+class TestScreenRecordingPermission:
+    @pytest.mark.parametrize("granted, expected", [
+        (True, "authorized"),
+        (False, "required"),
+    ])
+    def test_core_graphics_preflight_mapping(self, granted, expected):
+        import app as app_module
+
+        library = MagicMock()
+        library.CGPreflightScreenCaptureAccess.return_value = granted
+        with patch.object(app_module.sys, "platform", "darwin"), \
+             patch.object(app_module, "_load_core_graphics", return_value=library):
+            assert app_module._macos_screen_recording_permission_status() == expected
+
+    @pytest.mark.parametrize("granted, expected", [
+        (True, "authorized"),
+        (False, "required"),
+    ])
+    def test_core_graphics_request_mapping(self, granted, expected):
+        import app as app_module
+
+        library = MagicMock()
+        library.CGRequestScreenCaptureAccess.return_value = granted
+        with patch.object(
+            app_module, "_macos_screen_recording_permission_status", return_value="required"
+        ), patch.object(app_module, "_load_core_graphics", return_value=library):
+            status = app_module._request_macos_screen_recording_permission(0.2)
+
+        assert status == expected
+
+    def test_screen_permission_request_is_bounded(self):
+        import app as app_module
+
+        library = MagicMock()
+        release = threading.Event()
+        started = threading.Event()
+
+        def blocking_request():
+            started.set()
+            release.wait(0.5)
+            return True
+
+        library.CGRequestScreenCaptureAccess.side_effect = blocking_request
+        with patch.object(
+            app_module, "_macos_screen_recording_permission_status", return_value="required"
+        ), patch.object(
+            app_module, "_load_core_graphics", return_value=library
+        ), patch.object(app_module, "_SCREEN_PERMISSION_REQUEST", None):
+            first_status = app_module._request_macos_screen_recording_permission(0)
+            assert started.wait(0.1)
+            retry_status = app_module._request_macos_screen_recording_permission(0)
+            release.set()
+
+        assert first_status == "timeout"
+        assert retry_status == "in_progress"
+        library.CGRequestScreenCaptureAccess.assert_called_once_with()
+
+    def test_api_returns_json_serializable_screen_permission_result(self):
+        from app import API
+
+        with patch("app._request_macos_screen_recording_permission", return_value="authorized"):
+            result = API().request_screen_recording_permission()
+
+        assert result == {"status": "authorized", "authorized": True}
 
 
 # ── mix 模式路由（P1 修复验证）────────────────────────────────────────────────
@@ -1195,6 +1469,17 @@ class TestOpenPrivacySettings:
 
         assert result["status"] == "ok"
         assert any("Privacy_ScreenCapture" in str(c) for c in called_cmds)
+
+    def test_microphone_target_opens_microphone_pane(self):
+        from app import API
+        api = API()
+        called_cmds: list = []
+
+        with patch("subprocess.Popen", side_effect=lambda cmd, **kw: called_cmds.append(cmd)):
+            result = api.open_privacy_settings("microphone")
+
+        assert result["status"] == "ok"
+        assert any("Privacy_Microphone" in str(c) for c in called_cmds)
 
     def test_returns_error_dict_on_failure(self):
         from app import API

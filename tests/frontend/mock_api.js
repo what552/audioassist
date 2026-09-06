@@ -37,6 +37,12 @@
     transcribeIds: ['upload-job-1', 'upload-job-2', 'upload-job-3'],
     agentTurns: [],
     summaries: {},
+    preflight: { supported: true },
+    microphonePermission: { status: 'authorized', authorized: true },
+    microphonePermissionDelayMs: 0,
+    screenPermission: { status: 'authorized', authorized: true },
+    screenPermissionDelayMs: 0,
+    realtimeStart: { status: 'started' },
   };
 
   var supplied = window.__AUDIOASSIST_TEST_CONFIG || {};
@@ -49,6 +55,20 @@
   state.selectedFiles = (supplied.selectedFiles || defaults.selectedFiles).slice();
   state.transcribeIds = (supplied.transcribeIds || defaults.transcribeIds).slice();
   state.agentTurns = (supplied.agentTurns || defaults.agentTurns).slice();
+  state.preflight = Object.assign({}, defaults.preflight, supplied.preflight || {});
+  state.microphonePermission = Object.assign(
+    {}, defaults.microphonePermission, supplied.microphonePermission || {}
+  );
+  state.microphonePermissionDelayMs = (
+    supplied.microphonePermissionDelayMs || defaults.microphonePermissionDelayMs
+  );
+  state.screenPermission = Object.assign(
+    {}, defaults.screenPermission, supplied.screenPermission || {}
+  );
+  state.screenPermissionDelayMs = (
+    supplied.screenPermissionDelayMs || defaults.screenPermissionDelayMs
+  );
+  state.realtimeStart = Object.assign({}, defaults.realtimeStart, supplied.realtimeStart || {});
   state.calls = [];
 
   function record(name, args) {
@@ -110,8 +130,22 @@
     save_transcript: async function () { record('save_transcript', arguments); return true; },
     rename_speaker: async function () { record('rename_speaker', arguments); return { ok: true, segments: [] }; },
     rename_segment_speaker: async function () { record('rename_segment_speaker', arguments); return { ok: true }; },
-    preflight_capture: async function () { record('preflight_capture', arguments); return { status: 'ok' }; },
-    start_realtime: async function () { record('start_realtime', arguments); return { status: 'started' }; },
+    preflight_capture: async function () { record('preflight_capture', arguments); return Object.assign({}, state.preflight); },
+    request_microphone_permission: async function () {
+      record('request_microphone_permission', arguments);
+      if (state.microphonePermissionDelayMs) {
+        await new Promise(resolve => setTimeout(resolve, state.microphonePermissionDelayMs));
+      }
+      return Object.assign({}, state.microphonePermission);
+    },
+    request_screen_recording_permission: async function () {
+      record('request_screen_recording_permission', arguments);
+      if (state.screenPermissionDelayMs) {
+        await new Promise(resolve => setTimeout(resolve, state.screenPermissionDelayMs));
+      }
+      return Object.assign({}, state.screenPermission);
+    },
+    start_realtime: async function () { record('start_realtime', arguments); return Object.assign({}, state.realtimeStart); },
     stop_realtime: async function () { record('stop_realtime', arguments); return { status: 'stopped' }; },
     pause_realtime: async function () { record('pause_realtime', arguments); return { status: 'pausing' }; },
     resume_realtime: async function () { record('resume_realtime', arguments); return { status: 'resuming' }; },
@@ -124,6 +158,7 @@
     calls: function (name) { return state.calls.filter(function (call) { return call.name === name; }); },
     setSetup: function (patch) { Object.assign(state.setup, patch); },
     setModels: function (models) { state.models = models.map(function (model) { return Object.assign({}, model); }); },
+    setPreflight: function (preflight) { state.preflight = Object.assign({}, preflight); },
     dispatchReady: function () { window.dispatchEvent(new Event('pywebviewready')); },
   };
 })();

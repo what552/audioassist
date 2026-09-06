@@ -162,6 +162,262 @@ def test_pywebviewready_timing(page: Page, ui_base_url: str) -> None:
     assert "meeting.mp3" in page.locator("#history-list").inner_text()
 
 
+def test_microphone_permission_denied_blocks_start_and_opens_correct_settings(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": False,
+            "microphone_permission": "denied",
+            "missing_permissions": ["microphone"],
+            "reason": "microphone_permission_denied",
+        },
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('preflight_capture').length === 1")
+
+    assert page.evaluate("_mockApi.calls('preflight_capture')[0].args") == ["mic"]
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+    notice = page.locator("#capture-perm-notice")
+    assert notice.is_visible()
+    assert "麦克风" in page.locator("#capture-perm-text").inner_text()
+
+    assert page.locator("#btn-open-microphone-privacy").is_visible()
+    assert page.locator("#btn-open-screen-privacy").is_hidden()
+    page.locator("#btn-open-microphone-privacy").click()
+    page.wait_for_function("_mockApi.calls('open_privacy_settings').length === 1")
+    assert page.evaluate("_mockApi.calls('open_privacy_settings')[0].args") == ["microphone"]
+
+
+def test_undetermined_microphone_permission_can_cancel_without_starting_session(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "microphone_permission": "not_determined",
+        },
+        "microphonePermissionDelayMs": 500,
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('request_microphone_permission').length === 1")
+
+    assert "Cancel Permission Wait" in page.locator("#btn-start-recording").inner_text()
+    assert page.locator("#btn-start-recording").is_enabled()
+    assert page.locator("#realtime-status").inner_text() == "Waiting for microphone permission…"
+
+    page.locator("#btn-start-recording").click()
+    assert page.locator("#realtime-status").inner_text() == "Permission request canceled"
+    page.wait_for_timeout(600)
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+
+
+def test_microphone_permission_authorized_before_realtime_start(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "microphone_permission": "not_determined",
+        },
+        "microphonePermission": {"status": "authorized", "authorized": True},
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+
+    assert page.evaluate("_mockApi.calls('request_microphone_permission').length") == 1
+    calls = page.evaluate("_mockApi.state.calls.map(call => call.name)")
+    assert calls.index("request_microphone_permission") < calls.index("start_realtime")
+
+
+def test_mic_permission_race_from_shared_backend_restores_ui(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "microphone_permission": "authorized",
+        },
+        "realtimeStart": {
+            "status": "permission_required",
+            "microphone_permission": "denied",
+        },
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+    page.wait_for_function("!document.querySelector('#btn-start-recording').disabled")
+
+    assert page.locator("#realtime-status").inner_text() == "Microphone unavailable"
+    assert page.locator("#capture-perm-notice").is_visible()
+
+
+def test_mic_mode_never_requests_screen_recording_permission(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "missing_permissions": [],
+            "microphone_permission": "authorized",
+        },
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+
+    assert page.evaluate("_mockApi.calls('request_microphone_permission').length") == 0
+    assert page.evaluate("_mockApi.calls('request_screen_recording_permission').length") == 0
+    assert page.evaluate("_mockApi.calls('start_realtime')[0].args[0].capture_mode") == "mic"
+
+
+def test_system_mode_requests_only_screen_and_system_audio_permission(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "missing_permissions": ["screen_recording"],
+            "screen_recording_permission": "required",
+        },
+        "screenPermission": {"status": "authorized", "authorized": True},
+    })
+
+    page.locator(".btn-mode[data-mode='system']").click()
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+
+    assert page.evaluate("_mockApi.calls('request_microphone_permission').length") == 0
+    assert page.evaluate("_mockApi.calls('request_screen_recording_permission').length") == 1
+    assert page.evaluate("_mockApi.calls('start_realtime')[0].args[0].capture_mode") == "system"
+
+
+def test_system_permission_wait_can_cancel_without_starting_session(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "missing_permissions": ["screen_recording"],
+            "screen_recording_permission": "required",
+        },
+        "screenPermissionDelayMs": 500,
+    })
+
+    page.locator(".btn-mode[data-mode='system']").click()
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function(
+        "_mockApi.calls('request_screen_recording_permission').length === 1"
+    )
+    assert page.locator("#realtime-status").inner_text() == (
+        "Waiting for Screen & System Audio permission…"
+    )
+
+    page.locator("#btn-start-recording").click()
+    assert page.locator("#realtime-status").inner_text() == "Permission request canceled"
+    page.wait_for_timeout(600)
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+
+
+def test_system_permission_in_progress_restores_controls(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "missing_permissions": ["screen_recording"],
+            "screen_recording_permission": "required",
+        },
+        "screenPermission": {"status": "in_progress", "authorized": False},
+    })
+
+    page.locator(".btn-mode[data-mode='system']").click()
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("!document.querySelector('#btn-start-recording').disabled")
+
+    assert page.locator("#realtime-status").inner_text() == "Permission request in progress"
+    assert page.locator("#btn-open-screen-privacy").is_visible()
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+
+
+def test_mix_mode_requests_microphone_then_screen_permission(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "missing_permissions": ["microphone", "screen_recording"],
+            "microphone_permission": "not_determined",
+            "screen_recording_permission": "required",
+        },
+        "microphonePermission": {"status": "authorized", "authorized": True},
+        "screenPermission": {"status": "authorized", "authorized": True},
+    })
+
+    page.locator(".btn-mode[data-mode='mix']").click()
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+
+    calls = page.evaluate("_mockApi.state.calls.map(call => call.name)")
+    assert calls.index("request_microphone_permission") < calls.index("request_screen_recording_permission")
+    assert calls.index("request_screen_recording_permission") < calls.index("start_realtime")
+    assert page.evaluate("_mockApi.calls('start_realtime')[0].args[0].capture_mode") == "mix"
+
+
+def test_mix_mode_lists_both_missing_permissions_with_separate_settings_actions(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "reason": "capture_permissions_required",
+            "missing_permissions": ["microphone", "screen_recording"],
+            "microphone_permission": "denied",
+            "screen_recording_permission": "required",
+        },
+    })
+
+    page.locator(".btn-mode[data-mode='mix']").click()
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("!document.querySelector('#btn-start-recording').disabled")
+
+    text = page.locator("#capture-perm-text").inner_text()
+    assert "麦克风权限" in text
+    assert "屏幕与系统音频录制权限" in text
+    assert page.locator("#btn-open-microphone-privacy").is_visible()
+    assert page.locator("#btn-open-screen-privacy").is_visible()
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+
+
+@pytest.mark.parametrize("status", ["denied", "timeout", "unknown"])
+def test_microphone_permission_failure_resets_ui_without_starting(
+    page: Page, ui_base_url: str, status: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "microphone_permission": "not_determined",
+        },
+        "microphonePermission": {"status": status, "authorized": False},
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('request_microphone_permission').length === 1")
+    page.wait_for_function("!document.querySelector('#btn-start-recording').disabled")
+
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+    assert page.locator("#capture-perm-notice").is_visible()
+    assert page.locator("#btn-start-recording").inner_text() == "🎙 Start Recording"
+    expected = "Permission timed out" if status == "timeout" else "Microphone unavailable"
+    assert page.locator("#realtime-status").inner_text() == expected
+    assert not page.locator("#btn-open-microphone-privacy").is_visible()
+    if status == "unknown":
+        assert "无法发起麦克风授权请求" in page.locator("#capture-perm-notice").inner_text()
+
+
 def test_first_run_setup_download_progress_and_error(page: Page, ui_base_url: str) -> None:
     _inject_and_navigate(page, ui_base_url, {
         "setup": {"asr_ready": False, "diarizer_ready": False},

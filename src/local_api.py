@@ -243,11 +243,19 @@ class DesktopRecordingController:
 
             if action == "start":
                 capture_mode = payload["capture_mode"]
-                if capture_mode != "mic":
-                    preflight = self.backend.preflight_capture(capture_mode)
-                    if not preflight.get("supported"):
-                        message = preflight.get("message") or preflight.get("reason") or "Capture unavailable"
-                        raise LocalAPIError("capture_unavailable", str(message), 503)
+                preflight = self.backend.preflight_capture(capture_mode)
+                missing_permissions = preflight.get("missing_permissions", [])
+                if not preflight.get("supported") or missing_permissions:
+                    message = preflight.get("message") or preflight.get("reason")
+                    if not message and missing_permissions:
+                        permission_reasons = []
+                        for permission in missing_permissions:
+                            status_key = f"{permission}_permission"
+                            status = preflight.get(status_key, "required")
+                            permission_reasons.append(f"{status_key}_{status}")
+                        message = ",".join(permission_reasons)
+                    message = message or "Capture unavailable"
+                    raise LocalAPIError("capture_unavailable", str(message), 503)
                 result = self.backend.start_realtime({
                     "capture_mode": capture_mode,
                     "model_id": payload.get("model_id"),
@@ -255,6 +263,11 @@ class DesktopRecordingController:
             else:
                 result = getattr(self.backend, f"{action}_realtime")()
 
+            if result.get("status") == "permission_required":
+                missing = result.get("missing_permissions", ["unknown"])
+                raise LocalAPIError(
+                    "capture_unavailable", f"permissions_required:{','.join(missing)}", 503
+                )
             if result.get("status") in {"already_running", "not_running"}:
                 raise LocalAPIError(
                     "recording_state_conflict",

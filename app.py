@@ -34,6 +34,170 @@ TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
 # Known audio extensions used when copying source files into the output dir
 _AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".mp4", ".aac", ".flac", ".ogg", ".mov", ".mkv")
 _REALTIME_WAV_PREFIX = "realtime_recording"
+_SCREEN_PERMISSION_REQUEST_LOCK = threading.Lock()
+_SCREEN_PERMISSION_REQUEST: Optional[dict] = None
+
+
+def _macos_microphone_permission_status() -> str:
+    """Return the current TCC microphone status without prompting.
+
+    PyWebView already bundles PyObjC, but the optional generated AVFoundation
+    wrapper is not part of the application environment. Load the system
+    framework dynamically and use the stable AVCaptureDevice class API.
+    """
+    if sys.platform != "darwin":
+        return "not_applicable"
+    try:
+        import objc
+
+        objc.loadBundle(
+            "AVFoundation",
+            globals(),
+            bundle_path="/System/Library/Frameworks/AVFoundation.framework",
+        )
+        capture_device = objc.lookUpClass("AVCaptureDevice")
+        status = int(capture_device.authorizationStatusForMediaType_("soun"))
+    except Exception:
+        logger.warning("Unable to query macOS microphone permission", exc_info=True)
+        return "unknown"
+    return {
+        0: "not_determined",
+        1: "restricted",
+        2: "denied",
+        3: "authorized",
+    }.get(status, "unknown")
+
+
+def _microphone_permission_request_method():
+    """Load the native request with the block ABI missing from loadBundle alone."""
+    import objc
+
+    objc.loadBundle(
+        "AVFoundation", globals(),
+        bundle_path="/System/Library/Frameworks/AVFoundation.framework",
+    )
+    # Objective-C encodes the parameter as @? but not its void (^)(BOOL)
+    # signature. Without framework metadata PyObjC rejects a Python callback
+    # before sending any request to TCC. Index 0 is the implicit block pointer.
+    objc.registerMetaDataForSelector(
+        b"AVCaptureDevice", b"requestAccessForMediaType:completionHandler:",
+        {"arguments": {3: {"callable": {
+            "retval": {"type": b"v"},
+            "arguments": {0: {"type": b"^v"}, 1: {"type": objc._C_NSBOOL}},
+        }}}},
+    )
+    return objc.lookUpClass("AVCaptureDevice").requestAccessForMediaType_completionHandler_
+
+
+def _request_macos_microphone_permission(timeout_seconds: float = 60.0) -> str:
+    """Request microphone access before PortAudio can block inside CoreAudio."""
+    status = _macos_microphone_permission_status()
+    if status != "not_determined":
+        return status
+    try:
+        request = _microphone_permission_request_method()
+        completed = threading.Event()
+        result = {"status": "denied"}
+
+        def _on_permission(granted: bool) -> None:
+            result["status"] = "authorized" if granted else "denied"
+            completed.set()
+
+        request("soun", _on_permission)
+        if not completed.wait(timeout_seconds):
+            return "timeout"
+        return result["status"]
+    except Exception:
+        logger.warning(
+            "Unable to request macOS microphone permission", exc_info=True,
+            extra={"audioassist_diagnostic": True},
+        )
+        return "unknown"
+
+
+def _load_core_graphics():
+    """Load the system CoreGraphics framework without a PyObjC package dependency."""
+    import ctypes
+    import ctypes.util
+
+    path = ctypes.util.find_library("CoreGraphics")
+    if not path:
+        raise RuntimeError("CoreGraphics framework not found")
+    return ctypes.CDLL(path)
+
+
+def _macos_screen_recording_permission_status() -> str:
+    """Return whether Screen & System Audio Recording access is available.
+
+    CoreGraphics exposes only a boolean preflight, so a false result cannot
+    distinguish first-use from a previous denial. ``required`` deliberately
+    means that the GUI should make one bounded request and then offer Settings.
+    """
+    if sys.platform != "darwin":
+        return "not_applicable"
+    try:
+        import ctypes
+
+        preflight = _load_core_graphics().CGPreflightScreenCaptureAccess
+        preflight.argtypes = []
+        preflight.restype = ctypes.c_bool
+        return "authorized" if preflight() else "required"
+    except Exception:
+        logger.warning("Unable to query macOS screen recording permission", exc_info=True)
+        return "unknown"
+
+
+def _request_macos_screen_recording_permission(timeout_seconds: float = 60.0) -> str:
+    """Request Screen & System Audio Recording access before model loading.
+
+    Core Graphics exposes a synchronous, non-cancelable request. Keep it
+    process-wide single-flight so a UI cancel/timeout followed by retry cannot
+    leak concurrent native permission calls.
+    """
+    global _SCREEN_PERMISSION_REQUEST
+
+    status = _macos_screen_recording_permission_status()
+    if status in {"authorized", "not_applicable"}:
+        return status
+    try:
+        import ctypes
+
+        with _SCREEN_PERMISSION_REQUEST_LOCK:
+            active = _SCREEN_PERMISSION_REQUEST
+            if active is not None and not active["completed"].is_set():
+                return "in_progress"
+
+            request = _load_core_graphics().CGRequestScreenCaptureAccess
+            request.argtypes = []
+            request.restype = ctypes.c_bool
+            state = {
+                "completed": threading.Event(),
+                "status": "unknown",
+            }
+            _SCREEN_PERMISSION_REQUEST = state
+
+            def _request() -> None:
+                try:
+                    state["status"] = "authorized" if request() else "required"
+                except Exception:
+                    logger.warning(
+                        "Unable to request macOS screen recording permission",
+                        exc_info=True,
+                    )
+                finally:
+                    state["completed"].set()
+
+            threading.Thread(
+                target=_request,
+                daemon=True,
+                name="screen-recording-permission",
+            ).start()
+        if not state["completed"].wait(timeout_seconds):
+            return "timeout"
+        return state["status"]
+    except Exception:
+        logger.warning("Unable to request macOS screen recording permission", exc_info=True)
+        return "unknown"
 
 
 def _resolve_output_dir() -> str:
@@ -597,8 +761,9 @@ class API:
             "reason": str | None,
           }
 
-        For "mic" mode this always returns supported=True (existing path).
-        For "system" / "mix" modes it checks macOS version and helper binary.
+        Permission requirements are mode-specific: Mic needs microphone only,
+        System needs Screen & System Audio Recording only, and Mix needs both.
+        This method never triggers a system prompt.
         """
         import platform
 
@@ -609,6 +774,15 @@ class API:
             "os_version":          os_version,
             "reason":              None,
         }
+
+        if mode in ("mic", "mix"):
+            permission_status = _macos_microphone_permission_status()
+            result["microphone_permission"] = permission_status
+            if permission_status not in {"authorized", "not_applicable"}:
+                result["missing_permissions"].append("microphone")
+            if mode == "mic" and permission_status in {"denied", "restricted", "unknown"}:
+                result["supported"] = False
+                result["reason"] = f"microphone_permission_{permission_status}"
 
         if mode in ("system", "mix"):
             # macOS version gate
@@ -630,14 +804,43 @@ class API:
                 result["helper_path"] = helper
                 return result
 
+            screen_status = _macos_screen_recording_permission_status()
+            result["screen_recording_permission"] = screen_status
+            if screen_status not in {"authorized", "not_applicable"}:
+                result["missing_permissions"].append("screen_recording")
+
+        if result["missing_permissions"] and result["reason"] is None:
+            if len(result["missing_permissions"]) > 1:
+                result["reason"] = "capture_permissions_required"
+            elif result["missing_permissions"][0] == "microphone":
+                result["reason"] = (
+                    f"microphone_permission_{result.get('microphone_permission', 'unknown')}"
+                )
+            else:
+                result["reason"] = (
+                    f"screen_recording_permission_"
+                    f"{result.get('screen_recording_permission', 'unknown')}"
+                )
+
         return result
 
-    def open_privacy_settings(self) -> dict:
-        """Open macOS System Settings → Privacy & Security → Screen Recording."""
+    def request_microphone_permission(self) -> dict:
+        """Prompt for microphone access with a bounded wait before model loading."""
+        status = _request_macos_microphone_permission()
+        return {"status": status, "authorized": status == "authorized"}
+
+    def request_screen_recording_permission(self) -> dict:
+        """Prompt for Screen & System Audio Recording before model loading."""
+        status = _request_macos_screen_recording_permission()
+        return {"status": status, "authorized": status == "authorized"}
+
+    def open_privacy_settings(self, permission: str = "screen") -> dict:
+        """Open the requested bounded macOS Privacy & Security pane."""
+        pane = "Privacy_Microphone" if permission == "microphone" else "Privacy_ScreenCapture"
         try:
             subprocess.Popen([
                 "open",
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                f"x-apple.systempreferences:com.apple.preference.security?{pane}",
             ])
             return {"status": "ok"}
         except Exception as e:
@@ -681,16 +884,35 @@ class API:
 
         Returns: {"status": "started"} or {"status": "already_running"}
         """
+        options = options or {}
+        capture_mode = options.get("capture_mode", "mic")
         with self._recording_lock:
             if self._realtime is not None:
                 return {"status": "already_running"}
+            missing_permissions: list[str] = []
+            permission_result: dict = {}
+            if capture_mode in {"mic", "mix"}:
+                permission_status = _macos_microphone_permission_status()
+                permission_result["microphone_permission"] = permission_status
+                if permission_status not in {"authorized", "not_applicable"}:
+                    missing_permissions.append("microphone")
+            if capture_mode in {"system", "mix"}:
+                screen_status = _macos_screen_recording_permission_status()
+                permission_result["screen_recording_permission"] = screen_status
+                if screen_status not in {"authorized", "not_applicable"}:
+                    missing_permissions.append("screen_recording")
+            if missing_permissions:
+                return {
+                    "status": "permission_required",
+                    "missing_permissions": missing_permissions,
+                    **permission_result,
+                }
             # Sentinel prevents a second call racing before _run() installs the backend.
             self._realtime = object()
             self._recording_generation += 1
             generation = self._recording_generation
         self._caffeinate_start()
 
-        options = options or {}
         model_id = options.get("model_id")
         engine   = options.get("engine", "qwen")
         if model_id:
@@ -699,7 +921,6 @@ class API:
             if _info:
                 engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
-        capture_mode = options.get("capture_mode", "mic")
         self._set_recording_status(
             "starting",
             session_id=None,
@@ -716,6 +937,14 @@ class API:
                 rt_session_dir = _session_dir(session_id)
                 os.makedirs(rt_session_dir, exist_ok=True)
                 output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
+                logger.info(
+                    "Realtime start attempt=%s stage=backend_create.begin mode=%s engine=%s model=%s",
+                    session_id,
+                    capture_mode,
+                    engine,
+                    model_id or "default",
+                    extra={"audioassist_diagnostic": True},
+                )
 
                 if capture_mode in ("system", "mix"):
                     from src.native_capture import NativeCaptureHelper
@@ -734,9 +963,16 @@ class API:
                         engine=engine,
                         model_id=model_id,
                         output_path=output_path,
+                        diagnostic_id=session_id,
                         on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                     )
+                logger.info(
+                    "Realtime start attempt=%s stage=backend_create.done backend=%s",
+                    session_id,
+                    type(rt).__name__,
+                    extra={"audioassist_diagnostic": True},
+                )
                 rt.start()
                 # Race: stop_realtime() may have cleared self._realtime while
                 # models were loading. If so, shut down immediately and return.
@@ -757,8 +993,19 @@ class API:
                     started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
                     error=None,
                 )
+                logger.info(
+                    "Realtime start attempt=%s stage=recording.confirmed",
+                    session_id,
+                    extra={"audioassist_diagnostic": True},
+                )
                 _push(f"onRealtimeStarted({json.dumps(session_id)}, {json.dumps(output_path)})")
             except Exception as e:
+                logger.info(
+                    "Realtime start attempt=%s stage=failed error_type=%s",
+                    locals().get("session_id", "unassigned"),
+                    type(e).__name__,
+                    extra={"audioassist_diagnostic": True},
+                )
                 logger.exception("Realtime start failed")
                 with self._recording_lock:
                     if generation != self._recording_generation:
