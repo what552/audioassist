@@ -12,6 +12,7 @@
 const Player = (() => {
   let _el = null;
   let _timeUpdateCb = null;
+  let _errorCb = null;
   let _loadedPath = '';
 
   function init(audioElement) {
@@ -51,9 +52,25 @@ const Player = (() => {
   }
 
   function seekTo(seconds) {
-    if (!_el) return;
-    _el.currentTime = seconds;
-    _el.play().catch(() => {}); // ignore autoplay policy errors
+    const message = 'Unable to play this recording. Check that the audio file still exists and is readable.';
+    if (!_el || !_loadedPath || !Number.isFinite(seconds) || seconds < 0) {
+      if (_errorCb) _errorCb(message);
+      return Promise.resolve(false);
+    }
+    try {
+      _el.currentTime = seconds;
+      return Promise.resolve(_el.play())
+        .then(() => true)
+        .catch((error) => {
+          console.error('[Player] seek playback failed:', error);
+          if (_errorCb) _errorCb(message);
+          return false;
+        });
+    } catch (error) {
+      console.error('[Player] seek failed:', error);
+      if (_errorCb) _errorCb(message);
+      return Promise.resolve(false);
+    }
   }
 
   function play() {
@@ -75,6 +92,10 @@ const Player = (() => {
     _timeUpdateCb = cb;
   }
 
+  function onError(cb) {
+    _errorCb = cb;
+  }
+
   return {
     init,
     load,
@@ -83,6 +104,7 @@ const Player = (() => {
     pause,
     stop,
     onTimeUpdate,
+    onError,
     get currentTime() { return _el ? _el.currentTime : 0; },
     get duration()    { return _el ? _el.duration || 0 : 0; },
     get loadedPath()  { return _loadedPath; },

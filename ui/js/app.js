@@ -639,6 +639,7 @@ const App = (() => {
       Transcript.highlightAt(t);
       _updateTimeDisplay(t);
     });
+    Player.onError((message) => showToast(message, 4000));
 
     // Spacebar: toggle play/pause; never activate buttons (prevents accidental recording)
     document.addEventListener('keydown', (e) => {
