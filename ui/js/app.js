@@ -28,6 +28,7 @@
 const App = (() => {
   // ── Session store ──────────────────────────────────────────────────────────
   const _sessions = new Map();  // insertion-order preserved
+  const _resumingIds = new Set();
   let _selectedId        = null;
   let _activeRealtimeId  = null;
   let dom = {};
@@ -438,6 +439,7 @@ const App = (() => {
 
     if (s.status === 'interrupted') {
       // F2: Resume from checkpoint — reuse same job_id, skip done chunks
+      _resumingIds.add(id);
       _updateSession(id, { status: 'transcribing', errorMsg: null });
       _selectSession(id);
       _setProgress(0, 'Resuming…');
@@ -445,17 +447,21 @@ const App = (() => {
       try {
         const result = await window.pywebview.api.resume_transcription(id);
         if (result && result.error) {
+          _resumingIds.delete(id);
           _updateSession(id, {
             status: 'interrupted',
             errorMsg: `Resume failed: ${result.error}`,
           });
+          _processQueue();
         }
       } catch (err) {
         console.error('[App] resume_transcription error:', err);
+        _resumingIds.delete(id);
         _updateSession(id, {
           status: 'interrupted',
           errorMsg: `Resume failed: ${String(err)}`,
         });
+        _processQueue();
       }
       return;
     }
@@ -504,6 +510,7 @@ const App = (() => {
   }
 
   function onTranscribeComplete(jobId, _jsonPath, hasRefine) {
+    _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
     _updateSession(jobId, { status: hasRefine ? 'refining' : 'done' });
     _processQueue();
@@ -517,14 +524,26 @@ const App = (() => {
   }
 
   function onTranscribeError(jobId, message) {
+    const wasResuming = _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
+    if (wasResuming) {
+      _updateSession(jobId, { status: 'interrupted', errorMsg: message });
+      _processQueue();
+      return;
+    }
     _updateSession(jobId, { status: 'error', errorMsg: message });
     _processQueue();
   }
 
   function onTranscribeCancel(jobId) {
+    const wasResuming = _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
     const s = _sessions.get(jobId);
+    if (wasResuming) {
+      _updateSession(jobId, { status: 'interrupted' });
+      _processQueue();
+      return;
+    }
     if (s && s.status === 'interrupted') {
       // Keep session visible as interrupted
       _render();

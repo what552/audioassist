@@ -217,6 +217,34 @@ def test_pending_rename_survives_status_rerender(page: Page, ui_base_url: str) -
     page.wait_for_timeout(300)
 
 
+def test_failed_rename_rolls_back_optimistic_title(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-rename",
+            "filename": "Before",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "done",
+            "audio_path": "/audio/work.wav",
+        }],
+    })
+    page.evaluate(
+        "window.pywebview.api.rename_session = async () => false;"
+    )
+
+    item = page.locator(".history-item", has_text="Before")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("Rejected")
+    page.keyboard.press("Enter")
+
+    page.wait_for_function(
+        "document.querySelector('.history-item-name').textContent === 'Before'"
+    )
+    assert page.locator(".history-item", has_text="Rejected").count() == 0
+
+
 def test_failed_resume_remains_visible_and_retryable(page: Page, ui_base_url: str) -> None:
     page.set_default_timeout(3000)
     _inject_and_navigate(page, ui_base_url, config={
@@ -244,6 +272,72 @@ def test_failed_resume_remains_visible_and_retryable(page: Page, ui_base_url: st
     item = page.locator(".history-item", has_text="Keep me")
     assert item.count() == 1
     assert "history-item-interrupted" in (item.get_attribute("class") or "")
+    assert item.locator('button[title="Resume"]').count() == 1
+
+
+def test_async_failed_resume_remains_visible_and_retryable(page: Page, ui_base_url: str) -> None:
+    """A worker error after resume starts must retain the checkpoint UI."""
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-interrupted",
+            "filename": "Keep me",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "interrupted",
+            "audio_path": "/audio/keep.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.pywebview.api.resume_transcription = async jobId => {
+          queueMicrotask(() => onTranscribeError(jobId, 'worker failed'));
+          return {job_id: jobId};
+        };
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    item.hover()
+    item.locator('button[title="Resume"]').click()
+    page.wait_for_function(
+        "document.querySelector('#error-msg').textContent.includes('worker failed')"
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    assert "history-item-interrupted" in (item.get_attribute("class") or "")
+    assert item.locator('button[title="Resume"]').count() == 1
+
+
+def test_cancelled_resume_remains_visible_and_retryable(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-interrupted",
+            "filename": "Keep me",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "interrupted",
+            "audio_path": "/audio/keep.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.pywebview.api.resume_transcription = async jobId => {
+          queueMicrotask(() => onTranscribeCancel(jobId));
+          return {job_id: jobId};
+        };
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    item.hover()
+    item.locator('button[title="Resume"]').click()
+    page.wait_for_function(
+        "document.querySelector('.history-item')?.classList.contains('history-item-interrupted')"
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
     assert item.locator('button[title="Resume"]').count() == 1
 
 
