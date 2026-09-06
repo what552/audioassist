@@ -68,20 +68,34 @@ def _macos_microphone_permission_status() -> str:
     }.get(status, "unknown")
 
 
+def _microphone_permission_request_method():
+    """Load the native request with the block ABI missing from loadBundle alone."""
+    import objc
+
+    objc.loadBundle(
+        "AVFoundation", globals(),
+        bundle_path="/System/Library/Frameworks/AVFoundation.framework",
+    )
+    # Objective-C encodes the parameter as @? but not its void (^)(BOOL)
+    # signature. Without framework metadata PyObjC rejects a Python callback
+    # before sending any request to TCC. Index 0 is the implicit block pointer.
+    objc.registerMetaDataForSelector(
+        b"AVCaptureDevice", b"requestAccessForMediaType:completionHandler:",
+        {"arguments": {3: {"callable": {
+            "retval": {"type": b"v"},
+            "arguments": {0: {"type": b"^v"}, 1: {"type": objc._C_NSBOOL}},
+        }}}},
+    )
+    return objc.lookUpClass("AVCaptureDevice").requestAccessForMediaType_completionHandler_
+
+
 def _request_macos_microphone_permission(timeout_seconds: float = 60.0) -> str:
     """Request microphone access before PortAudio can block inside CoreAudio."""
     status = _macos_microphone_permission_status()
     if status != "not_determined":
         return status
     try:
-        import objc
-
-        objc.loadBundle(
-            "AVFoundation",
-            globals(),
-            bundle_path="/System/Library/Frameworks/AVFoundation.framework",
-        )
-        capture_device = objc.lookUpClass("AVCaptureDevice")
+        request = _microphone_permission_request_method()
         completed = threading.Event()
         result = {"status": "denied"}
 
@@ -89,12 +103,15 @@ def _request_macos_microphone_permission(timeout_seconds: float = 60.0) -> str:
             result["status"] = "authorized" if granted else "denied"
             completed.set()
 
-        capture_device.requestAccessForMediaType_completionHandler_("soun", _on_permission)
+        request("soun", _on_permission)
         if not completed.wait(timeout_seconds):
             return "timeout"
         return result["status"]
     except Exception:
-        logger.warning("Unable to request macOS microphone permission", exc_info=True)
+        logger.warning(
+            "Unable to request macOS microphone permission", exc_info=True,
+            extra={"audioassist_diagnostic": True},
+        )
         return "unknown"
 
 

@@ -70,6 +70,9 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
 - On a fresh microphone decision, confirm the system prompt appears before model loading
   and Session/WAV creation; cancel and timeout must restore idle controls without a
   header-only recording.
+- Confirm the packaged Python-to-AVFoundation callback bridge actually reaches the
+  native prompt; a mocked authorization result or a Settings link is not sufficient.
+  Before the first request, the UI must not instruct users to enable a missing app row.
 - Verify microphone, system, and mix modes independently.
 - Verify the permission matrix explicitly: Mic requests only Microphone, System requests
   only Screen & System Audio Recording, and Mix reports/requests both independently.

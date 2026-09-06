@@ -93,6 +93,16 @@ Acceptance remaining: install the rebuilt candidate, confirm the system prompt
 appears before model/session creation, authorize it, and pass cold start, warm
 restart, stop, and non-empty WAV checks.
 
+2026-09-06 follow-up: after resetting the stale ad-hoc TCC grant, first-use Mic
+still failed without a prompt. The dynamic AVFoundation loader lacked PyObjC
+completion-block metadata; the real call raised `TypeError: Argument 3 is a block,
+but no signature available` before reaching TCC. Mock-only tests missed this.
+The 2.0.1 candidate registers the native `void (^)(BOOL)` signature explicitly,
+adds a fresh-process macOS bridge regression, and records request exceptions in
+startup diagnostics. Undetermined permission now invites the native request,
+not a visit to a Settings list where the app does not yet exist. This is a
+separate defect from ad-hoc signing identity continuity above.
+
 ### CAPTURE-PERM-01 — Mode-specific macOS permission UX
 
 - Mic requires only Microphone; System requires only Screen & System Audio Recording;

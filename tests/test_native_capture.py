@@ -720,6 +720,25 @@ class TestPreflightCapture:
 
 
 class TestMicrophonePermissionRequest:
+    @pytest.mark.skipif(sys.platform != "darwin", reason="real macOS bridge required")
+    def test_native_request_has_boolean_block_metadata_in_fresh_process(self):
+        # This must not mock objc: mock-only tests missed the missing block ABI.
+        # A fresh process also prevents another framework import masking the bug.
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-c", """
+import app
+import objc
+request = app._microphone_permission_request_method()
+block = request.__metadata__()['arguments'][3]['callable']
+assert block['retval']['type'] == b'v'
+assert block['arguments'][0]['type'] == b'^v'
+assert block['arguments'][1]['type'] == objc._C_NSBOOL
+"""], capture_output=True, text=True, timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+
     @pytest.mark.parametrize("status", [
         "authorized", "denied", "restricted", "unknown", "not_applicable",
     ])
@@ -744,6 +763,8 @@ class TestMicrophonePermissionRequest:
             lambda media_type, callback: callback(granted)
         )
         objc = types.ModuleType("objc")
+        objc.registerMetaDataForSelector = MagicMock()
+        objc._C_NSBOOL = b"Z"
         objc.loadBundle = MagicMock()
         objc.lookUpClass = MagicMock(return_value=capture_device)
 
@@ -761,6 +782,8 @@ class TestMicrophonePermissionRequest:
 
         capture_device = MagicMock()
         objc = types.ModuleType("objc")
+        objc.registerMetaDataForSelector = MagicMock()
+        objc._C_NSBOOL = b"Z"
         objc.loadBundle = MagicMock()
         objc.lookUpClass = MagicMock(return_value=capture_device)
 

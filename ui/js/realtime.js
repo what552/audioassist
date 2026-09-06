@@ -173,7 +173,7 @@ const Realtime = (() => {
           permissionFailure.kind,
           permissionFailure.status,
         ));
-        _showPermNotice(refreshed);
+        _showPermNotice({ ...refreshed, request_failure: permissionFailure });
         return;
       }
       _setLoading(true, 'Loading…');
@@ -340,7 +340,14 @@ const Realtime = (() => {
     } else if (missing.size) {
       const messages = [];
       if (missing.has('microphone')) {
-        messages.push('麦克风权限：Mic 和 Mix 模式需要；System 模式不需要。');
+        if (info.request_failure && info.request_failure.kind === 'microphone' &&
+            info.request_failure.status === 'unknown') {
+          messages.push('无法发起麦克风授权请求。请重试；若持续失败，请提供应用诊断日志。');
+        } else if (info.microphone_permission === 'not_determined') {
+          messages.push('尚未申请麦克风权限。点击 Start Recording 后，请在系统弹窗中允许访问。');
+        } else {
+          messages.push('麦克风权限：Mic 和 Mix 模式需要；System 模式不需要。');
+        }
       }
       if (missing.has('screen_recording')) {
         messages.push('屏幕与系统音频录制权限：System 和 Mix 模式需要；Mic 模式不需要。');
@@ -355,7 +362,8 @@ const Realtime = (() => {
     }
 
     if (dom.permText)  dom.permText.textContent = msg;
-    if (dom.btnOpenMic) dom.btnOpenMic.hidden = !missing.has('microphone');
+    if (dom.btnOpenMic) dom.btnOpenMic.hidden = !missing.has('microphone') ||
+      info.microphone_permission === 'not_determined';
     if (dom.btnOpenScreen) dom.btnOpenScreen.hidden = !missing.has('screen_recording');
     if (dom.permNotice) dom.permNotice.removeAttribute('hidden');
   }

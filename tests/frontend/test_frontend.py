@@ -413,6 +413,9 @@ def test_microphone_permission_failure_resets_ui_without_starting(
     assert page.locator("#btn-start-recording").inner_text() == "🎙 Start Recording"
     expected = "Permission timed out" if status == "timeout" else "Microphone unavailable"
     assert page.locator("#realtime-status").inner_text() == expected
+    assert not page.locator("#btn-open-microphone-privacy").is_visible()
+    if status == "unknown":
+        assert "无法发起麦克风授权请求" in page.locator("#capture-perm-notice").inner_text()
 
 
 def test_first_run_setup_download_progress_and_error(page: Page, ui_base_url: str) -> None:
