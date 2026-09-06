@@ -107,7 +107,11 @@ class ASREngine:
                     try:
                         setattr(model, attribute, None)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Failed to clear Qwen model attribute %s",
+                            attribute,
+                            exc_info=True,
+                        )
             del model
 
         gc.collect()

@@ -336,9 +336,9 @@ PID reuse, and lock contention.
 | PLAYER-01 | Complete: `seekTo()` failures show an actionable missing/unreadable-audio toast |
 | UI-STATE-01 | Complete: browser state-matrix regression prevents player/empty/error views from leaking across selection and deletion |
 | REALTIME-01 | Complete through R03-B2: pause/resume failures produce an error state and never emit false confirmed UI events |
-| LOG-01 | Preserve stack traces on remaining aligner fallback/error paths |
-| AUDIO-UTIL-01 | Convert nonnumeric ffprobe duration output such as `N/A` into an actionable application error |
-| TEST-ASR-01 | Add direct mocked timestamp/result-conversion tests for Qwen and both Whisper adapters |
+| LOG-01 | Complete: Qwen/aligner cleanup failures retain traceback logging; missing aligners already fail explicitly rather than degrading |
+| AUDIO-UTIL-01 | Complete: nonnumeric, nonfinite, and negative ffprobe durations raise actionable application errors |
+| TEST-ASR-01 | Complete: direct mocked timestamp/result conversion covers Qwen and both Whisper adapters |
 | DOC-01 | Remove stale historical warnings/checklists and keep feature/status documents consistent |
 
 ## Historical backlog audit

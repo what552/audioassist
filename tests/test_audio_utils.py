@@ -121,6 +121,16 @@ class TestGetDuration:
             with pytest.raises(RuntimeError, match="empty output"):
                 get_duration("silent.mp3")
 
+    @pytest.mark.parametrize("raw", ["N/A\n", "nan\n", "inf\n", "-1.0\n"])
+    def test_invalid_duration_is_actionable(self, raw):
+        invalid = MagicMock()
+        invalid.returncode = 0
+        invalid.stdout = raw
+
+        with patch("subprocess.run", return_value=invalid):
+            with pytest.raises(RuntimeError, match="ffprobe returned invalid duration"):
+                get_duration("broken-duration.mp3")
+
 
 # ── split_to_chunks ───────────────────────────────────────────────────────────
 

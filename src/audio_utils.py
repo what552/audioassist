@@ -7,6 +7,7 @@ import sys
 import subprocess
 import tempfile
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,17 @@ def get_duration(audio_path: str) -> float:
         raise RuntimeError(
             f"ffprobe returned empty output for {audio_path!r}"
         )
-    return float(raw)
+    try:
+        duration = float(raw)
+    except ValueError as error:
+        raise RuntimeError(
+            f"ffprobe returned invalid duration {raw!r} for {audio_path!r}"
+        ) from error
+    if not math.isfinite(duration) or duration < 0:
+        raise RuntimeError(
+            f"ffprobe returned invalid duration {raw!r} for {audio_path!r}"
+        )
+    return duration
 
 
 def split_to_chunks(wav_path: str, chunk_sec: int = CHUNK_SECONDS) -> list[tuple[str, float]]:
