@@ -409,7 +409,7 @@ const App = (() => {
 
   async function _onUpload() {
     if (_activeRealtimeId !== null) {
-      alert('A recording is in progress. Please finish it before uploading a file.');
+      showToast('A recording is in progress. Please finish it before uploading a file.', 4000);
       return;
     }
     try {
@@ -422,16 +422,20 @@ const App = (() => {
 
   async function _startTranscription(filePath, displayName, opts = {}) {
     if (_activeRealtimeId !== null) {
-      alert('A recording is in progress. Please finish it before uploading a file.');
+      showToast('A recording is in progress. Please finish it before uploading a file.', 4000);
       return;
     }
     const filename = displayName || filePath.split('/').pop().split('\\').pop();
     try {
-      const { job_id } = await window.pywebview.api.transcribe(filePath, {
+      const result = await window.pywebview.api.transcribe(filePath, {
         model_id:     dom.selEngine.value || null,
         hf_token:     null,
         num_speakers: null,
       });
+      if (!result || result.error || !result.job_id) {
+        throw new Error(result?.error || 'Transcription did not start');
+      }
+      const { job_id } = result;
       _sessions.set(job_id, {
         id: job_id, type: 'file', status: 'transcribing',
         filename, created_at: _now(), audioPath: filePath,
@@ -441,7 +445,9 @@ const App = (() => {
       _setProgress(0, 'Starting…');
       _render();
     } catch (err) {
-      alert('Transcription failed: ' + err);
+      console.error('[App] transcribe error:', err);
+      showToast(`Transcription failed: ${String(err)}`, 4000);
+      _processQueue();
     }
   }
 

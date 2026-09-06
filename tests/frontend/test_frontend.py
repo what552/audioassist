@@ -24,6 +24,12 @@ _HERE   = os.path.dirname(os.path.abspath(__file__))
 _UI_DIR = os.path.abspath(os.path.join(_HERE, "..", "..", "ui"))
 _MOCK   = os.path.join(_HERE, "mock_api.js")
 
+
+def test_ui_sources_do_not_use_blocking_alerts() -> None:
+    for filename in ("app.js", "summary.js"):
+        source = open(os.path.join(_UI_DIR, "js", filename), encoding="utf-8").read()
+        assert "alert(" not in source
+
 # ── HTTP server fixture ────────────────────────────────────────────────────────
 
 class _UIHandler(http.server.SimpleHTTPRequestHandler):
@@ -782,6 +788,56 @@ def test_upload_error_retry_and_cancel(page: Page, ui_base_url: str) -> None:
     page.evaluate("onTranscribeCancel('attempt-2')")
     page.locator("#empty-hint").wait_for(state="visible")
     assert page.locator(".history-empty").inner_text() == "No recordings yet"
+
+
+def test_transcription_start_failure_uses_non_blocking_toast(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "history": [],
+        "selectedFiles": ["/fixtures/interview.wav"],
+    })
+    page.evaluate(
+        """
+        window.alertCalls = [];
+        window.alert = message => window.alertCalls.push(message);
+        window.pywebview.api.transcribe = async () => ({error: 'job_in_progress'});
+        void 0;
+        """
+    )
+
+    page.locator("#btn-upload").click()
+    page.wait_for_function(
+        "document.querySelector('#toast').textContent.includes('job_in_progress')"
+    )
+
+    assert page.locator("#toast").is_visible()
+    assert page.evaluate("window.alertCalls") == []
+
+
+def test_missing_summary_template_uses_non_blocking_toast(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.evaluate(
+        """
+        window.alertCalls = [];
+        window.alert = message => window.alertCalls.push(message);
+        window.pywebview.api.get_summary_templates = async () => [];
+        void 0;
+        """
+    )
+
+    page.locator(".history-item", has_text="meeting.mp3").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#btn-summarize").click()
+    page.wait_for_function(
+        "document.querySelector('#toast').textContent.includes('No template selected')"
+    )
+
+    assert page.locator("#toast").is_visible()
+    assert page.evaluate("window.alertCalls") == []
 
 
 def test_model_library_download_delete_and_selector_refresh(page: Page, ui_base_url: str) -> None:

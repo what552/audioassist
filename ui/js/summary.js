@@ -27,6 +27,11 @@ const Summary = (() => {
   let dom = {};
   let agentDom = {};
 
+  function _showError(message) {
+    console.error('[Summary]', message);
+    App.showToast(String(message), 4000);
+  }
+
   // ── Markdown rendering ──────────────────────────────────────────────────────
 
   // Configure marked once: GitHub-flavoured, line breaks as <br>
@@ -214,10 +219,11 @@ const Summary = (() => {
       if (result && result.ok) {
         _closeModal();
       } else {
-        alert(result?.error || 'Failed to set output folder');
+        _showError(result?.error || 'Failed to set output folder');
       }
     } catch (e) {
       console.error('[Summary] _onSaveStorage error:', e);
+      _showError(`Failed to set output folder: ${String(e)}`);
     }
   }
 
@@ -331,7 +337,7 @@ const Summary = (() => {
 
     const templates = await window.pywebview.api.get_summary_templates();
     if (templates.some(t => t.name === name.trim())) {
-      alert(`A template named "${name.trim()}" already exists.`);
+      _showError(`A template named "${name.trim()}" already exists.`);
       return;
     }
     templates.push({ name: name.trim(), prompt: prompt_.trim() });
@@ -348,7 +354,7 @@ const Summary = (() => {
     if (prompt_ === null) return;
 
     if (name.trim() !== t.name && templates.some((u, i) => i !== index && u.name === name.trim())) {
-      alert(`A template named "${name.trim()}" already exists.`);
+      _showError(`A template named "${name.trim()}" already exists.`);
       return;
     }
     const updated = [...templates];
@@ -374,7 +380,7 @@ const Summary = (() => {
     const templates = await window.pywebview.api.get_summary_templates();
     const template = templates.find(t => t.name === selectedName);
     if (!template) {
-      alert('No template selected. Please add a template in ⚙ settings.');
+      _showError('No template selected. Please add a template in ⚙ settings.');
       return;
     }
 
