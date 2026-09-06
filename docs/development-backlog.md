@@ -27,8 +27,8 @@ Priority meanings:
 | 8 | QWEN-04A | P1 | Complete: no-go | Human-reference short fixtures plus existing 5/10-minute evidence reject MPS and do not yet clear MLX |
 | 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
-| 11 | TEST-UI-01 | P2 | Next | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
-| 12 | ASR-QUALITY-01 | P2 | Planned | Improve speaker ownership and realtime alignment without hiding uncertainty |
+| 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
+| 12 | ASR-QUALITY-01 | P2 | Next | Improve speaker ownership and realtime alignment without hiding uncertainty |
 | 13 | TEXT-01 | P2 | Planned | Add conservative, language-aware punctuation improvement |
 | 14 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
 | 15 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
@@ -175,7 +175,7 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 | R03-B1 | HTTP service lifecycle/security design | Explicit ownership, localhost boundary, port collision, lock, recovery, cancellation, shutdown, and versioned schema before implementation |
 | R03-B2 | HTTP recording control plus MCP adapter | Reuse `src/service.py`; data reads work with the app closed; recording mutations require the visible app and return stable errors |
 | AGENT-01 | Summary Agent reliability (paused by owner) | Request/tool timeouts, transcript paging instead of a fixed 6000-character truncation, and summary writes through the shared service |
-| TEST-UI-01 | Close frontend coverage gaps | Setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
+| TEST-UI-01 | Complete: close frontend coverage gaps | Eight browser scenarios cover startup/history, setup, cancel/retry, model modal, drag/drop queueing, and Summary Agent flows |
 | TRANS-01 | Complete: cancellation and concurrency hardening | Immediate cancel registration, duplicate-job rejection, transactional output/refine, retryable refine cancellation, and serialized rename/rerun mutations |
 | ASR-QUALITY-01 | Speaker/timestamp quality | Evaluate UNKNOWN-speaker reassignment and realtime diarization alignment without hiding uncertainty |
 | TEXT-01 | Conservative punctuation improvement | Language-aware evaluation; no semantic rewriting |
@@ -218,9 +218,9 @@ scheduled twice:
 | Spacebar playback and stale summary reset | Complete |
 | Summary spinner completion | Complete |
 | Storage path setting and complete session deletion | Complete |
-| JS/Jest debt | Re-scoped to browser-level TEST-UI-01 coverage rather than introducing a second frontend test stack without need |
-| Setup/cancel/retry/model/drag-drop/Agent UI coverage | Still open under TEST-UI-01 |
-| Drag/drop concurrency and refine cancellation | Refine/rerun cancellation complete under TRANS-01; drag/drop browser coverage remains under TEST-UI-01 |
+| JS/Jest debt | Closed through browser-level TEST-UI-01 coverage rather than introducing a second frontend test stack without need |
+| Setup/cancel/retry/model/drag-drop/Agent UI coverage | Complete under TEST-UI-01 |
+| Drag/drop concurrency and refine cancellation | Complete through TEST-UI-01 and TRANS-01 |
 | Agent timeouts and fixed transcript truncation | Still open under AGENT-01 |
 | Per-job lock growth, seek errors, alerts, pause/resume state | Still open under the corresponding P3 maintenance IDs |
 | ffprobe `N/A` and direct ASR timestamp adapter tests | Still open under AUDIO-UTIL-01 and TEST-ASR-01 |
