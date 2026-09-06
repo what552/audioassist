@@ -9,6 +9,7 @@ from src.merge import (
     SpeakerBlock,
     get_speaker_at,
     merge,
+    speaker_for_interval,
     split_long_blocks,
     to_json,
     to_markdown,
@@ -64,6 +65,45 @@ class TestGetSpeakerAt:
         assert get_speaker_at(3.0, two_speakers) == "SPEAKER_00"
 
 
+class TestSpeakerForInterval:
+    def test_uses_overlap_not_only_word_midpoint(self):
+        segments = [
+            SpeakerSegment("SPEAKER_00", 0.0, 1.49),
+            SpeakerSegment("SPEAKER_01", 1.49, 3.0),
+        ]
+        # The midpoint is after the boundary, but most of the word belongs to speaker 00.
+        assert speaker_for_interval(1.0, 1.8, segments) == "SPEAKER_00"
+
+    def test_near_even_cross_speaker_interval_stays_unknown(self):
+        segments = [
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+            SpeakerSegment("SPEAKER_01", 1.0, 2.0),
+        ]
+        assert speaker_for_interval(0.5, 1.5, segments) == "UNKNOWN"
+
+    def test_short_gap_between_same_speaker_turns_is_filled(self):
+        segments = [
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+            SpeakerSegment("SPEAKER_00", 1.2, 2.0),
+        ]
+        assert speaker_for_interval(1.05, 1.15, segments) == "SPEAKER_00"
+
+    def test_gap_between_different_speakers_stays_unknown(self):
+        segments = [
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+            SpeakerSegment("SPEAKER_01", 1.2, 2.0),
+        ]
+        assert speaker_for_interval(1.05, 1.15, segments) == "UNKNOWN"
+
+    def test_tiny_overlap_does_not_label_mostly_uncovered_interval(self):
+        segments = [SpeakerSegment("SPEAKER_00", 0.0, 1.0)]
+        assert speaker_for_interval(0.95, 2.0, segments) == "UNKNOWN"
+
+    def test_small_leading_edge_jitter_is_snapped(self):
+        segments = [SpeakerSegment("SPEAKER_00", 0.1, 2.0)]
+        assert speaker_for_interval(0.0, 0.08, segments) == "SPEAKER_00"
+
+
 # ── merge ─────────────────────────────────────────────────────────────────────
 
 class TestMerge:
@@ -96,6 +136,15 @@ class TestMerge:
         assert len(blocks) == 1
         assert blocks[0].text == "hello world"
         assert blocks[0].words == []
+        assert blocks[0].speaker == "UNKNOWN"
+
+    def test_no_words_uses_speaker_when_diarization_has_only_one_identity(self):
+        asr = TranscriptResult(text="hello world", language="en", words=[])
+        blocks = merge(asr, [
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+            SpeakerSegment("SPEAKER_00", 2.0, 3.0),
+        ])
+        assert blocks[0].speaker == "SPEAKER_00"
 
     def test_single_speaker_all_unknown(self):
         asr = TranscriptResult(

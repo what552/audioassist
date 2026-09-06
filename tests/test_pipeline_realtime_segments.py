@@ -28,10 +28,31 @@ class TestDominantSpeaker:
 
     def test_picks_speaker_with_most_overlap(self):
         segs = self._segs(
-            ("SPEAKER_00", 0.0, 2.0),   # 2 s overlap
-            ("SPEAKER_01", 2.0, 4.5),   # 2.5 s overlap → wins
+            ("SPEAKER_00", 0.0, 1.5),   # 1.5 s overlap
+            ("SPEAKER_01", 1.5, 4.5),   # 3 s overlap → clear winner
         )
         assert _dominant_speaker(0.0, 4.5, segs) == "SPEAKER_01"
+
+    def test_near_even_speaker_split_returns_unknown(self):
+        segs = self._segs(
+            ("SPEAKER_00", 0.0, 2.0),
+            ("SPEAKER_01", 2.0, 4.5),
+        )
+        assert _dominant_speaker(0.0, 4.5, segs) == "UNKNOWN"
+
+    def test_short_same_speaker_diarization_gap_is_aligned(self):
+        segs = self._segs(
+            ("SPEAKER_00", 0.0, 1.0),
+            ("SPEAKER_00", 1.2, 3.0),
+        )
+        assert _dominant_speaker(1.05, 1.15, segs) == "SPEAKER_00"
+
+    def test_short_cross_speaker_gap_remains_unknown(self):
+        segs = self._segs(
+            ("SPEAKER_00", 0.0, 1.0),
+            ("SPEAKER_01", 1.2, 3.0),
+        )
+        assert _dominant_speaker(1.05, 1.15, segs) == "UNKNOWN"
 
     def test_partial_overlap_from_left(self):
         segs = self._segs(("SPEAKER_00", 0.0, 1.5))
