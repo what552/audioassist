@@ -12,6 +12,7 @@
 const Player = (() => {
   let _el = null;
   let _timeUpdateCb = null;
+  let _loadedPath = '';
 
   function init(audioElement) {
     _el = audioElement;
@@ -36,8 +37,17 @@ const Player = (() => {
 
   function load(filePath) {
     if (!_el) return;
-    _el.src = _toFileUrl(filePath);
+    const nextPath = filePath || '';
+    if (nextPath === _loadedPath) return;
+
+    // Stop the previous session before replacing its source. WebKit may keep
+    // playing the old resource until the new one has loaded otherwise.
+    _el.pause();
+    _loadedPath = nextPath;
+    _el.src = _toFileUrl(nextPath);
     _el.load();
+    _el.currentTime = 0;
+    if (_timeUpdateCb) _timeUpdateCb(0);
   }
 
   function seekTo(seconds) {
@@ -58,6 +68,7 @@ const Player = (() => {
     if (!_el) return;
     _el.pause();
     _el.currentTime = 0;
+    if (_timeUpdateCb) _timeUpdateCb(0);
   }
 
   function onTimeUpdate(cb) {
@@ -74,5 +85,6 @@ const Player = (() => {
     onTimeUpdate,
     get currentTime() { return _el ? _el.currentTime : 0; },
     get duration()    { return _el ? _el.duration || 0 : 0; },
+    get loadedPath()  { return _loadedPath; },
   };
 })();

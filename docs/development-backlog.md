@@ -34,9 +34,9 @@ Priority meanings:
 | 15 | R03-B2 | P2 | Complete | Authenticated desktop/read-only HTTP service and eight-tool stdio MCP adapter, without a daemon |
 | 16 | REALTIME-DIAG-01 | P1 | Complete | Prove the 44-byte WAV failure is a TCC code-requirement mismatch after replacing an ad-hoc signed build |
 | 17 | REALTIME-START-01 | P1 | Complete | Request microphone access before PortAudio/model/session startup, with cancel and timeout recovery; installed 2.0.1 gate passed |
-| 18 | PLAYER-02 | P2 | Ready | Prevent playback position and active playback from leaking across session switches |
-| 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
-| 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
+| 18 | PLAYER-02 | P2 | Complete | Prevent playback position and active playback from leaking across session switches |
+| 19 | UI-SESSION-REFRESH-01 | P2 | Complete | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
+| 20 | LOCAL-API-CLEANUP-01 | P3 | Complete | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
 
@@ -275,6 +275,36 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 
 ## P2 product and reliability backlog
 
+### PLAYER-02 — Session-safe playback state
+
+- Route every selected-session transition through one helper that stops the prior
+  audio only when the selected session actually changes.
+- Make loading the same source idempotent so rename/status rerenders preserve its
+  current position and playback state.
+- Pause and reset immediately before a different source is loaded, and publish a
+  zero-time update so the previous session's position cannot remain visible while
+  the new media metadata loads.
+- Browser regression covers both same-source preservation and different-source
+  pause/reset behavior.
+
+### UI-SESSION-REFRESH-01 — Durable session labels and transitions
+
+- Apply valid renames optimistically so a status rerender cannot restore the old
+  title while persistence waits behind the session mutation lock. Serialize
+  PyWebView rename calls per session so rapid edits remain last-write-wins, and
+  restore the last confirmed title if one or more writes fail.
+- Make new-job renames wait on the same session lock as transcription and recheck
+  for the completed transcript before persisting, preventing a restart from
+  revealing a stale pre-transcription title.
+- Preserve the renamed title in `meta.json` for interrupted sessions and read it
+  back in history instead of falling back to the source basename.
+- Treat immediate and background resume errors or cancellation as interrupted and
+  retryable rather than leaving the session indefinitely marked as transcribing or
+  hiding its Resume action.
+- Backend and browser regressions cover renamed interruption, a rename during a
+  fresh transcription, rapid ordered renames, failed-write rollback, pending rename
+  plus completion, and immediate/background resume failures without restarting.
+
 | ID | Task | Acceptance direction |
 |---|---|---|
 | QWEN-04A | Accelerated-backend evidence | Human Mandarin/Cantonese/English/code-switch references plus short and 5/10-minute fixtures compare CPU, MPS, and MLX before longer promotion runs |
@@ -292,6 +322,12 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 | OBSIDIAN-01 | Deeper Obsidian integration | Define concrete bidirectional or workflow value beyond the existing sync before scheduling |
 
 ## P3 maintenance backlog
+
+LOCAL-API-CLEANUP-01 is complete: a dead PID, a reused live PID with an
+unreachable listener, or an identity mismatch triggers ownership-checked cleanup.
+Cleanup first acquires the same process lock as server startup, so it cannot unlink
+a record while a replacement instance owns the service. Tests cover crash residue,
+PID reuse, and lock contention.
 
 | ID | Task |
 |---|---|

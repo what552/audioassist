@@ -28,6 +28,8 @@
 const App = (() => {
   // ── Session store ──────────────────────────────────────────────────────────
   const _sessions = new Map();  // insertion-order preserved
+  const _resumingIds = new Set();
+  const _renameStates = new Map();
   let _selectedId        = null;
   let _activeRealtimeId  = null;
   let dom = {};
@@ -95,6 +97,11 @@ const App = (() => {
     if (!s) return;
     Object.assign(s, patch);
     _render();
+  }
+
+  function _selectSession(id) {
+    if (_selectedId !== id) Player.stop();
+    _selectedId = id;
   }
 
   function _sortedSessions() {
@@ -182,7 +189,7 @@ const App = (() => {
 
   function _showFileDone(session) {
     const data = session._data;
-    dom.playerFilename.textContent = data.audio || data.filename || session.filename;
+    dom.playerFilename.textContent = session.filename || data.filename || data.audio;
     dom.transcriptMeta.textContent =
       `${(data.segments || []).length} segments · ${data.language || ''}`;
     Player.load(session.audioPath || '');
@@ -261,7 +268,7 @@ const App = (() => {
         filename: 'Recording ' + sessionId.slice(0, 8), created_at: _now(),
         audioPath: wavPath || null,
       });
-      _selectedId = sessionId;
+      _selectSession(sessionId);
       _startTimer();
       _render();
     } else if (state === 'paused') {
@@ -277,7 +284,7 @@ const App = (() => {
       const discard   = rtSession?.discarding;
       const rtId      = _activeRealtimeId;
       _sessions.delete(_activeRealtimeId);
-      if (_selectedId === _activeRealtimeId) _selectedId = null;
+      if (_selectedId === _activeRealtimeId) _selectSession(null);
       _activeRealtimeId = null;
       _resetTimer();
       if (discard) {
@@ -289,7 +296,7 @@ const App = (() => {
         _render();
       }
     } else if (state === 'error') {
-      if (_selectedId === _activeRealtimeId) _selectedId = null;
+      if (_selectedId === _activeRealtimeId) _selectSession(null);
       _sessions.delete(_activeRealtimeId);
       _activeRealtimeId = null;
       _resetTimer();
@@ -300,16 +307,48 @@ const App = (() => {
   // ── History ────────────────────────────────────────────────────────────────
 
   function _onHistorySelect(id) {
-    Player.stop();
-    _selectedId = id;
+    _selectSession(id);
     _render();
   }
 
   function _onHistoryRename(id, newName) {
-    if (!newName || !newName.trim()) return;
-    window.pywebview.api.rename_session(id, newName.trim())
-      .then(() => _updateSession(id, { filename: newName.trim() }))
-      .catch(e => console.error('[App] rename_session error:', e));
+    const renamed = (newName || '').trim();
+    const session = _sessions.get(id);
+    if (!renamed || !session) return;
+    let state = _renameStates.get(id);
+    if (!state) {
+      state = { confirmed: session.filename, pending: [], running: false };
+      _renameStates.set(id, state);
+    }
+    state.pending.push(renamed);
+
+    // Persisting a rename can wait behind an active transcription's session
+    // lock. Keep the in-memory state authoritative meanwhile so any status
+    // rerender does not visually revert the accepted title. Serialize calls
+    // per session because PyWebView otherwise handles them on independent
+    // Python threads whose lock acquisition order is not deterministic.
+    _updateSession(id, { filename: renamed });
+    if (!state.running) void _drainSessionRenames(id, state);
+  }
+
+  async function _drainSessionRenames(id, state) {
+    state.running = true;
+    while (state.pending.length > 0) {
+      const renamed = state.pending.shift();
+      try {
+        if (await window.pywebview.api.rename_session(id, renamed)) {
+          state.confirmed = renamed;
+        }
+      } catch (e) {
+        console.error('[App] rename_session error:', e);
+      }
+    }
+    state.running = false;
+    _renameStates.delete(id);
+    const current = _sessions.get(id);
+    if (current && current.filename !== state.confirmed) {
+      _updateSession(id, { filename: state.confirmed });
+    }
   }
 
   function _onHistoryDelete(id) {
@@ -317,7 +356,7 @@ const App = (() => {
     window.pywebview.api.delete_session(id)
       .then(ok => {
         if (!ok) return;
-        if (_selectedId === id) _selectedId = null;
+        if (_selectedId === id) _selectSession(null);
         _sessions.delete(id);
         _render();
       })
@@ -398,7 +437,7 @@ const App = (() => {
         filename, created_at: _now(), audioPath: filePath,
         refineAvailable: opts.refineAvailable || false,
       });
-      _selectedId = job_id;
+      _selectSession(job_id);
       _setProgress(0, 'Starting…');
       _render();
     } catch (err) {
@@ -414,16 +453,29 @@ const App = (() => {
 
     if (s.status === 'interrupted') {
       // F2: Resume from checkpoint — reuse same job_id, skip done chunks
+      _resumingIds.add(id);
       _updateSession(id, { status: 'transcribing', errorMsg: null });
-      _selectedId = id;
+      _selectSession(id);
       _setProgress(0, 'Resuming…');
       _render();
       try {
-        await window.pywebview.api.resume_transcription(id);
+        const result = await window.pywebview.api.resume_transcription(id);
+        if (result && result.error) {
+          _resumingIds.delete(id);
+          _updateSession(id, {
+            status: 'interrupted',
+            errorMsg: `Resume failed: ${result.error}`,
+          });
+          _processQueue();
+        }
       } catch (err) {
         console.error('[App] resume_transcription error:', err);
-        _updateSession(id, { status: 'error', errorMsg: String(err) });
-        _render();
+        _resumingIds.delete(id);
+        _updateSession(id, {
+          status: 'interrupted',
+          errorMsg: `Resume failed: ${String(err)}`,
+        });
+        _processQueue();
       }
       return;
     }
@@ -433,7 +485,7 @@ const App = (() => {
     const filePath    = s.audioPath;
     const displayName = s.filename;
     _sessions.delete(id);
-    if (_selectedId === id) _selectedId = null;
+    if (_selectedId === id) _selectSession(null);
     _enqueueFiles([filePath], [displayName]);
   }
 
@@ -472,6 +524,7 @@ const App = (() => {
   }
 
   function onTranscribeComplete(jobId, _jsonPath, hasRefine) {
+    _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
     _updateSession(jobId, { status: hasRefine ? 'refining' : 'done' });
     _processQueue();
@@ -485,20 +538,32 @@ const App = (() => {
   }
 
   function onTranscribeError(jobId, message) {
+    const wasResuming = _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
+    if (wasResuming) {
+      _updateSession(jobId, { status: 'interrupted', errorMsg: message });
+      _processQueue();
+      return;
+    }
     _updateSession(jobId, { status: 'error', errorMsg: message });
     _processQueue();
   }
 
   function onTranscribeCancel(jobId) {
+    const wasResuming = _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
     const s = _sessions.get(jobId);
+    if (wasResuming) {
+      _updateSession(jobId, { status: 'interrupted' });
+      _processQueue();
+      return;
+    }
     if (s && s.status === 'interrupted') {
       // Keep session visible as interrupted
       _render();
       return;
     }
-    if (_selectedId === jobId) _selectedId = null;
+    if (_selectedId === jobId) _selectSession(null);
     _sessions.delete(jobId);
     _render();
   }
@@ -637,7 +702,7 @@ const App = (() => {
       const filePath    = s.audioPath;
       const displayName = s.filename;
       _sessions.delete(_selectedId);
-      _selectedId = null;
+      _selectSession(null);
       _startTranscription(filePath, displayName);
     });
 

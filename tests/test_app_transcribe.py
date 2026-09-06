@@ -218,6 +218,47 @@ class TestCopyResilience:
 
 
 class TestConcurrentRerun:
+    def test_rename_during_new_transcription_is_applied_after_commit(self, env, tmp_path):
+        api, out_dir = env
+        job_id = "rename-new-job"
+        src = tmp_path / "source.wav"
+        src.write_bytes(b"RIFF")
+        session_dir = out_dir / "meetings" / job_id
+        transcript_path = session_dir / "transcript.json"
+        pipeline_started = threading.Event()
+        release_pipeline = threading.Event()
+        completed = threading.Event()
+        rename_finished = threading.Event()
+
+        def _pipeline(audio_path, output_dir, **kwargs):
+            pipeline_started.set()
+            assert release_pipeline.wait(2)
+            return _fake_pipeline(audio_path, output_dir, **kwargs)
+
+        def _push(call):
+            if "onTranscribeComplete" in call:
+                completed.set()
+
+        def _rename():
+            assert api.rename_session(job_id, "After") is True
+            rename_finished.set()
+
+        with patch("src.pipeline.run", side_effect=_pipeline), \
+             patch.object(app_module, "_push", side_effect=_push), \
+             patch.object(api, "_obsidian_rename"):
+            api.transcribe(str(src), {}, job_id=job_id)
+            assert pipeline_started.wait(2)
+            rename_thread = threading.Thread(target=_rename)
+            rename_thread.start()
+            assert not rename_finished.wait(0.05)
+            release_pipeline.set()
+            assert completed.wait(2)
+            assert rename_finished.wait(2)
+            rename_thread.join(timeout=2)
+
+        data = json.loads(transcript_path.read_text(encoding="utf-8"))
+        assert data["filename"] == "After"
+
     def test_rename_requested_during_rerun_is_applied_after_commit(self, env, tmp_path):
         api, out_dir = env
         job_id = "rename-rerun-job"

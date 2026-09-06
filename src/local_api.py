@@ -152,6 +152,34 @@ def _remove_owned_discovery(path: str, instance_id: str) -> None:
         return
 
 
+def _remove_stale_discovery(
+    app_data_dir: str | None, expected_instance_id: str
+) -> bool:
+    """Remove one unreachable instance's discovery record without racing startup.
+
+    A process lock is released by the OS after a crash. Acquiring it proves no
+    well-behaved server can currently replace the discovery record between the
+    ownership check and unlink. If a new instance already owns the lock or has
+    replaced the record, leave everything untouched.
+    """
+    lock_path, discovery_path = local_api_paths(app_data_dir)
+    cleanup_lock = SingleInstanceLock(lock_path)
+    try:
+        cleanup_lock.acquire()
+    except LocalAPIError:
+        return False
+    try:
+        _remove_owned_discovery(discovery_path, expected_instance_id)
+        try:
+            with open(discovery_path, encoding="utf-8") as file:
+                current = json.load(file)
+        except (OSError, ValueError, TypeError):
+            return True
+        return current.get("instance_id") != expected_instance_id
+    finally:
+        cleanup_lock.release()
+
+
 class SingleInstanceLock:
     """Cross-process advisory lock held for the local server lifetime."""
 
@@ -626,7 +654,10 @@ def request_desktop(
 ) -> Any:
     """Call a discovered authenticated desktop server or raise app_unavailable."""
     record = read_discovery(app_data_dir)
-    if record.mode != "desktop" or not _pid_is_alive(record.pid):
+    process_alive = _pid_is_alive(record.pid)
+    if record.mode != "desktop" or not process_alive:
+        if record.mode == "desktop" and not process_alive:
+            _remove_stale_discovery(app_data_dir, record.instance_id)
         raise LocalAPIError("app_unavailable", "Visible AudioAssist app is required", 503)
     def request_once(request_method: str, request_path: str, request_payload: dict[str, Any] | None) -> Any:
         body = None if request_payload is None else json.dumps(request_payload, separators=(",", ":")).encode("utf-8")
@@ -639,6 +670,7 @@ def request_desktop(
             response = connection.getresponse()
             parsed = json.loads(response.read().decode("utf-8"))
         except (OSError, http.client.HTTPException, ValueError, json.JSONDecodeError) as error:
+            _remove_stale_discovery(app_data_dir, record.instance_id)
             raise LocalAPIError("app_unavailable", "AudioAssist desktop API is unavailable", 503) from error
         finally:
             connection.close()
@@ -653,6 +685,7 @@ def request_desktop(
 
     health = request_once("GET", "/v1/health", None)
     if not isinstance(health, dict) or health.get("instance_id") != record.instance_id:
+        _remove_stale_discovery(app_data_dir, record.instance_id)
         raise LocalAPIError("app_unavailable", "AudioAssist desktop API identity changed", 503)
     if method == "GET" and path == "/v1/health":
         return health

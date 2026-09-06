@@ -129,6 +129,316 @@ def test_switch_stops_audio(page: Page, ui_base_url: str) -> None:
     )
 
 
+def test_player_load_preserves_same_session_and_resets_on_source_change(
+    page: Page, ui_base_url: str
+) -> None:
+    """A rerender must not restart one session; a new source must stop the old one."""
+    _inject_and_navigate(page, ui_base_url)
+    result = page.evaluate(
+        """
+        () => {
+          const audio = document.getElementById('audio-el');
+          let pauses = 0;
+          let loads = 0;
+          audio.pause = () => { pauses += 1; };
+          audio.load = () => { loads += 1; };
+
+          Player.load('/audio/session-a.wav');
+          audio.currentTime = 17;
+          Player.load('/audio/session-a.wav');
+          const afterSame = {
+            pauses,
+            loads,
+            currentTime: audio.currentTime,
+            path: Player.loadedPath,
+          };
+
+          Player.load('/audio/session-b.wav');
+          return {
+            afterSame,
+            afterSwitch: {
+              pauses,
+              loads,
+              currentTime: audio.currentTime,
+              path: Player.loadedPath,
+              display: document.getElementById('player-time').textContent,
+            },
+          };
+        }
+        """
+    )
+
+    assert result["afterSame"] == {
+        "pauses": 1,
+        "loads": 1,
+        "currentTime": 17,
+        "path": "/audio/session-a.wav",
+    }
+    assert result["afterSwitch"]["pauses"] == 2
+    assert result["afterSwitch"]["loads"] == 2
+    assert result["afterSwitch"]["currentTime"] == 0
+    assert result["afterSwitch"]["path"] == "/audio/session-b.wav"
+    assert result["afterSwitch"]["display"].startswith("00:00 / ")
+
+
+def test_pending_rename_survives_status_rerender(page: Page, ui_base_url: str) -> None:
+    """A rename queued behind transcription locking stays visible immediately."""
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-work",
+            "filename": "Before",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "transcribing",
+            "audio_path": "/audio/work.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.pywebview.api.rename_session = async () => {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          return true;
+        };
+        """
+    )
+    item = page.locator(".history-item", has_text="Before")
+    item.locator(".history-item-body").click()
+    item = page.locator(".history-item", has_text="Before")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("During transcription")
+    page.keyboard.press("Enter")
+    page.evaluate("onTranscribeComplete('job-work', '', false)")
+
+    assert page.locator(".history-item", has_text="During transcription").count() == 1
+    assert page.locator("#player-filename").inner_text() == "During transcription"
+    page.wait_for_timeout(300)
+
+
+def test_failed_rename_rolls_back_optimistic_title(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-rename",
+            "filename": "Before",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "done",
+            "audio_path": "/audio/work.wav",
+        }],
+    })
+    page.evaluate(
+        "window.pywebview.api.rename_session = async () => false;"
+    )
+
+    item = page.locator(".history-item", has_text="Before")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("Rejected")
+    page.keyboard.press("Enter")
+
+    page.wait_for_function(
+        "document.querySelector('.history-item-name').textContent === 'Before'"
+    )
+    assert page.locator(".history-item", has_text="Rejected").count() == 0
+
+
+def test_rapid_renames_are_serialized_last_write_wins(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-rename",
+            "filename": "Before",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "done",
+            "audio_path": "/audio/work.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.renameCalls = [];
+        window.pywebview.api.rename_session = async function (_id, name) {
+          window.renameCalls.push(Array.from(arguments));
+          if (name === 'A') {
+            return await new Promise(resolve => {
+              window.releaseFirstRename = () => resolve(true);
+            });
+          }
+          return true;
+        };
+        void 0;
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Before")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("A")
+    page.keyboard.press("Enter")
+    assert page.evaluate("window.renameCalls") == [["job-rename", "A"]]
+
+    item = page.locator(".history-item", has_text="A")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("B")
+    page.keyboard.press("Enter")
+
+    assert page.evaluate("window.renameCalls") == [["job-rename", "A"]]
+    page.evaluate("window.releaseFirstRename()")
+    page.wait_for_function("window.renameCalls.length === 2")
+    assert page.evaluate("window.renameCalls") == [
+        ["job-rename", "A"], ["job-rename", "B"]
+    ]
+    assert page.locator(".history-item", has_text="B").count() == 1
+
+
+def test_two_failed_renames_restore_last_confirmed_title(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-rename",
+            "filename": "Before",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "done",
+            "audio_path": "/audio/work.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.renameCalls = [];
+        window.pywebview.api.rename_session = async function (_id, name) {
+          window.renameCalls.push(Array.from(arguments));
+          if (name === 'A') {
+            return await new Promise(resolve => {
+              window.releaseFirstRename = () => resolve(false);
+            });
+          }
+          return false;
+        };
+        void 0;
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Before")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("A")
+    page.keyboard.press("Enter")
+    item = page.locator(".history-item", has_text="A")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("B")
+    page.keyboard.press("Enter")
+
+    page.evaluate("window.releaseFirstRename()")
+    page.wait_for_function(
+        "window.renameCalls.length === 2 && "
+        "document.querySelector('.history-item-name').textContent === 'Before'"
+    )
+    assert page.evaluate("window.renameCalls") == [
+        ["job-rename", "A"], ["job-rename", "B"]
+    ]
+
+
+def test_failed_resume_remains_visible_and_retryable(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-interrupted",
+            "filename": "Keep me",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "interrupted",
+            "audio_path": "/audio/keep.wav",
+        }],
+    })
+    page.evaluate(
+        "window.pywebview.api.resume_transcription = async () => "
+        "({error: 'no_checkpoint'});"
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    item.hover()
+    item.locator('button[title="Resume"]').click()
+    page.wait_for_function(
+        "document.querySelector('#error-msg').textContent.includes('no_checkpoint')"
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    assert item.count() == 1
+    assert "history-item-interrupted" in (item.get_attribute("class") or "")
+    assert item.locator('button[title="Resume"]').count() == 1
+
+
+def test_async_failed_resume_remains_visible_and_retryable(page: Page, ui_base_url: str) -> None:
+    """A worker error after resume starts must retain the checkpoint UI."""
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-interrupted",
+            "filename": "Keep me",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "interrupted",
+            "audio_path": "/audio/keep.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.pywebview.api.resume_transcription = async jobId => {
+          queueMicrotask(() => onTranscribeError(jobId, 'worker failed'));
+          return {job_id: jobId};
+        };
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    item.hover()
+    item.locator('button[title="Resume"]').click()
+    page.wait_for_function(
+        "document.querySelector('#error-msg').textContent.includes('worker failed')"
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    assert "history-item-interrupted" in (item.get_attribute("class") or "")
+    assert item.locator('button[title="Resume"]').count() == 1
+
+
+def test_cancelled_resume_remains_visible_and_retryable(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-interrupted",
+            "filename": "Keep me",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "interrupted",
+            "audio_path": "/audio/keep.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.pywebview.api.resume_transcription = async jobId => {
+          queueMicrotask(() => onTranscribeCancel(jobId));
+          return {job_id: jobId};
+        };
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    item.hover()
+    item.locator('button[title="Resume"]').click()
+    page.wait_for_function(
+        "document.querySelector('.history-item')?.classList.contains('history-item-interrupted')"
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    assert item.locator('button[title="Resume"]').count() == 1
+
+
 def test_pywebviewready_timing(page: Page, ui_base_url: str) -> None:
     """
     Scenario 3 — App.init() is NOT triggered before pywebviewready.

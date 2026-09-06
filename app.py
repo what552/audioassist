@@ -1363,9 +1363,26 @@ class API:
           or sidecar {job_id}_meta.json (legacy).
         """
         json_path = _transcript_path(job_id)
-        if json_path and os.path.exists(json_path):
+        s_dir = _session_dir(job_id)
+        if (json_path and os.path.exists(json_path)) or os.path.isdir(s_dir):
+            # A new transcription creates its session directory before the
+            # transcript exists. Use the same per-session lock as the worker,
+            # then re-check the transcript path after acquiring it. Otherwise
+            # a rename made during the pipeline can be written only to
+            # meta.json and then hidden by the completed transcript.
             lock = _get_transcript_lock(job_id)
             with lock:
+                json_path = _transcript_path(job_id)
+                if not json_path or not os.path.exists(json_path):
+                    if not os.path.isdir(s_dir):
+                        return False
+                    meta_path = os.path.join(s_dir, "meta.json")
+                    meta = _read_json_file(meta_path, {})
+                    if not isinstance(meta, dict):
+                        meta = {}
+                    meta["filename"] = name
+                    _write_json_atomic(meta_path, meta)
+                    return True
                 data = _read_json_file(json_path, {})
                 # Capture old display name and date for Obsidian rename BEFORE write
                 old_display = data.get("filename") or os.path.basename(data.get("audio", "")) or job_id
@@ -1377,16 +1394,7 @@ class API:
                 daemon=True,
             ).start()
             return True
-        # WAV-only: new layout session dir or legacy flat WAV
-        s_dir = _session_dir(job_id)
-        if os.path.isdir(s_dir):
-            meta_path = os.path.join(s_dir, "meta.json")
-            meta = _read_json_file(meta_path, {})
-            if not isinstance(meta, dict):
-                meta = {}
-            meta["filename"] = name
-            _write_json_atomic(meta_path, meta)
-            return True
+        # WAV-only legacy flat layout.
         wav_path = os.path.join(OUTPUT_DIR, f"{job_id}.wav")
         if os.path.exists(wav_path):
             meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
