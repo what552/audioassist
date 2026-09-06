@@ -50,3 +50,37 @@ why a previously authorized build could record normally.
 - Treat stable Developer ID signing/notarization as the mechanism that preserves the
   designated requirement across production upgrades. Ad-hoc QA builds must be
   re-authorized whenever their executable CDHash changes.
+
+## Follow-up: no first-use microphone prompt after TCC reset
+
+At 23:01 the user could record System audio after re-authorization, but Mic still
+showed permission guidance, never opened a native prompt, and never appeared in
+the Microphone Settings list. This was a second, independent defect introduced
+by the explicit AVFoundation preflight path; resetting TCC cannot repair it.
+
+A fresh process with the project's actual PyObjC runtime reproduced this call:
+
+```python
+objc.loadBundle("AVFoundation", globals(),
+                bundle_path="/System/Library/Frameworks/AVFoundation.framework")
+objc.lookUpClass("AVCaptureDevice").requestAccessForMediaType_completionHandler_(
+    "soun", callback)
+```
+
+It raised `TypeError: Argument 3 is a block, but no signature available` before
+reaching TCC. Loading the framework dynamically provides the selector's `@?`
+encoding, but not the completion block's `void (^)(BOOL)` ABI. Our mock-only
+authorization tests bypassed this bridge and therefore did not catch the bug.
+The exception also lacked the marker required by the persistent diagnostic log.
+
+Commit `a373c82` registers the missing selector metadata, persists bridge failures,
+and distinguishes an unrequested grant from a denied grant in the UI. A fresh
+macOS subprocess regression checks the real bridge metadata without prompting
+or changing privacy settings. A separate native smoke call accepted the callback
+and delivered `False`; that validates the ABI, not the installed app's permission.
+
+Verification: `.venv/bin/python -m pytest -q` passed 913 tests (894 warnings);
+`.venv/bin/python -m pytest tests/frontend -q` passed 21 tests. Independent review
+of exact commit `a373c82d256fa437008be038dbb444e36674e177` passed; the reviewer
+also independently ran all 10 microphone-permission request tests. The 2.0.1
+packaged native prompt and non-empty audio checks remain separate release gates.

@@ -2,6 +2,24 @@
 
 Updated: 2026-09-06
 
+## 2.0.1 microphone authorization fix candidate
+
+- Source fix: `a373c82d256fa437008be038dbb444e36674e177`, independently reviewed PASS.
+- Full suite: 913 passed, 894 warnings; separate frontend suite: 21 passed.
+- Build: `bash scripts/build_dmg.sh --skip-swift` completed successfully.
+- Version: `2.0.1`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- DMG: `dist/AudioAssist-2.0.1.dmg`; SHA-256:
+  `01f41dd0aea35e8b23a15b2e5beb6ed2f15e4d8e06ff916a7bbbc0dbb3f880a2`.
+- App CDHash: `cb50f7d82ca9a3ad42c852cdef2246ff734826e3`.
+- `dist/release-verification-2.0.1.json`: PASS, including 491 Mach-O files,
+  582 symlinks, strict signatures, required assets, and matching mounted DMG payload.
+- Native authorization/recording gate: pending interactive installed-app testing;
+  the desktop was locked when computer-use validation was attempted.
+- Installed at `/Applications/AudioAssist.app` after checking the old app was idle;
+  installed version and strict signature verified. Previous app retained at
+  `/private/tmp/AudioAssist-2.0.0-before-2.0.1.app`; session/model data untouched.
+- This is a local test candidate, not a distributable or upgrade-continuity-verified release.
+
 ## Outcome
 
 The reproducible release implementation is complete and a local ad-hoc
