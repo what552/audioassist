@@ -23,14 +23,28 @@ Priority meanings:
 | 4 | QWEN-02 | P1 | Complete | Implement and package the full-precision MLX Qwen adapter |
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
-| 7 | QWEN-04 | P2 | Deferred evidence | Complete the promotion-level human, long-audio, and signed-app MLX matrix |
-| 8 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
-| 9 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
+| 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
+| 8 | QWEN-04A | P1 | Next | Run human-reference CPU/MPS/MLX comparisons on short and 5/10-minute fixtures |
+| 9 | QWEN-04B | P1 | Conditional | Promote a Mac backend only if QWEN-04A and release gates pass |
+| 10 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
+| 11 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent
 access, while Qwen CPU latency is the more immediate product constraint on
 Apple Silicon.
+
+### ASR-LANG-01 — Canonical transcript language metadata
+
+- Normalize backend language names and common ISO variants to stable short codes.
+- Correct a reported language only when transcript script evidence is strong; do not
+  treat isolated English names in Chinese text as code-switching.
+- Report substantial Chinese/English code-switching as `mixed` and preserve both
+  languages in summary instructions.
+- Apply the same logic to file, realtime, history, detail, and CLI paths. Legacy files
+  are normalized when read without an automatic on-disk migration.
+- Real regression fixtures: the 12-second Chinese, 8-second English, and 104-second
+  bilingual clips recorded in the AudioAssist CLI 2.0.0 smoke run.
 
 ## Immediate task details
 
@@ -152,10 +166,11 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 
 | ID | Task | Acceptance direction |
 |---|---|---|
-| QWEN-04 | MLX promotion evidence expansion | Human Mandarin/Cantonese/English/code-switch references, clean/noisy and 30/60/120-minute fixtures, listening review, and signed-app results must satisfy every documented threshold before changing `auto` |
+| QWEN-04A | Accelerated-backend evidence | Human Mandarin/Cantonese/English/code-switch references plus short and 5/10-minute fixtures compare CPU, MPS, and MLX before longer promotion runs |
+| QWEN-04B | Conditional Mac default promotion | The selected backend must pass lifecycle, offline, checkpoint, packaged-app, and approved long-audio gates before changing `auto` |
 | R03-B1 | HTTP service lifecycle/security design | Explicit ownership, localhost boundary, port collision, lock, recovery, cancellation, shutdown, and versioned schema before implementation |
 | R03-B2 | HTTP recording control plus MCP adapter | Reuse `src/service.py`; data reads work with the app closed; recording mutations require the visible app and return stable errors |
-| AGENT-01 | Summary Agent reliability | Request/tool timeouts, transcript paging instead of a fixed 6000-character truncation, and summary writes through the shared service |
+| AGENT-01 | Summary Agent reliability (paused by owner) | Request/tool timeouts, transcript paging instead of a fixed 6000-character truncation, and summary writes through the shared service |
 | TEST-UI-01 | Close frontend coverage gaps | Setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
 | TRANS-01 | Cancellation and concurrency hardening | Cancellation during long inference/refine; tests for mixed-language chunk boundaries and rename/refine/rerun races |
 | ASR-QUALITY-01 | Speaker/timestamp quality | Evaluate UNKNOWN-speaker reassignment and realtime diarization alignment without hiding uncertainty |

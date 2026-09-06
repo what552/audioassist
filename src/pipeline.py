@@ -16,6 +16,7 @@ from .merge import SpeakerBlock, merge, to_json, to_markdown
 from .audio_utils import to_wav, split_to_chunks
 from .model_errors import ModelNotReadyError
 from .model_manager import ModelManager
+from .language import canonical_transcript_language, resolve_transcript_language
 from . import checkpoint
 
 logger = logging.getLogger(__name__)
@@ -165,7 +166,7 @@ def run(
 
             all_words: list[WordSegment] = []
             all_text: list[str] = []
-            language = ""
+            chunk_languages: list[str] = []
 
             # Build initial chunk list from checkpoint if available
             if ckpt_data and session_dir:
@@ -201,7 +202,8 @@ def run(
                 if ckpt_chunks.get(i, {}).get("status") == "done":
                     done_chunk = ckpt_chunks[i]
                     all_text.append(done_chunk.get("text", ""))
-                    language = done_chunk.get("language", "") or language
+                    if done_chunk.get("language"):
+                        chunk_languages.append(done_chunk["language"])
                     for w in done_chunk.get("words", []):
                         all_words.append(WordSegment(
                             word=w["word"],
@@ -214,7 +216,8 @@ def run(
                 _progress(chunk_pct, f"Transcribing chunk {i + 1}/{len(chunks)}...")
                 result = asr.transcribe(chunk_path)
                 all_text.append(result.text)
-                language = result.language or language
+                if result.language:
+                    chunk_languages.append(result.language)
                 chunk_words = []
                 for w in result.words:
                     all_words.append(WordSegment(
@@ -246,6 +249,10 @@ def run(
             _close_asr_engine(asr)
             raise
 
+        detection_text = " ".join(
+            chunk.strip() for chunk in all_text if chunk and chunk.strip()
+        )
+        language = resolve_transcript_language(chunk_languages, detection_text)
         merged_asr = TranscriptResult(
             text=_merge_chunk_texts(all_text, language),
             language=language,
@@ -379,8 +386,12 @@ def run_realtime_segments(
 
     # 3. Output
     _progress(0.9, "Writing output…")
-    to_json(blocks, wav_path, "", json_path)
-    to_markdown(blocks, wav_path, "", md_path)
+    transcript_text = " ".join(
+        str(segment.get("text", "")) for segment in segments
+    )
+    language = canonical_transcript_language("", transcript_text)
+    to_json(blocks, wav_path, language, json_path)
+    to_markdown(blocks, wav_path, language, md_path)
 
     _progress(1.0, "Done.")
     logger.info(f"JSON → {json_path}")

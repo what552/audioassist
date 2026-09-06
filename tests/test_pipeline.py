@@ -153,6 +153,38 @@ class TestMergeChunkTexts:
         assert text == "你好世界"
 
 
+class TestCanonicalLanguage:
+    def test_pipeline_corrects_qwen_language_before_persistence(
+        self, tmp_path, mock_pipeline_deps
+    ):
+        from src.pipeline import run
+
+        mock_pipeline_deps["asr_instance"].transcribe.return_value = TranscriptResult(
+            text="这是一段中文转写内容",
+            language="English",
+            words=[WordSegment("这是一段中文转写内容", 0.1, 1.0)],
+        )
+
+        with patch(f"{PIPELINE}.to_json") as to_json_mock:
+            run("/audio/test.mp3", str(tmp_path))
+
+        assert to_json_mock.call_args.args[2] == "zh"
+
+    def test_realtime_pipeline_infers_language_from_accumulated_text(
+        self, tmp_path, mock_pipeline_deps
+    ):
+        from src.pipeline import run_realtime_segments
+
+        with patch(f"{PIPELINE}.to_json") as to_json_mock:
+            run_realtime_segments(
+                [{"text": "这是实时中文转写", "start": 0.0, "end": 1.0}],
+                mock_pipeline_deps["wav"],
+                str(tmp_path),
+            )
+
+        assert to_json_mock.call_args.args[2] == "zh"
+
+
 # ── diarizer model selection ──────────────────────────────────────────────────
 
 class TestDiarizerModelSelection:

@@ -333,6 +333,31 @@ def test_language_instruction(language, text, expected):
     assert expected in instruction
 
 
+def test_language_instruction_accepts_full_backend_language_name():
+    assert "English" in language_instruction("English", "plain English text")
+
+
+def test_language_instruction_for_mixed_text_preserves_both_languages():
+    instruction = language_instruction(
+        "mixed", "今天介绍 CoWoS. This section explains advanced packaging."
+    )
+    assert "主要语言" in instruction
+
+
+def test_history_normalizes_legacy_language_without_rewriting_file(tmp_path):
+    _write_transcript(tmp_path, "legacy-language")
+    path = tmp_path / "meetings" / "legacy-language" / "transcript.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["language"] = "English"
+    data["segments"][0]["text"] = "这是一段中文历史转写"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    sessions = AudioAssistService(str(tmp_path)).list_sessions()
+
+    assert sessions[0]["language"] == "zh"
+    assert json.loads(path.read_text(encoding="utf-8"))["language"] == "English"
+
+
 def test_transcribe_rejects_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
         AudioAssistService(str(tmp_path)).transcribe(str(tmp_path / "missing.wav"))
