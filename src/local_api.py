@@ -244,21 +244,17 @@ class DesktopRecordingController:
             if action == "start":
                 capture_mode = payload["capture_mode"]
                 preflight = self.backend.preflight_capture(capture_mode)
-                microphone_status = preflight.get("microphone_permission")
-                microphone_blocked = (
-                    capture_mode == "mic"
-                    and microphone_status not in {"authorized", "not_applicable"}
-                )
-                if not preflight.get("supported") or microphone_blocked:
-                    message = (
-                        preflight.get("message")
-                        or preflight.get("reason")
-                        or (
-                            f"microphone_permission_{microphone_status}"
-                            if microphone_blocked
-                            else "Capture unavailable"
-                        )
-                    )
+                missing_permissions = preflight.get("missing_permissions", [])
+                if not preflight.get("supported") or missing_permissions:
+                    message = preflight.get("message") or preflight.get("reason")
+                    if not message and missing_permissions:
+                        permission_reasons = []
+                        for permission in missing_permissions:
+                            status_key = f"{permission}_permission"
+                            status = preflight.get(status_key, "required")
+                            permission_reasons.append(f"{status_key}_{status}")
+                        message = ",".join(permission_reasons)
+                    message = message or "Capture unavailable"
                     raise LocalAPIError("capture_unavailable", str(message), 503)
                 result = self.backend.start_realtime({
                     "capture_mode": capture_mode,
@@ -268,9 +264,9 @@ class DesktopRecordingController:
                 result = getattr(self.backend, f"{action}_realtime")()
 
             if result.get("status") == "permission_required":
-                status = result.get("microphone_permission", "unknown")
+                missing = result.get("missing_permissions", ["unknown"])
                 raise LocalAPIError(
-                    "capture_unavailable", f"microphone_permission_{status}", 503
+                    "capture_unavailable", f"permissions_required:{','.join(missing)}", 503
                 )
             if result.get("status") in {"already_running", "not_running"}:
                 raise LocalAPIError(

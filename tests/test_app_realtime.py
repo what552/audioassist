@@ -17,6 +17,8 @@ def _output_dir(tmp_path):
     with patch.object(app_module, "OUTPUT_DIR", str(tmp_path)), \
          patch.object(
              app_module, "_macos_microphone_permission_status", return_value="authorized"
+         ), patch.object(
+             app_module, "_macos_screen_recording_permission_status", return_value="authorized"
          ):
         yield
 
@@ -52,11 +54,38 @@ class TestReturnValues:
 
         assert result == {
             "status": "permission_required",
+            "missing_permissions": ["microphone"],
             "microphone_permission": status,
         }
         assert api._realtime is None
         assert api.get_recording_status()["state"] == "idle"
         realtime.assert_not_called()
+        makedirs.assert_not_called()
+        caffeinate.assert_not_called()
+
+    @pytest.mark.parametrize(("capture_mode", "mic_status", "screen_status", "missing"), [
+        ("system", "authorized", "required", ["screen_recording"]),
+        ("mix", "denied", "authorized", ["microphone"]),
+        ("mix", "authorized", "required", ["screen_recording"]),
+        ("mix", "denied", "required", ["microphone", "screen_recording"]),
+    ])
+    def test_system_and_mix_require_their_exact_permission_set(
+        self, capture_mode, mic_status, screen_status, missing
+    ):
+        api = API()
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value=mic_status
+        ), patch.object(
+            app_module, "_macos_screen_recording_permission_status", return_value=screen_status
+        ), patch("src.native_capture.NativeCaptureHelper") as native, \
+             patch.object(app_module.os, "makedirs") as makedirs, \
+             patch.object(api, "_caffeinate_start") as caffeinate:
+            result = api.start_realtime({"capture_mode": capture_mode})
+
+        assert result["status"] == "permission_required"
+        assert result["missing_permissions"] == missing
+        assert api._realtime is None
+        native.assert_not_called()
         makedirs.assert_not_called()
         caffeinate.assert_not_called()
 

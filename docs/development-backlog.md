@@ -37,6 +37,7 @@ Priority meanings:
 | 18 | PLAYER-02 | P2 | Ready | Prevent playback position and active playback from leaking across session switches |
 | 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
+| 21 | CAPTURE-PERM-01 | P1 | Implemented: packaged gate pending | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup |
 
 ### REALTIME-DIAG-01 — Intermittent packaged microphone startup
 
@@ -90,6 +91,19 @@ cause. See `docs/realtime-start-diagnosis.md`.
 Acceptance remaining: install the rebuilt candidate, confirm the system prompt
 appears before model/session creation, authorize it, and pass cold start, warm
 restart, stop, and non-empty WAV checks.
+
+### CAPTURE-PERM-01 — Mode-specific macOS permission UX
+
+- Mic requires only Microphone; System requires only Screen & System Audio Recording;
+  Mix requires both.
+- Preflight reports both statuses and an ordered `missing_permissions` list. The GUI
+  requests each missing permission separately and exposes separate settings actions.
+- HTTP/MCP never trigger privacy prompts and reject any missing permission before
+  model, Session/WAV, helper, or stream startup.
+- Package both `NSScreenCaptureUsageDescription` and the newer
+  `NSAudioCaptureUsageDescription`, in addition to the microphone description.
+- Preserve runtime Mix degradation for device/converter failure only after both
+  required permissions have passed preflight.
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent

@@ -71,9 +71,12 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
   and Session/WAV creation; cancel and timeout must restore idle controls without a
   header-only recording.
 - Verify microphone, system, and mix modes independently.
+- Verify the permission matrix explicitly: Mic requests only Microphone, System requests
+  only Screen & System Audio Recording, and Mix reports/requests both independently.
 - Verify pause, playback while paused, resume, finish, and short-recording discard.
 - Confirm Screen Recording permission guidance and missing-helper errors are actionable.
-- Confirm a denied/unavailable microphone degrades mix mode to system-only without ending the session.
+- Confirm a missing Microphone permission blocks Mix before startup, while a microphone
+  device/converter failure after both permissions pass degrades Mix to system-only.
 - Confirm the final WAV and diarized transcript stay aligned.
 
 ## Session outputs

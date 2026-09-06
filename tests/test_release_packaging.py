@@ -408,6 +408,9 @@ def test_build_contract_versions_signs_and_packages_in_order():
     assert 'shutil.which("ffmpeg")' in spec
     assert 'shutil.which("ffprobe")' in spec
     assert "/opt/homebrew" not in spec
+    assert '"NSMicrophoneUsageDescription"' in spec
+    assert '"NSScreenCaptureUsageDescription"' in spec
+    assert '"NSAudioCaptureUsageDescription"' in spec
 
 
 def test_release_entitlements_and_acceleration_claims_match_implementation():

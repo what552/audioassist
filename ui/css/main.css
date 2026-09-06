@@ -1325,4 +1325,5 @@ select { font-family: inherit; }
   color: var(--warn);
   line-height: 1.4;
 }
-#capture-perm-notice p { margin-bottom: 4px; }
+#capture-perm-notice p { margin-bottom: 4px; white-space: pre-line; }
+#capture-perm-actions { display: flex; flex-wrap: wrap; gap: 4px 8px; }

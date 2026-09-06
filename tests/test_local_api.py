@@ -188,6 +188,7 @@ def test_recording_start_validates_fields_and_preflight(application):
     backend.calls.clear()
     backend.preflight = {
         "supported": True,
+        "missing_permissions": ["microphone"],
         "microphone_permission": "not_determined",
     }
     status, payload = app.dispatch(
@@ -197,6 +198,20 @@ def test_recording_start_validates_fields_and_preflight(application):
     assert (status, payload["error"]["code"]) == (503, "capture_unavailable")
     assert "microphone_permission_not_determined" in payload["error"]["message"]
     assert backend.calls == [("preflight", "mic")]
+    assert backend.state == "idle"
+
+    backend.calls.clear()
+    backend.preflight = {
+        "supported": True,
+        "missing_permissions": ["screen_recording"],
+        "screen_recording_permission": "required",
+    }
+    status, payload = app.dispatch(
+        "POST", "/v1/recording/start", json_headers,
+        json.dumps({"capture_mode": "system", "model_id": None}).encode(), HOST,
+    )
+    assert (status, payload["error"]["code"]) == (503, "capture_unavailable")
+    assert backend.calls == [("preflight", "system")]
     assert backend.state == "idle"
 
     backend.state = "idle"

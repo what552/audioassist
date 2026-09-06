@@ -40,6 +40,7 @@
     preflight: { supported: true },
     microphonePermission: { status: 'authorized', authorized: true },
     microphonePermissionDelayMs: 0,
+    screenPermission: { status: 'authorized', authorized: true },
     realtimeStart: { status: 'started' },
   };
 
@@ -59,6 +60,9 @@
   );
   state.microphonePermissionDelayMs = (
     supplied.microphonePermissionDelayMs || defaults.microphonePermissionDelayMs
+  );
+  state.screenPermission = Object.assign(
+    {}, defaults.screenPermission, supplied.screenPermission || {}
   );
   state.realtimeStart = Object.assign({}, defaults.realtimeStart, supplied.realtimeStart || {});
   state.calls = [];
@@ -129,6 +133,10 @@
         await new Promise(resolve => setTimeout(resolve, state.microphonePermissionDelayMs));
       }
       return Object.assign({}, state.microphonePermission);
+    },
+    request_screen_recording_permission: async function () {
+      record('request_screen_recording_permission', arguments);
+      return Object.assign({}, state.screenPermission);
     },
     start_realtime: async function () { record('start_realtime', arguments); return Object.assign({}, state.realtimeStart); },
     stop_realtime: async function () { record('stop_realtime', arguments); return { status: 'stopped' }; },

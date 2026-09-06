@@ -95,6 +95,12 @@ packaged-app acceptance run is still required, and a stable Developer ID signatu
 still required to preserve permissions across real upgrades. PLAYER-02 and
 UI-SESSION-REFRESH-01 retain the other confirmed findings.
 
+CAPTURE-PERM-01 separates the previously ambiguous capture authorization UX. Mic no
+longer references screen access; System checks only Screen & System Audio Recording;
+Mix checks both and lists missing permissions independently. Both GUI and local API
+enforce this matrix before loading models or creating a realtime Session. A rebuilt
+packaged-app run remains the release gate.
+
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
 outer app, creates the DMG without Finder automation, and emits a JSON

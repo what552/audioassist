@@ -96,6 +96,76 @@ def _request_macos_microphone_permission(timeout_seconds: float = 60.0) -> str:
         return "unknown"
 
 
+def _load_core_graphics():
+    """Load the system CoreGraphics framework without a PyObjC package dependency."""
+    import ctypes
+    import ctypes.util
+
+    path = ctypes.util.find_library("CoreGraphics")
+    if not path:
+        raise RuntimeError("CoreGraphics framework not found")
+    return ctypes.CDLL(path)
+
+
+def _macos_screen_recording_permission_status() -> str:
+    """Return whether Screen & System Audio Recording access is available.
+
+    CoreGraphics exposes only a boolean preflight, so a false result cannot
+    distinguish first-use from a previous denial. ``required`` deliberately
+    means that the GUI should make one bounded request and then offer Settings.
+    """
+    if sys.platform != "darwin":
+        return "not_applicable"
+    try:
+        import ctypes
+
+        preflight = _load_core_graphics().CGPreflightScreenCaptureAccess
+        preflight.argtypes = []
+        preflight.restype = ctypes.c_bool
+        return "authorized" if preflight() else "required"
+    except Exception:
+        logger.warning("Unable to query macOS screen recording permission", exc_info=True)
+        return "unknown"
+
+
+def _request_macos_screen_recording_permission(timeout_seconds: float = 60.0) -> str:
+    """Request Screen & System Audio Recording access before model loading."""
+    status = _macos_screen_recording_permission_status()
+    if status in {"authorized", "not_applicable"}:
+        return status
+    try:
+        import ctypes
+
+        request = _load_core_graphics().CGRequestScreenCaptureAccess
+        request.argtypes = []
+        request.restype = ctypes.c_bool
+        completed = threading.Event()
+        result = {"status": "unknown"}
+
+        def _request() -> None:
+            try:
+                result["status"] = "authorized" if request() else "required"
+            except Exception:
+                logger.warning(
+                    "Unable to request macOS screen recording permission",
+                    exc_info=True,
+                )
+            finally:
+                completed.set()
+
+        threading.Thread(
+            target=_request,
+            daemon=True,
+            name="screen-recording-permission",
+        ).start()
+        if not completed.wait(timeout_seconds):
+            return "timeout"
+        return result["status"]
+    except Exception:
+        logger.warning("Unable to request macOS screen recording permission", exc_info=True)
+        return "unknown"
+
+
 def _resolve_output_dir() -> str:
     """Return OUTPUT_DIR: persisted path from config if valid, else default."""
     try:
@@ -657,9 +727,9 @@ class API:
             "reason": str | None,
           }
 
-        For "mic" mode on macOS this also checks the current TCC authorization
-        status without triggering a prompt. For "system" / "mix" modes it
-        checks macOS version and helper binary.
+        Permission requirements are mode-specific: Mic needs microphone only,
+        System needs Screen & System Audio Recording only, and Mix needs both.
+        This method never triggers a system prompt.
         """
         import platform
 
@@ -671,14 +741,14 @@ class API:
             "reason":              None,
         }
 
-        if mode == "mic":
+        if mode in ("mic", "mix"):
             permission_status = _macos_microphone_permission_status()
             result["microphone_permission"] = permission_status
-            if permission_status in {"denied", "restricted"}:
+            if permission_status not in {"authorized", "not_applicable"}:
+                result["missing_permissions"].append("microphone")
+            if mode == "mic" and permission_status in {"denied", "restricted", "unknown"}:
                 result["supported"] = False
-                result["missing_permissions"] = ["microphone"]
                 result["reason"] = f"microphone_permission_{permission_status}"
-            return result
 
         if mode in ("system", "mix"):
             # macOS version gate
@@ -700,11 +770,34 @@ class API:
                 result["helper_path"] = helper
                 return result
 
+            screen_status = _macos_screen_recording_permission_status()
+            result["screen_recording_permission"] = screen_status
+            if screen_status not in {"authorized", "not_applicable"}:
+                result["missing_permissions"].append("screen_recording")
+
+        if result["missing_permissions"] and result["reason"] is None:
+            if len(result["missing_permissions"]) > 1:
+                result["reason"] = "capture_permissions_required"
+            elif result["missing_permissions"][0] == "microphone":
+                result["reason"] = (
+                    f"microphone_permission_{result.get('microphone_permission', 'unknown')}"
+                )
+            else:
+                result["reason"] = (
+                    f"screen_recording_permission_"
+                    f"{result.get('screen_recording_permission', 'unknown')}"
+                )
+
         return result
 
     def request_microphone_permission(self) -> dict:
         """Prompt for microphone access with a bounded wait before model loading."""
         status = _request_macos_microphone_permission()
+        return {"status": status, "authorized": status == "authorized"}
+
+    def request_screen_recording_permission(self) -> dict:
+        """Prompt for Screen & System Audio Recording before model loading."""
+        status = _request_macos_screen_recording_permission()
         return {"status": status, "authorized": status == "authorized"}
 
     def open_privacy_settings(self, permission: str = "screen") -> dict:
@@ -762,13 +855,24 @@ class API:
         with self._recording_lock:
             if self._realtime is not None:
                 return {"status": "already_running"}
-            if capture_mode == "mic":
+            missing_permissions: list[str] = []
+            permission_result: dict = {}
+            if capture_mode in {"mic", "mix"}:
                 permission_status = _macos_microphone_permission_status()
+                permission_result["microphone_permission"] = permission_status
                 if permission_status not in {"authorized", "not_applicable"}:
-                    return {
-                        "status": "permission_required",
-                        "microphone_permission": permission_status,
-                    }
+                    missing_permissions.append("microphone")
+            if capture_mode in {"system", "mix"}:
+                screen_status = _macos_screen_recording_permission_status()
+                permission_result["screen_recording_permission"] = screen_status
+                if screen_status not in {"authorized", "not_applicable"}:
+                    missing_permissions.append("screen_recording")
+            if missing_permissions:
+                return {
+                    "status": "permission_required",
+                    "missing_permissions": missing_permissions,
+                    **permission_result,
+                }
             # Sentinel prevents a second call racing before _run() installs the backend.
             self._realtime = object()
             self._recording_generation += 1
