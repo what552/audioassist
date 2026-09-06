@@ -90,7 +90,9 @@ def merged_language(languages: list[str]) -> str:
     return Counter(known).most_common(1)[0][0] if known else ""
 
 
-def validate_words(words: list[WordSegment], duration: float) -> None:
+def validate_words(words: list[WordSegment], duration: float, *, required: bool = False) -> None:
+    if required and not words:
+        raise RuntimeError("Qwen returned text without requested word timestamps; transcription rejected")
     for word in words:
         if not (math.isfinite(word.start) and math.isfinite(word.end)
                 and 0 <= word.start <= word.end <= duration + 1e-6):
@@ -104,6 +106,6 @@ def chunk_diagnostic(offset: float, duration: float, words: list[WordSegment],
         "start": offset, "end": offset + duration, "word_count": len(words),
         "timestamp_tail_gap_seconds": tail if with_timestamps else None,
         "possible_truncation": bool(generation.get("truncated")) or (
-            with_timestamps and text_present and tail > max(5.0, duration * 0.2)),
+            with_timestamps and text_present and (not words or tail > max(5.0, duration * 0.2))),
         **generation,
     }

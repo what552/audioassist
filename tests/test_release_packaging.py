@@ -42,7 +42,29 @@ def _release_app(tmp_path: Path, version: str = "0.1.0") -> Path:
     metadata = resources / "mlx_qwen3_asr-0.3.5.dist-info/METADATA"
     metadata.parent.mkdir()
     metadata.write_text("Version: 0.3.5\n", encoding="utf-8")
+    qwen_metadata = resources / "qwen_asr-0.0.6.dist-info/METADATA"
+    qwen_metadata.parent.mkdir()
+    qwen_metadata.write_text("Name: qwen-asr\nVersion: 0.0.6\n", encoding="utf-8")
     return app
+
+
+@pytest.mark.parametrize("defect", ["missing", "duplicate", "wrong_version", "wrong_name"])
+def test_release_verifier_rejects_invalid_qwen_metadata(tmp_path, monkeypatch, defect):
+    app = _release_app(tmp_path)
+    metadata = app / "Contents/Resources/qwen_asr-0.0.6.dist-info/METADATA"
+    if defect == "missing":
+        metadata.unlink()
+    elif defect == "duplicate":
+        duplicate = metadata.parent.with_name("qwen_asr-0.0.7.dist-info") / "METADATA"
+        duplicate.parent.mkdir()
+        duplicate.write_bytes(metadata.read_bytes())
+    else:
+        metadata.write_text("Name: " + ("other" if defect == "wrong_name" else "qwen-asr")
+                            + "\nVersion: " + ("0.0.7" if defect == "wrong_version" else "0.0.6") + "\n")
+    monkeypatch.setattr(verify_release, "_run", lambda _: pytest.fail("must reject before signing checks"))
+    with pytest.raises(verify_release.VerificationError, match="qwen_asr|Qwen metadata"):
+        verify_release.verify_release(app, dmg=None, expected_version="0.1.0",
+                                      require_developer_id=False, require_notarized=False)
 
 
 def _completed(

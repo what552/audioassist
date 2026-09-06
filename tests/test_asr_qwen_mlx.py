@@ -139,7 +139,7 @@ def test_transcribe_recovers_empty_aggregate_language_from_chunks():
     result = SimpleNamespace(
         text="hello",
         language="",
-        segments=[],
+        segments=[{"text": "hello", "start": 0.1, "end": 0.5}],
         chunks=[{"language": "Chinese", "generated_tokens": 5, "max_new_tokens": 1024,
                  "finish_reason": "eos", "truncated": False}],
         truncated=False,

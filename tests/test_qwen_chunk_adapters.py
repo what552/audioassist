@@ -25,7 +25,8 @@ def adapter(request, monkeypatch):
         engine._observer = SimpleNamespace(records=[])
     else:
         engine._session = SimpleNamespace(transcribe=infer)
-    control = {"call": 0, "error_at": None, "cap_at": None, "invalid_at": None, "missing_at": None}
+    control = {"call": 0, "error_at": None, "cap_at": None, "invalid_at": None, "missing_at": None,
+               "unaligned_at": None, "silence_at": None}
 
     def call(*args, **kwargs):
         index = control["call"]
@@ -36,14 +37,16 @@ def adapter(request, monkeypatch):
         generation = {"truncated": truncated, "finish_reason": "length" if truncated else "eos",
                       "max_new_tokens": 1024, "generated_tokens": 1024 if truncated else 3}
         end = 1.5 if index == control["invalid_at"] else .8
+        text = "" if index == control["silence_at"] else f"chunk{index}"
+        aligned = index not in (control["unaligned_at"], control["silence_at"])
         if backend == "pytorch":
             if index != control["missing_at"]:
                 engine._observer.records.append(generation)
-            return [SimpleNamespace(text=f"chunk{index}", language="Chinese",
-                                    time_stamps=SimpleNamespace(items=[SimpleNamespace(text="词", start_time=.1, end_time=end)]))]
-        return SimpleNamespace(text=f"chunk{index}", language="Chinese", truncated=truncated,
+            return [SimpleNamespace(text=text, language="Chinese" if aligned else "unknown",
+                                    time_stamps=SimpleNamespace(items=[SimpleNamespace(text="词", start_time=.1, end_time=end)] if aligned else []))]
+        return SimpleNamespace(text=text, language="Chinese" if aligned else "unknown", truncated=truncated,
                                chunks=[] if index == control["missing_at"] else [generation],
-                               segments=[{"text": "词", "start": .1, "end": end}])
+                               segments=[{"text": "词", "start": .1, "end": end}] if aligned else [])
 
     infer.side_effect = call
     return engine, control, infer
@@ -62,7 +65,8 @@ def test_serial_chunk_merge_offsets_and_private_diagnostics(adapter):
 
 
 @pytest.mark.parametrize("kind,message", [("cap_at", "generation limit"), ("invalid_at", "timestamp"),
-                                         ("error_at", "device failed"), ("missing_at", "diagnostics missing")])
+                                         ("error_at", "device failed"), ("missing_at", "diagnostics missing"),
+                                         ("unaligned_at", "without requested word timestamps")])
 def test_failed_second_chunk_returns_no_partial_success_and_can_retry(adapter, kind, message):
     engine, control, infer = adapter
     control[kind] = 1
@@ -75,6 +79,22 @@ def test_failed_second_chunk_returns_no_partial_success_and_can_retry(adapter, k
     assert engine.transcribe("/audio/local.wav").text == "chunk0 chunk1"
     assert len(engine.last_chunk_diagnostics) == 2
     assert not engine.last_truncated
+
+
+def test_silence_after_aligned_chunk_is_allowed(adapter):
+    engine, control, _ = adapter
+    control["silence_at"] = 1
+    result = engine.transcribe("/audio/local.wav")
+    assert result.text == "chunk0"
+    assert len(result.words) == 1
+    assert not engine.last_chunk_diagnostics[-1]["possible_truncation"]
+
+
+def test_no_timestamp_mode_accepts_text_without_alignment(adapter):
+    engine, control, _ = adapter
+    engine.with_timestamps = False
+    control["unaligned_at"] = 1
+    assert engine.transcribe("/audio/local.wav").text == "chunk0 chunk1"
 
 
 def test_pytorch_failed_second_mask_install_cleans_first_mask_and_models():

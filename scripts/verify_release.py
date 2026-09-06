@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from email.parser import Parser
 import hashlib
 import json
 from pathlib import Path
@@ -343,8 +344,14 @@ def verify_release(
     )
     if len(metadata) != 1:
         missing.append("Contents/Resources/mlx_qwen3_asr-*.dist-info/METADATA")
+    qwen_metadata = list(app.glob("Contents/Resources/qwen_asr-*.dist-info/METADATA"))
+    if len(qwen_metadata) != 1:
+        missing.append("Contents/Resources/qwen_asr-*.dist-info/METADATA (exactly one required)")
     if missing:
         raise VerificationError(f"required packaged files missing: {', '.join(missing)}")
+    qwen_info = Parser().parsestr(qwen_metadata[0].read_text(encoding="utf-8"))
+    if qwen_info.get_all("Name") != ["qwen-asr"] or qwen_info.get_all("Version") != ["0.0.6"]:
+        raise VerificationError("Qwen metadata must identify qwen-asr version 0.0.6; review compatibility shims before upgrading")
 
     _require_success(
         ["codesign", "--verify", "--all-architectures", "--deep", "--strict", str(app)],
@@ -398,6 +405,7 @@ def verify_release(
         "symlinks_checked": _verify_symlinks(app),
         "required_files": list(REQUIRED_FILES),
         "mlx_qwen_metadata": str(metadata[0].relative_to(app)),
+        "qwen_asr_metadata": str(qwen_metadata[0].relative_to(app)),
     }
 
     if dmg is not None:

@@ -110,7 +110,7 @@ class MLXQwenASREngine:
                 raise RuntimeError("MLX Qwen reached its per-chunk generation limit; transcription rejected")
             if native["finish_reason"] != "eos":
                 raise RuntimeError("MLX Qwen generation stopped without EOS; transcription rejected")
-            validate_words(local_words, duration)
+            validate_words(local_words, duration, required=self.with_timestamps and bool(result.text.strip()))
             texts.append(str(result.text).strip())
             languages.append(result.language or merged_language([item.get("language", "") for item in chunks]))
             words.extend(WordSegment(word=w.word, start=w.start + offset, end=w.end + offset)
