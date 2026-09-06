@@ -28,8 +28,9 @@ Updated: 2026-09-06
 
 ## Outcome
 
-The reproducible release implementation is complete and a local ad-hoc
-AudioAssist 2.0.0 release candidate passed all mechanical checks. It is not a
+The reproducible release implementation is complete and the latest local ad-hoc
+AudioAssist 2.0.1 release candidate passed mechanical and installed capture checks.
+It is not a
 distribution release: this machine has no Developer ID Application identity,
 so Developer ID signing, Apple notarization, stapling, Gatekeeper validation on
 a quarantined download, and clean-machine checks remain external release gates.

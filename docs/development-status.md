@@ -1,6 +1,6 @@
 # Development Status
 
-Updated: 2026-09-06
+Updated: 2026-09-07
 
 ## Current baseline
 
@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current baseline is 858 automated tests, including 8 browser tests. It
+The current baseline is 943 automated tests, including 34 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -50,12 +50,17 @@ pipeline failure therefore leaves an existing transcript intact. Re-transcriptio
 refinement hold the existing per-session mutation lock, so a concurrent rename/save is
 applied after the new transcript instead of being silently overwritten. Refine
 cancellation is exposed through the same API and keeps the option available for retry.
+Per-session mutation locks now use weak-value retention, so active owners and waiters
+share one lock while inactive job entries are reclaimed. Session deletion takes that
+same lock and cannot race a transcribe, refine, save, or rename operation.
 
-TEST-UI-01 expands the browser harness from three startup/history checks to eight
-end-to-end UI scenarios. The real frontend scripts now run against a configurable,
+TEST-UI-01 established a browser harness that has since grown to 34 tests. The real
+frontend scripts run against a configurable,
 call-recording PyWebView API double for first-run setup, model download failures,
 upload retry/cancel, model library state, serial drag/drop queueing, and Summary Agent
-history/stream/tool/error/clear behavior.
+history/stream/tool/error/clear behavior. Later regressions cover capture permission
+flows, session-safe playback, durable rapid renames, resume failures, non-blocking
+errors, and mutually exclusive idle/player/error views.
 
 ASR-QUALITY-01 replaces midpoint-only speaker assignment with a shared interval
 overlap policy for file and realtime results. A speaker must cover at least 20% of
@@ -90,21 +95,23 @@ requirement and waited for a new microphone prompt inside PortAudio's AUHAL devi
 call. REALTIME-START-01 now requests first-use permission through AVFoundation before
 model loading, Session/WAV creation, or PortAudio; its UI can cancel the wait and the
 native request times out after 60 seconds. Diagnostic persistence is marker-only,
-cross-process rotation-safe, and performs no file I/O in the realtime callback. A
-packaged-app acceptance run is still required, and a stable Developer ID signature is
-still required to preserve permissions across real upgrades. PLAYER-02 and
-UI-SESSION-REFRESH-01 retain the other confirmed findings.
+cross-process rotation-safe, and performs no file I/O in the realtime callback. The
+installed 2.0.1 candidate passed first-use Mic authorization and recording. A stable
+Developer ID signature is still required to prove permission continuity across real
+upgrades. PLAYER-02 and UI-SESSION-REFRESH-01 have also closed the other confirmed
+session/playback findings.
 
 CAPTURE-PERM-01 separates the previously ambiguous capture authorization UX. Mic no
 longer references screen access; System checks only Screen & System Audio Recording;
 Mix checks both and lists missing permissions independently. Both GUI and local API
-enforce this matrix before loading models or creating a realtime Session. A rebuilt
-packaged-app run remains the release gate.
+enforce this matrix before loading models or creating a realtime Session. The installed
+2.0.1 app passed Mic, System, and Mix capture; the remaining permission gate is
+Developer ID upgrade continuity under REL-TCC-01.
 
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
 outer app, creates the DMG without Finder automation, and emits a JSON
-verification record. A real 2.0.0 ad-hoc candidate passed strict signatures,
+verification record. Real 2.0.0 and 2.0.1 ad-hoc candidates passed strict signatures,
 focused asset/entitlement checks, 491 Mach-O load-path checks, 582 symlink
 checks, DMG image verification, and a read-only mounted payload comparison by
 bundle identity and CDHash. Developer ID mode also audits every nested Mach-O
@@ -145,3 +152,6 @@ matrix, and the distribution release gate is recorded in
 visible-desktop lifecycle boundary and do not imply durable background work. With
 AGENT-01 paused by the owner, no item from the owner's ordered 1-3/5-7 batch remains
 eligible to implement: QWEN-04B is correctly held by its measured quality gate.
+The bounded P3 lock, UI error/player state, ffprobe validation, ASR conversion-test,
+and logging debts are complete. Remaining product items are explicitly deferred or
+externally gated in the backlog rather than implicitly open.
