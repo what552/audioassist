@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The current baseline is 783 automated tests, including 3 browser tests. It
+The current baseline is 790 automated tests, including 3 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -42,6 +42,14 @@ the code-switching clip, with 79-103 seconds missing across repeated runs. Combi
 with the existing 5/5/10-minute evidence, neither accelerated backend is approved
 for automatic selection: MPS fails the short code-switching quality gate and MLX
 still fails the existing 10-minute cross-backend text/timestamp thresholds.
+
+TRANS-01 now registers cancellation before worker startup, rejects concurrent
+operations for the same job, and writes transcription/refine results through a
+same-session staging directory before committing the canonical JSON. Cancellation or
+pipeline failure therefore leaves an existing transcript intact. Re-transcription and
+refinement hold the existing per-session mutation lock, so a concurrent rename/save is
+applied after the new transcript instead of being silently overwritten. Refine
+cancellation is exposed through the same API and keeps the option available for retry.
 
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
@@ -85,4 +93,5 @@ release implementation are complete. QWEN-04 retains the deferred promotion
 matrix, and the distribution release gate is recorded in
 `docs/release-candidate-results.md`. HTTP/MCP work remains a separate milestone
 and must not imply durable background work until lifecycle, locking, recovery,
-and cancellation are designed.
+and cancellation are designed. With AGENT-01 paused by the owner, the next ordered
+task is TEST-UI-01, followed by ASR-QUALITY-01, TEXT-01, R03-B1, and R03-B2.

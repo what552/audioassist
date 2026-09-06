@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 import uuid
@@ -328,74 +329,94 @@ class AudioAssistService:
         engine = self._engine_for_model(model_id, engine)
         paths = get_session_paths(self.output_dir, job_id)
         os.makedirs(paths.session_dir, exist_ok=True)
+        staging_dir = tempfile.mkdtemp(prefix=".transcribe-", dir=paths.session_dir)
 
         preferred_filename = self._preferred_filename(job_id, source)
-        if realtime_segments:
-            from .pipeline import run_realtime_segments
-
-            json_path, markdown_path = run_realtime_segments(
-                segments=realtime_segments,
-                wav_path=source,
-                output_dir=paths.session_dir,
-                hf_token=hf_token,
-                num_speakers=num_speakers,
-                job_id=job_id,
-                output_stem="transcript",
-                progress_callback=progress_callback,
-            )
-        else:
-            from .pipeline import run
-
-            json_path, markdown_path = run(
-                audio_path=source,
-                output_dir=paths.session_dir,
-                hf_token=hf_token,
-                engine=engine,
-                asr_model_id=model_id,
-                num_speakers=num_speakers,
-                job_id=job_id,
-                output_stem="transcript",
-                session_dir=paths.session_dir,
-                progress_callback=progress_callback,
-            )
-
-        audio_copy: str | None = None
         try:
-            extension = os.path.splitext(source)[1]
-            audio_copy = os.path.join(paths.session_dir, f"source_audio{extension}")
-            shutil.copy2(source, audio_copy)
-        except OSError:
-            logger.warning("Failed to copy source audio for job %s", job_id, exc_info=True)
-            audio_copy = None
+            if realtime_segments:
+                from .pipeline import run_realtime_segments
 
-        data = _read_json(json_path, {})
-        if not isinstance(data, dict):
-            data = {}
-        if audio_copy:
-            data["audio"] = audio_copy
-        data["job_id"] = job_id
-        if preferred_filename:
-            data["filename"] = preferred_filename
-        _write_json_atomic(json_path, data)
+                staged_json, staged_markdown = run_realtime_segments(
+                    segments=realtime_segments,
+                    wav_path=source,
+                    output_dir=staging_dir,
+                    hf_token=hf_token,
+                    num_speakers=num_speakers,
+                    job_id=job_id,
+                    output_stem="transcript",
+                    progress_callback=progress_callback,
+                )
+            else:
+                from .pipeline import run
 
-        if source.lower().endswith(".wav"):
-            meta_path = self._realtime_meta_path(source)
-            if meta_path:
-                meta = _read_json(meta_path, {})
-                if not isinstance(meta, dict):
-                    meta = {}
-                meta["transcribed_job_id"] = job_id
-                _write_json_atomic(meta_path, meta)
+                staged_json, staged_markdown = run(
+                    audio_path=source,
+                    output_dir=staging_dir,
+                    hf_token=hf_token,
+                    engine=engine,
+                    asr_model_id=model_id,
+                    num_speakers=num_speakers,
+                    job_id=job_id,
+                    output_stem="transcript",
+                    session_dir=paths.session_dir,
+                    progress_callback=progress_callback,
+                )
 
-        return {
-            "job_id": job_id,
-            "json_path": json_path,
-            "markdown_path": markdown_path,
-            "audio_path": audio_copy or data.get("audio", ""),
-            "audio_copy": audio_copy,
-            "engine": engine,
-            "model_id": model_id,
-        }
+            audio_copy: str | None = None
+            staged_audio: str | None = None
+            try:
+                extension = os.path.splitext(source)[1]
+                audio_copy = os.path.join(paths.session_dir, f"source_audio{extension}")
+                staged_audio = os.path.join(staging_dir, f"source_audio{extension}")
+                shutil.copy2(source, staged_audio)
+            except OSError:
+                logger.warning("Failed to copy source audio for job %s", job_id, exc_info=True)
+                audio_copy = None
+                staged_audio = None
+
+            data = _read_json(staged_json, {})
+            if not isinstance(data, dict):
+                data = {}
+            if audio_copy:
+                data["audio"] = audio_copy
+            data["job_id"] = job_id
+            if preferred_filename:
+                data["filename"] = preferred_filename
+            _write_json_atomic(staged_json, data)
+
+            # One final cooperative cancellation point after every staged
+            # artifact is ready, but before any canonical file is replaced.
+            if progress_callback:
+                progress_callback(1.0, "Committing output...")
+
+            json_path = paths.transcript_new
+            markdown_path = os.path.join(paths.session_dir, "transcript.md")
+            if staged_audio and audio_copy:
+                os.replace(staged_audio, audio_copy)
+            os.replace(staged_markdown, markdown_path)
+            # Commit the JSON last: its presence defines a completed session.
+            os.replace(staged_json, json_path)
+
+            if source.lower().endswith(".wav"):
+                meta_path = self._realtime_meta_path(source)
+                if meta_path:
+                    meta = _read_json(meta_path, {})
+                    if not isinstance(meta, dict):
+                        meta = {}
+                    meta["transcribed_job_id"] = job_id
+                    _write_json_atomic(meta_path, meta)
+
+            return {
+                "job_id": job_id,
+                "json_path": json_path,
+                "markdown_path": markdown_path,
+                "audio_path": audio_copy or data.get("audio", ""),
+                "audio_copy": audio_copy,
+                "engine": engine,
+                "model_id": model_id,
+            }
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
     def summarize(
         self,
