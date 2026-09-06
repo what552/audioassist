@@ -243,11 +243,23 @@ class DesktopRecordingController:
 
             if action == "start":
                 capture_mode = payload["capture_mode"]
-                if capture_mode != "mic":
-                    preflight = self.backend.preflight_capture(capture_mode)
-                    if not preflight.get("supported"):
-                        message = preflight.get("message") or preflight.get("reason") or "Capture unavailable"
-                        raise LocalAPIError("capture_unavailable", str(message), 503)
+                preflight = self.backend.preflight_capture(capture_mode)
+                microphone_status = preflight.get("microphone_permission")
+                microphone_blocked = (
+                    capture_mode == "mic"
+                    and microphone_status not in {"authorized", "not_applicable"}
+                )
+                if not preflight.get("supported") or microphone_blocked:
+                    message = (
+                        preflight.get("message")
+                        or preflight.get("reason")
+                        or (
+                            f"microphone_permission_{microphone_status}"
+                            if microphone_blocked
+                            else "Capture unavailable"
+                        )
+                    )
+                    raise LocalAPIError("capture_unavailable", str(message), 503)
                 result = self.backend.start_realtime({
                     "capture_mode": capture_mode,
                     "model_id": payload.get("model_id"),
@@ -255,6 +267,11 @@ class DesktopRecordingController:
             else:
                 result = getattr(self.backend, f"{action}_realtime")()
 
+            if result.get("status") == "permission_required":
+                status = result.get("microphone_permission", "unknown")
+                raise LocalAPIError(
+                    "capture_unavailable", f"microphone_permission_{status}", 503
+                )
             if result.get("status") in {"already_running", "not_running"}:
                 raise LocalAPIError(
                     "recording_state_conflict",

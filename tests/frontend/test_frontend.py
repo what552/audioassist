@@ -231,6 +231,28 @@ def test_microphone_permission_authorized_before_realtime_start(
     assert calls.index("request_microphone_permission") < calls.index("start_realtime")
 
 
+def test_mic_permission_race_from_shared_backend_restores_ui(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "microphone_permission": "authorized",
+        },
+        "realtimeStart": {
+            "status": "permission_required",
+            "microphone_permission": "denied",
+        },
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+    page.wait_for_function("!document.querySelector('#btn-start-recording').disabled")
+
+    assert page.locator("#realtime-status").inner_text() == "Microphone unavailable"
+    assert page.locator("#capture-perm-notice").is_visible()
+
+
 @pytest.mark.parametrize("status", ["denied", "timeout", "unknown"])
 def test_microphone_permission_failure_resets_ui_without_starting(
     page: Page, ui_base_url: str, status: str

@@ -14,7 +14,10 @@ def _wait(timeout=0.5):
 
 @pytest.fixture(autouse=True)
 def _output_dir(tmp_path):
-    with patch.object(app_module, "OUTPUT_DIR", str(tmp_path)):
+    with patch.object(app_module, "OUTPUT_DIR", str(tmp_path)), \
+         patch.object(
+             app_module, "_macos_microphone_permission_status", return_value="authorized"
+         ):
         yield
 
 
@@ -34,6 +37,28 @@ class TestReturnValues:
         api._realtime = MagicMock()  # simulate active session
         result = api.start_realtime()
         assert result["status"] == "already_running"
+
+    @pytest.mark.parametrize("status", [
+        "not_determined", "denied", "restricted", "unknown",
+    ])
+    def test_mic_start_requires_permission_before_session_or_backend(self, status):
+        api = API()
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value=status
+        ), patch("src.realtime.RealtimeTranscriber") as realtime, \
+             patch.object(app_module.os, "makedirs") as makedirs, \
+             patch.object(api, "_caffeinate_start") as caffeinate:
+            result = api.start_realtime({"capture_mode": "mic"})
+
+        assert result == {
+            "status": "permission_required",
+            "microphone_permission": status,
+        }
+        assert api._realtime is None
+        assert api.get_recording_status()["state"] == "idle"
+        realtime.assert_not_called()
+        makedirs.assert_not_called()
+        caffeinate.assert_not_called()
 
     def test_stop_returns_not_running(self):
         api = API()

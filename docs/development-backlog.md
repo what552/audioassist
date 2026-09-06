@@ -76,6 +76,8 @@ cause. See `docs/realtime-start-diagnosis.md`.
 
 - Query TCC before recording and request first-use access through AVFoundation,
   before loading a model, creating a Session/WAV, or opening PortAudio.
+- Enforce the same authorization boundary inside `API.start_realtime`; HTTP/MCP
+  also preflights Mic and returns `capture_unavailable` rather than prompting.
 - Keep the permission wait cancelable in the UI and bound the native request to
   60 seconds. Denial, timeout, cancellation, or bridge failure restores the idle
   controls and never calls the realtime backend.

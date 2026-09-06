@@ -472,6 +472,7 @@ class TestAppCaptureMode:
 
         with patch("src.realtime.RealtimeTranscriber", side_effect=capture_rt_init), \
              patch.object(app_module, "_push"), \
+             patch.object(app_module, "_macos_microphone_permission_status", return_value="authorized"), \
              patch.object(app_module, "OUTPUT_DIR", "/tmp"):
             api.start_realtime({"capture_mode": "mic"})
             time.sleep(0.3)
@@ -493,6 +494,7 @@ class TestAppCaptureMode:
 
         with patch("src.realtime.RealtimeTranscriber", side_effect=capture_rt_init), \
              patch.object(app_module, "_push"), \
+             patch.object(app_module, "_macos_microphone_permission_status", return_value="authorized"), \
              patch.object(app_module, "OUTPUT_DIR", "/tmp"):
             api.start_realtime({})  # no capture_mode → defaults to mic
             time.sleep(0.3)

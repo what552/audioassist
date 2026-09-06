@@ -40,6 +40,7 @@
     preflight: { supported: true },
     microphonePermission: { status: 'authorized', authorized: true },
     microphonePermissionDelayMs: 0,
+    realtimeStart: { status: 'started' },
   };
 
   var supplied = window.__AUDIOASSIST_TEST_CONFIG || {};
@@ -59,6 +60,7 @@
   state.microphonePermissionDelayMs = (
     supplied.microphonePermissionDelayMs || defaults.microphonePermissionDelayMs
   );
+  state.realtimeStart = Object.assign({}, defaults.realtimeStart, supplied.realtimeStart || {});
   state.calls = [];
 
   function record(name, args) {
@@ -128,7 +130,7 @@
       }
       return Object.assign({}, state.microphonePermission);
     },
-    start_realtime: async function () { record('start_realtime', arguments); return { status: 'started' }; },
+    start_realtime: async function () { record('start_realtime', arguments); return Object.assign({}, state.realtimeStart); },
     stop_realtime: async function () { record('stop_realtime', arguments); return { status: 'stopped' }; },
     pause_realtime: async function () { record('pause_realtime', arguments); return { status: 'pausing' }; },
     resume_realtime: async function () { record('resume_realtime', arguments); return { status: 'resuming' }; },

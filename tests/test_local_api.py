@@ -47,7 +47,10 @@ class FakeRecordingBackend:
     def __init__(self):
         self.state = "idle"
         self.calls = []
-        self.preflight = {"supported": True}
+        self.preflight = {
+            "supported": True,
+            "microphone_permission": "authorized",
+        }
 
     def get_recording_status(self):
         return {
@@ -182,6 +185,25 @@ def test_recording_start_validates_fields_and_preflight(application):
     ]
 
     backend.state = "idle"
+    backend.calls.clear()
+    backend.preflight = {
+        "supported": True,
+        "microphone_permission": "not_determined",
+    }
+    status, payload = app.dispatch(
+        "POST", "/v1/recording/start", json_headers,
+        json.dumps({"capture_mode": "mic", "model_id": None}).encode(), HOST,
+    )
+    assert (status, payload["error"]["code"]) == (503, "capture_unavailable")
+    assert "microphone_permission_not_determined" in payload["error"]["message"]
+    assert backend.calls == [("preflight", "mic")]
+    assert backend.state == "idle"
+
+    backend.state = "idle"
+    backend.preflight = {
+        "supported": True,
+        "microphone_permission": "authorized",
+    }
     status, payload = app.dispatch(
         "POST", "/v1/recording/start", json_headers,
         json.dumps({"capture_mode": "invalid"}).encode(), HOST,

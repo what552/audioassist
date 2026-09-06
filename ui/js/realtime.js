@@ -146,10 +146,17 @@ const Realtime = (() => {
 
     const model_id = document.getElementById('sel-engine').value;
     try {
-      await window.pywebview.api.start_realtime({
+      const startResult = await window.pywebview.api.start_realtime({
         model_id,
         capture_mode: _captureMode,
       });
+      if (startResult && startResult.status === 'permission_required') {
+        const status = startResult.microphone_permission || 'unknown';
+        _setLoading(false);
+        _disableModeButtons(false);
+        _setStatus('Microphone unavailable');
+        _showPermNotice({ reason: 'microphone_permission_' + status });
+      }
     } catch (e) {
       console.error('[Realtime] start error:', e);
       _setLoading(false);

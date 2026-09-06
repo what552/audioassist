@@ -757,16 +757,24 @@ class API:
 
         Returns: {"status": "started"} or {"status": "already_running"}
         """
+        options = options or {}
+        capture_mode = options.get("capture_mode", "mic")
         with self._recording_lock:
             if self._realtime is not None:
                 return {"status": "already_running"}
+            if capture_mode == "mic":
+                permission_status = _macos_microphone_permission_status()
+                if permission_status not in {"authorized", "not_applicable"}:
+                    return {
+                        "status": "permission_required",
+                        "microphone_permission": permission_status,
+                    }
             # Sentinel prevents a second call racing before _run() installs the backend.
             self._realtime = object()
             self._recording_generation += 1
             generation = self._recording_generation
         self._caffeinate_start()
 
-        options = options or {}
         model_id = options.get("model_id")
         engine   = options.get("engine", "qwen")
         if model_id:
@@ -775,7 +783,6 @@ class API:
             if _info:
                 engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
-        capture_mode = options.get("capture_mode", "mic")
         self._set_recording_status(
             "starting",
             session_id=None,

@@ -224,6 +224,12 @@ UI. The state response contains only stable fields:
 | 503 | `capture_unavailable` | Permission, helper, model, or device preflight failed |
 | 500 | `internal_error` | Unexpected failure; details are logged, not leaked |
 
+Mic recording through HTTP/MCP never triggers the macOS permission dialog. The
+desktop backend must already report `authorized` (or `not_applicable` off macOS),
+otherwise `POST /v1/recording/start` returns `503 capture_unavailable` before a
+Session, WAV, model, or PortAudio stream is created. First-use authorization is
+completed in the visible app.
+
 ## MCP adapter contract
 
 The separate executable uses MCP over stdin/stdout. Protocol messages are the only
