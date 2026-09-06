@@ -33,11 +33,11 @@ Priority meanings:
 | 14 | R03-B1 | P2 | Complete: go | Foreground/read-only and visible-app server modes have explicit lifecycle, locking, recovery, cancellation, schema, and security boundaries |
 | 15 | R03-B2 | P2 | Complete | Authenticated desktop/read-only HTTP service and eight-tool stdio MCP adapter, without a daemon |
 | 16 | REALTIME-DIAG-01 | P1 | Complete | Prove the 44-byte WAV failure is a TCC code-requirement mismatch after replacing an ad-hoc signed build |
-| 17 | REALTIME-START-01 | P1 | Implemented: packaged gate pending | Request microphone access before PortAudio/model/session startup, with cancel and timeout recovery; Developer ID remains the release identity fix |
+| 17 | REALTIME-START-01 | P1 | Complete | Request microphone access before PortAudio/model/session startup, with cancel and timeout recovery; installed 2.0.1 gate passed |
 | 18 | PLAYER-02 | P2 | Ready | Prevent playback position and active playback from leaking across session switches |
 | 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
-| 21 | CAPTURE-PERM-01 | P1 | Implemented: packaged gate pending | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup |
+| 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
 
 ### REALTIME-DIAG-01 — Intermittent packaged microphone startup
@@ -89,9 +89,10 @@ cause. See `docs/realtime-start-diagnosis.md`.
 - Treat stable Developer ID signing/notarization as the production upgrade fix;
   an edited ad-hoc build still has to be authorized as a new code identity.
 
-Acceptance remaining: install the rebuilt candidate, confirm the system prompt
-appears before model/session creation, authorize it, and pass cold start, warm
-restart, stop, and non-empty WAV checks.
+Acceptance passed on installed 2.0.1: the first-use native prompt was restored,
+the owner confirmed Mic recording, repeated System capture passed after resetting
+the stale 2.0.0 ad-hoc TCC row, and Mix passed start/pause/resume/stop with a
+non-empty signal. Stable Developer ID upgrade continuity remains REL-TCC-01.
 
 2026-09-06 follow-up: after resetting the stale ad-hoc TCC grant, first-use Mic
 still failed without a prompt. The dynamic AVFoundation loader lacked PyObjC
@@ -117,6 +118,12 @@ separate defect from ad-hoc signing identity continuity above.
   `NSAudioCaptureUsageDescription`, in addition to the microphone description.
 - Preserve runtime Mix degradation for device/converter failure only after both
   required permissions have passed preflight.
+
+Installed 2.0.1 acceptance: System session `acda4f17` captured 8.80 seconds
+with peak volume -20.9 dB; Mix session `66212e94` passed pause/resume and captured
+6.88 seconds with peak volume -30.1 dB. The permission reset removed the prior
+ad-hoc CDHash mismatch; no later `Failed to match existing code requirement`
+event was present.
 
 ### REL-TCC-01 — Recording permission continuity across upgrades
 
