@@ -290,14 +290,20 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 ### UI-SESSION-REFRESH-01 — Durable session labels and transitions
 
 - Apply valid renames optimistically so a status rerender cannot restore the old
-  title while persistence waits behind the session mutation lock; roll back only
-  if that exact rename fails.
+  title while persistence waits behind the session mutation lock. Serialize
+  PyWebView rename calls per session so rapid edits remain last-write-wins, and
+  restore the last confirmed title if one or more writes fail.
+- Make new-job renames wait on the same session lock as transcription and recheck
+  for the completed transcript before persisting, preventing a restart from
+  revealing a stale pre-transcription title.
 - Preserve the renamed title in `meta.json` for interrupted sessions and read it
   back in history instead of falling back to the source basename.
-- Treat an explicit resume error as interrupted and retryable rather than leaving
-  the session indefinitely marked as transcribing or hiding its Resume action.
-- Backend and browser regressions cover renamed interruption, pending rename plus
-  completion, and failed resume visibility without restarting the app.
+- Treat immediate and background resume errors or cancellation as interrupted and
+  retryable rather than leaving the session indefinitely marked as transcribing or
+  hiding its Resume action.
+- Backend and browser regressions cover renamed interruption, a rename during a
+  fresh transcription, rapid ordered renames, failed-write rollback, pending rename
+  plus completion, and immediate/background resume failures without restarting.
 
 | ID | Task | Acceptance direction |
 |---|---|---|
