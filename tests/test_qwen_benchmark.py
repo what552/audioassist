@@ -368,6 +368,78 @@ def test_gate_ignores_cold_realtime_passes_and_requires_measured_lifecycle():
     assert "complete lifecycle RSS samples" in gate["missing_evidence"]
 
 
+def test_gate_uses_realtime_factor_for_mixed_utterance_durations():
+    mlx = _run("mlx", "hello", 0.0)
+    short = mlx["result"]["cycles"][0]["samples"][0]
+    short.update({"id": "short", "tags": ["realtime"], "duration_seconds": 1})
+    short["passes"] = [
+        {**short["passes"][0], "seconds": 2.0, "possible_truncation": False}
+        for _ in range(101)
+    ]
+    long = {
+        **short,
+        "id": "long",
+        "duration_seconds": 10,
+        "passes": [
+            {**short["passes"][0], "seconds": 2.0, "possible_truncation": False}
+            for _ in range(101)
+        ],
+    }
+    mlx["result"]["cycles"] = [{"samples": [short, long]}]
+
+    gate = assess_mlx_gate(
+        {"runs": [mlx], "comparisons_against_pytorch_cpu": {}, "warm_runs": 100}
+    )
+
+    assert "MLX warm realtime p95 is not below utterance duration" in gate["failures"]
+
+
+def test_gate_detects_per_file_wer_regression_hidden_by_aggregate():
+    cpu = _run("pytorch-cpu", "one", 0.0)
+    mlx = _run("mlx", "one", 0.0)
+    cpu_first = cpu["result"]["cycles"][0]["samples"][0]
+    mlx_first = mlx["result"]["cycles"][0]["samples"][0]
+    cpu_first.update(
+        {
+            "id": "regressed",
+            "reference_kind": "human",
+            "metrics": {"cer": 0.0, "wer": 0.0},
+        }
+    )
+    mlx_first.update(
+        {
+            "id": "regressed",
+            "reference_kind": "human",
+            "metrics": {"cer": 0.0, "wer": 0.1},
+        }
+    )
+    cpu_second = {
+        **cpu_first,
+        "id": "improved",
+        "metrics": {"cer": 0.0, "wer": 1.0},
+    }
+    mlx_second = {
+        **mlx_first,
+        "id": "improved",
+        "metrics": {"cer": 0.0, "wer": 0.9},
+    }
+    cpu["result"]["cycles"][0]["samples"] = [cpu_first, cpu_second]
+    mlx["result"]["cycles"][0]["samples"] = [mlx_first, mlx_second]
+
+    gate = assess_mlx_gate(
+        {
+            "runs": [cpu, mlx],
+            "comparisons_against_pytorch_cpu": compare_runs([cpu, mlx]),
+            "warm_runs": 1,
+        }
+    )
+
+    assert "MLX aggregate WER regresses by more than 0.5 percentage points" not in gate[
+        "failures"
+    ]
+    assert "severe per-file WER regression: regressed" in gate["failures"]
+
+
 def test_gate_fails_low_alignment_language_and_severe_text_difference():
     report = {
         "runs": [],

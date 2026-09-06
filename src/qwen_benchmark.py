@@ -542,8 +542,20 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
                     "MLX aggregate WER regresses by more than 0.5 percentage points"
                 )
         for item in human:
-            if mlx_samples[item]["metrics"]["cer"] - cpu_samples[item]["metrics"]["cer"] > 0.05:
+            if (
+                mlx_samples[item]["metrics"]["cer"]
+                - cpu_samples[item]["metrics"]["cer"]
+                > 0.05
+            ):
                 failures.append(f"severe per-file CER regression: {item}")
+            cpu_wer = cpu_samples[item]["metrics"].get("wer")
+            mlx_wer = mlx_samples[item]["metrics"].get("wer")
+            if (
+                cpu_wer is not None
+                and mlx_wer is not None
+                and mlx_wer - cpu_wer > 0.05
+            ):
+                failures.append(f"severe per-file WER regression: {item}")
 
     long_samples = [
         sample_id
@@ -568,19 +580,17 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
                     "MLX warm long-form processing is less than 30% faster than CPU"
                 )
 
-    realtime_passes: list[tuple[float, float]] = []
+    realtime_rtfs: list[float] = []
     for cycle in successful.get("mlx", {}).get("cycles", []):
         for sample in cycle.get("samples", []):
             if "realtime" in sample.get("tags", []):
-                realtime_passes.extend(
-                    (item["seconds"], sample["duration_seconds"])
+                realtime_rtfs.extend(
+                    item["seconds"] / sample["duration_seconds"]
                     for item in sample["passes"][1:]
                 )
-    if len(realtime_passes) < 100:
+    if len(realtime_rtfs) < 100:
         missing.append("100 serialized realtime utterances")
-    elif _percentile([item[0] for item in realtime_passes], 0.95) >= statistics.median(
-        item[1] for item in realtime_passes
-    ):
+    elif _percentile(realtime_rtfs, 0.95) >= 1.0:
         failures.append("MLX warm realtime p95 is not below utterance duration")
 
     lifecycle = successful.get("mlx", {}).get("lifecycle_summary", {})
