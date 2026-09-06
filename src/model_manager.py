@@ -60,7 +60,7 @@ CATALOG: list[ModelInfo] = [
     ModelInfo(
         id="whisper-large-v3-turbo",
         name="Whisper Large v3 Turbo",
-        description="Apple Silicon 专属，Neural Engine 加速，速度快8倍，适合实时转录",
+        description="Apple Silicon 专属，使用 Apple GPU/Metal 加速，适合本地转录",
         repo_id="mlx-community/whisper-large-v3-turbo",
         size_gb=0.8,
         engine="mlx-whisper",

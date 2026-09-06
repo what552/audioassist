@@ -10,13 +10,22 @@ Outputs:
 """
 
 import os
+import shutil
 import sysconfig
+import tomllib
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 block_cipher = None
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 ROOT = os.path.dirname(os.path.abspath(SPEC))
+with open(os.path.join(ROOT, "pyproject.toml"), "rb") as project_file:
+    APP_VERSION = tomllib.load(project_file)["project"]["version"]
+SIGN_IDENTITY = os.environ.get("AUDIOASSIST_SIGN_IDENTITY") or None
+FFMPEG_BIN = shutil.which("ffmpeg")
+FFPROBE_BIN = shutil.which("ffprobe")
+if not FFMPEG_BIN or not FFPROBE_BIN:
+    raise SystemExit("AudioAssist packaging requires ffmpeg and ffprobe on PATH")
 HELPER_BIN = os.path.join(
     ROOT, "native", "AudioAssistCaptureHelper",
     ".build", "release", "AudioAssistCaptureHelper",
@@ -37,8 +46,8 @@ a = Analysis(
         # _default_helper_path() can find it via sys._MEIPASS / sys.executable.
         (HELPER_BIN, "."),
         # Bundle ffmpeg and ffprobe so audio_utils.py works without system install.
-        ("/opt/homebrew/bin/ffmpeg",  "."),
-        ("/opt/homebrew/bin/ffprobe", "."),
+        (FFMPEG_BIN,  "."),
+        (FFPROBE_BIN, "."),
         # torchcodec dylibs intentionally NOT bundled — torchcodec embeds its own
         # libpython3.12.dylib which conflicts with the app's libpython and causes
         # SIGSEGV on startup.  diarize.py bypasses torchcodec by passing a waveform
@@ -148,8 +157,11 @@ exe = EXE(
     console=False,            # no terminal window
     disable_windowed_traceback=False,
     target_arch=None,         # native arch; use lipo for universal if needed
-    codesign_identity=None,   # sign separately with codesign(1)
-    entitlements_file=os.path.join(ROOT, "entitlements.plist"),
+    codesign_identity=SIGN_IDENTITY,
+    # The release script applies entitlements only to executable targets after
+    # PyInstaller has signed collected libraries. Apple advises against adding
+    # executable entitlements to shared libraries/frameworks.
+    entitlements_file=None,
 )
 
 # ── COLLECT (onedir layout) ────────────────────────────────────────────────────
@@ -169,12 +181,12 @@ app = BUNDLE(
     coll,
     name="AudioAssist.app",
     icon=None,                # set to .icns path when available
+    version=APP_VERSION,
     bundle_identifier="com.audioassist.app",
     info_plist={
         "CFBundleName":                "AudioAssist",
         "CFBundleDisplayName":         "AudioAssist",
-        "CFBundleVersion":             "1.0.0",
-        "CFBundleShortVersionString":  "1.0.0",
+        "CFBundleVersion":             APP_VERSION,
         "NSMicrophoneUsageDescription":
             "AudioAssist needs microphone access for live transcription.",
         "NSAppleMusicUsageDescription":

@@ -39,8 +39,17 @@ TranscribeApp data directory and are managed by the application.
 .venv/bin/audioassist --json sessions list
 .venv/bin/python -m pytest -q
 bash scripts/build_dmg.sh
+.venv/bin/python scripts/verify_release.py --help
 .venv/bin/python -m src.qwen_benchmark run --help
 ```
+
+`scripts/build_dmg.sh` reads the application version from `pyproject.toml` and
+creates `dist/AudioAssist-<version>.dmg`. With no signing environment variables
+it produces an ad-hoc local release candidate. Set `AUDIOASSIST_SIGN_IDENTITY`
+to a Developer ID Application identity for a distribution signature, and set
+`AUDIOASSIST_NOTARY_PROFILE` as well to submit, staple, and validate through a
+preconfigured `notarytool` keychain profile. The script never stores signing
+credentials in the repository.
 
 Activation is optional. If the environment is activated, `python` and
 `audioassist` resolve to the same `.venv`:

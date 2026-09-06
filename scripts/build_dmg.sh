@@ -1,155 +1,158 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────────────────────
-# build_dmg.sh — Build AudioAssist.app and package it as a .dmg
+# Build, sign, verify, package, and optionally notarize AudioAssist for macOS.
 #
 # Usage:
 #   bash scripts/build_dmg.sh [--skip-swift] [--skip-pyinstaller]
 #
-# Prerequisites:
-#   - Xcode Command Line Tools (swift, codesign)
-#   - Repository environment created by scripts/bootstrap.sh
-#   - create-dmg (brew install create-dmg) OR hdiutil (built-in fallback)
-#
-# The script does NOT sign or notarize — do that separately with:
-#   codesign --deep --force --options runtime \
-#     --entitlements entitlements.plist \
-#     --sign "Developer ID Application: ..." \
-#     dist/AudioAssist.app
-#   xcrun notarytool submit AudioAssist.dmg --wait ...
-# ─────────────────────────────────────────────────────────────────────────────
+# Environment:
+#   AUDIOASSIST_SIGN_IDENTITY  Developer ID Application identity. If unset,
+#                              create a local ad-hoc release candidate.
+#   AUDIOASSIST_NOTARY_PROFILE notarytool keychain profile. Requires a real
+#                               Developer ID identity and enables submit/staple.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PYTHON_BIN="${ROOT}/.venv/bin/python"
-
 APP_NAME="AudioAssist"
-DMG_NAME="${APP_NAME}.dmg"
 HELPER_DIR="${ROOT}/native/AudioAssistCaptureHelper"
 HELPER_BIN="${HELPER_DIR}/.build/release/AudioAssistCaptureHelper"
 DIST_DIR="${ROOT}/dist"
 APP_PATH="${DIST_DIR}/${APP_NAME}.app"
-DMG_PATH="${DIST_DIR}/${DMG_NAME}"
-
+APP_ENTITLEMENTS="${ROOT}/entitlements.plist"
+HELPER_ENTITLEMENTS="${ROOT}/entitlements_helper.plist"
+SIGN_IDENTITY="${AUDIOASSIST_SIGN_IDENTITY:--}"
+NOTARY_PROFILE="${AUDIOASSIST_NOTARY_PROFILE:-}"
 SKIP_SWIFT=false
 SKIP_PYINSTALLER=false
 
 for arg in "$@"; do
   case "$arg" in
-    --skip-swift)        SKIP_SWIFT=true ;;
-    --skip-pyinstaller)  SKIP_PYINSTALLER=true ;;
+    --skip-swift) SKIP_SWIFT=true ;;
+    --skip-pyinstaller) SKIP_PYINSTALLER=true ;;
+    *)
+      echo "ERROR: Unknown argument: $arg" >&2
+      exit 2
+      ;;
   esac
 done
 
-if [ "$SKIP_PYINSTALLER" = false ] && [ ! -x "$PYTHON_BIN" ]; then
-  echo "ERROR: Repository Python not found at $PYTHON_BIN"
-  echo "       Run 'bash scripts/bootstrap.sh' first."
+if [ ! -x "$PYTHON_BIN" ]; then
+  echo "ERROR: Repository Python not found at $PYTHON_BIN" >&2
+  echo "       Run 'bash scripts/bootstrap.sh' first." >&2
+  exit 1
+fi
+for required in "$APP_ENTITLEMENTS" "$HELPER_ENTITLEMENTS"; do
+  if [ ! -f "$required" ]; then
+    echo "ERROR: Required release file missing: $required" >&2
+    exit 1
+  fi
+done
+
+APP_VERSION="$(cd "$ROOT" && "$PYTHON_BIN" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+DMG_NAME="${APP_NAME}-${APP_VERSION}.dmg"
+DMG_PATH="${DIST_DIR}/${DMG_NAME}"
+VERIFY_PATH="${DIST_DIR}/release-verification-${APP_VERSION}.json"
+
+if [ -n "$NOTARY_PROFILE" ] && [ "$SIGN_IDENTITY" = "-" ]; then
+  echo "ERROR: AUDIOASSIST_NOTARY_PROFILE requires AUDIOASSIST_SIGN_IDENTITY." >&2
+  exit 1
+fi
+if [ "$SKIP_PYINSTALLER" = true ] && [ "$SIGN_IDENTITY" != "-" ]; then
+  echo "ERROR: Developer ID builds cannot reuse an ad-hoc PyInstaller bundle." >&2
   exit 1
 fi
 
-# ── Step 1: Build Swift helper ────────────────────────────────────────────────
 if [ "$SKIP_SWIFT" = false ]; then
-  echo "==> [1/3] Building Swift helper (release)…"
+  echo "==> [1/5] Building Swift helper (release)"
   (cd "$HELPER_DIR" && swift build -c release)
-  echo "    Helper binary: $HELPER_BIN"
 else
-  echo "==> [1/3] Skipping Swift build (--skip-swift)"
+  echo "==> [1/5] Reusing Swift helper (--skip-swift)"
 fi
-
 if [ ! -f "$HELPER_BIN" ]; then
-  echo "ERROR: Helper binary not found at $HELPER_BIN"
-  echo "       Run 'swift build -c release' in $HELPER_DIR first."
+  echo "ERROR: Helper binary not found at $HELPER_BIN" >&2
   exit 1
 fi
 
-# ── Step 2: PyInstaller ───────────────────────────────────────────────────────
 if [ "$SKIP_PYINSTALLER" = false ]; then
-  echo "==> [2/3] Running PyInstaller…"
+  echo "==> [2/5] Building app with locked repository Python"
   cd "$ROOT"
+  export PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR=1
+  export PYINSTALLER_VERIFY_BUNDLE_SIGNATURE=1
+  if [ "$SIGN_IDENTITY" = "-" ]; then
+    unset AUDIOASSIST_SIGN_IDENTITY
+  else
+    export AUDIOASSIST_SIGN_IDENTITY="$SIGN_IDENTITY"
+  fi
   "$PYTHON_BIN" -m PyInstaller AudioAssist.spec --noconfirm
-  echo "    App bundle: $APP_PATH"
 else
-  echo "==> [2/3] Skipping PyInstaller (--skip-pyinstaller)"
+  echo "==> [2/5] Reusing app bundle (--skip-pyinstaller)"
 fi
-
 if [ ! -d "$APP_PATH" ]; then
-  echo "ERROR: App bundle not found at $APP_PATH"
-  echo "       Run PyInstaller first."
+  echo "ERROR: App bundle not found at $APP_PATH" >&2
   exit 1
 fi
 
-# ── Step 2.5: Sign helper with required entitlements ─────────────────────────
-echo "==> [2.5/3] Signing helper with TCC entitlements…"
+echo "==> [3/5] Signing nested helper, then outer app"
+CODESIGN_ARGS=(--force --sign "$SIGN_IDENTITY")
+if [ "$SIGN_IDENTITY" != "-" ]; then
+  CODESIGN_ARGS+=(--options runtime --timestamp)
+fi
 HELPER_IN_BUNDLE="${APP_PATH}/Contents/Frameworks/AudioAssistCaptureHelper"
-HELPER_ENTITLEMENTS="${ROOT}/entitlements_helper.plist"
-
-if [ ! -f "$HELPER_ENTITLEMENTS" ]; then
-  cat > "$HELPER_ENTITLEMENTS" << 'ENTEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.device.audio-input</key>
-    <true/>
-    <key>com.apple.security.device.microphone</key>
-    <true/>
-    <key>com.apple.security.screen-recording</key>
-    <true/>
-</dict>
-</plist>
-ENTEOF
+if [ ! -f "$HELPER_IN_BUNDLE" ]; then
+  echo "ERROR: Packaged capture helper missing: $HELPER_IN_BUNDLE" >&2
+  exit 1
 fi
+codesign "${CODESIGN_ARGS[@]}" --entitlements "$HELPER_ENTITLEMENTS" "$HELPER_IN_BUNDLE"
+codesign "${CODESIGN_ARGS[@]}" --entitlements "$APP_ENTITLEMENTS" "$APP_PATH"
+codesign --verify --all-architectures --deep --strict "$APP_PATH"
 
-if [ -f "$HELPER_IN_BUNDLE" ]; then
-  codesign --force --sign - \
-    --entitlements "$HELPER_ENTITLEMENTS" \
-    "$HELPER_IN_BUNDLE"
-  echo "    Helper signed: $HELPER_IN_BUNDLE"
-else
-  echo "    WARNING: helper not found in bundle at $HELPER_IN_BUNDLE"
-fi
-
-# ── Step 3: Package as DMG ────────────────────────────────────────────────────
-echo "==> [3/3] Creating DMG…"
-
-# Remove stale DMG if present
+echo "==> [4/5] Creating and signing $DMG_NAME"
 rm -f "$DMG_PATH"
+STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
+cp -R "$APP_PATH" "$STAGING/"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create \
+  -volname "$APP_NAME" \
+  -srcfolder "$STAGING" \
+  -ov \
+  -format UDZO \
+  "$DMG_PATH"
+codesign "${CODESIGN_ARGS[@]}" "$DMG_PATH"
+codesign --verify --verbose=2 "$DMG_PATH"
 
-if command -v create-dmg &>/dev/null; then
-  # Preferred: create-dmg (prettier, with background + layout)
-  create-dmg \
-    --volname "${APP_NAME}" \
-    --window-pos 200 120 \
-    --window-size 600 400 \
-    --icon-size 100 \
-    --icon "${APP_NAME}.app" 175 190 \
-    --hide-extension "${APP_NAME}.app" \
-    --app-drop-link 425 190 \
-    "$DMG_PATH" \
-    "$APP_PATH"
-else
-  # Fallback: hdiutil (built-in, no staging folder needed)
-  echo "    create-dmg not found; using hdiutil fallback."
-  STAGING=$(mktemp -d)
-  cp -r "$APP_PATH" "$STAGING/"
-  ln -s /Applications "$STAGING/Applications"
-  hdiutil create \
-    -volname "${APP_NAME}" \
-    -srcfolder "$STAGING" \
-    -ov \
-    -format UDZO \
-    "$DMG_PATH"
-  rm -rf "$STAGING"
+if [ -n "$NOTARY_PROFILE" ]; then
+  echo "==> [4.5/5] Submitting, stapling, and validating notarization"
+  xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG_PATH"
+  xcrun stapler validate "$DMG_PATH"
 fi
 
+echo "==> [5/5] Verifying release invariants"
+VERIFY_ARGS=(
+  --app "$APP_PATH"
+  --dmg "$DMG_PATH"
+  --expected-version "$APP_VERSION"
+  --output "$VERIFY_PATH"
+)
+if [ "$SIGN_IDENTITY" != "-" ]; then
+  VERIFY_ARGS+=(--require-developer-id)
+fi
+if [ -n "$NOTARY_PROFILE" ]; then
+  VERIFY_ARGS+=(--require-notarized)
+fi
+"$PYTHON_BIN" scripts/verify_release.py "${VERIFY_ARGS[@]}"
+
 echo ""
-echo "✓ Done."
-echo "  DMG: $DMG_PATH"
-echo ""
-echo "Next steps (optional):"
-echo "  1. Sign:       codesign --deep --force --options runtime \\"
-echo "                   --entitlements entitlements.plist \\"
-echo "                   --sign 'Developer ID Application: ...' \\"
-echo "                   $APP_PATH"
-echo "  2. Notarize:   xcrun notarytool submit $DMG_PATH --wait"
-echo "  3. Staple:     xcrun stapler staple $DMG_PATH"
+echo "Release candidate complete"
+echo "  App:      $APP_PATH"
+echo "  DMG:      $DMG_PATH"
+echo "  Evidence: $VERIFY_PATH"
+if [ "$SIGN_IDENTITY" = "-" ]; then
+  echo "  Signing:  ad-hoc (local verification only; not distributable)"
+elif [ -z "$NOTARY_PROFILE" ]; then
+  echo "  Signing:  Developer ID (notarization not requested)"
+else
+  echo "  Signing:  Developer ID + notarized/stapled"
+fi

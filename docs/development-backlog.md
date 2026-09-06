@@ -22,7 +22,7 @@ Priority meanings:
 | 3 | QWEN-01 | P1 | Complete | Add the internal Qwen backend protocol/factory and deterministic model cleanup |
 | 4 | QWEN-02 | P1 | Complete | Implement and package the full-precision MLX Qwen adapter |
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
-| 6 | REL-01 | P1 | Ready | Produce and verify a reproducible signed macOS release candidate |
+| 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | QWEN-04 | P2 | Deferred evidence | Complete the promotion-level human, long-audio, and signed-app MLX matrix |
 | 8 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
 | 9 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |

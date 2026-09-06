@@ -180,7 +180,7 @@ Files written inside the data directory:
 ### ASR engine
 
 - **Qwen3-ASR** (`engine="qwen"`): best accuracy for Chinese + 30 languages; the official PyTorch adapter selects CUDA when available and CPU otherwise. Apple Silicon supports explicit `AUDIOASSIST_QWEN_BACKEND=mlx` and diagnostic `pytorch-mps` overrides; the QWEN-03 evidence hold keeps automatic selection unchanged (see [benchmark record](docs/qwen-benchmark-results.md)).
-- **Whisper** (`engine="whisper"`): Apple Silicon — uses `mlx-whisper` (Neural Engine); other platforms — uses `faster-whisper` (CPU/CUDA).
+- **Whisper** (`engine="whisper"`): Apple Silicon — uses `mlx-whisper` on the Apple GPU through Metal; other platforms — uses `faster-whisper` (CPU/CUDA).
 
 > **First run:** On launch, the app checks whether the required ASR model is present. If not, the setup panel is shown (see [First-run model setup](#first-run-model-setup)). Once downloaded, subsequent runs use the cached weights with no network access.
 
