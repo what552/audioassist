@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from .session_paths import get_session_paths, resolve_summary_path, resolve_transcript_path
+from .language import canonical_language_code, canonical_transcript_language
 
 
 ProgressCallback = Callable[[float, str], None]
@@ -32,6 +33,7 @@ _LANG_INSTRUCTIONS: dict[str, str] = {
     "ru": "Пожалуйста, отвечайте на русском языке.",
     "ar": "يرجى الرد باللغة العربية.",
     "en": "Please respond in English.",
+    "mixed": "请使用转写中的主要语言生成纪要，并保留必要的中英文术语。",
 }
 
 
@@ -61,7 +63,8 @@ _summary_locks_guard = threading.Lock()
 
 def language_instruction(language: str, text: str) -> str:
     """Return a summary-language instruction, with a conservative CJK fallback."""
-    normalized = (language or "").strip().lower()
+    reported = canonical_language_code(language)
+    normalized = canonical_transcript_language(language, text) if reported else ""
     if normalized in _LANG_INSTRUCTIONS:
         return _LANG_INSTRUCTIONS[normalized]
     if text:
@@ -123,7 +126,18 @@ class AudioAssistService:
         if not path:
             return None
         data = _read_json(path, None)
-        return data if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            return None
+        result = dict(data)
+        text = " ".join(
+            str(segment.get("text", ""))
+            for segment in result.get("segments", [])
+            if isinstance(segment, dict)
+        )
+        result["language"] = canonical_transcript_language(
+            result.get("language", ""), text
+        )
+        return result
 
     def get_summary_versions(self, job_id: str) -> list[dict]:
         job_id = validate_job_id(job_id)
@@ -434,12 +448,19 @@ class AudioAssistService:
     def _history_entry(job_id: str, data: dict) -> dict:
         segments = data.get("segments", [])
         duration = round(segments[-1].get("end", 0)) if segments else 0
+        text = " ".join(
+            str(segment.get("text", ""))
+            for segment in segments
+            if isinstance(segment, dict)
+        )
         return {
             "job_id": job_id,
             "filename": data.get("filename") or data.get("audio") or job_id,
             "date": data.get("created_at", ""),
             "duration": duration,
-            "language": data.get("language", ""),
+            "language": canonical_transcript_language(
+                data.get("language", ""), text
+            ),
             "audio_path": data.get("audio", ""),
             "type": "file",
         }

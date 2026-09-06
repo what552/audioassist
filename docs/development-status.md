@@ -14,8 +14,11 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The REL-01 baseline is 757 automated tests: 754 Python/backend tests and
-3 browser tests. It includes the pinned `mlx-qwen3-asr` 0.3.5 adapter,
+The current baseline is 776 automated tests, including 3 browser tests. It
+canonicalizes backend language names and ISO variants, corrects strongly conflicting
+language metadata from transcript script evidence, reports substantial Chinese/English
+code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
+them. It also includes the pinned `mlx-qwen3-asr` 0.3.5 adapter,
 native Forced Aligner conversion, deterministic holder/cache cleanup, and focused
 PyInstaller resources. Forced-offline 30-second Qwen CPU, diagnostic MPS, and MLX CLI
 smoke jobs all completed against the application-managed 1.7B and aligner directories.

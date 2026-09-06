@@ -67,6 +67,12 @@ package reports `dependency_not_ready` with exit code 4.
 Fields may be added to `data` compatibly. Removing or renaming existing fields, changing
 their types, or changing exit-code meaning requires a documented contract revision.
 
+Transcript and session `language` fields use canonical short codes such as `zh`, `en`,
+`yue`, `ja`, and `ko`. Substantial Chinese/English code-switching is reported as
+`mixed`. Full language names and common ISO variants from inference libraries are
+normalized at the shared service boundary. Legacy transcript files remain readable and
+are normalized in API responses without rewriting the stored file.
+
 ## Exit codes
 
 | Code | Meaning |
