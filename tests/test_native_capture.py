@@ -814,13 +814,28 @@ class TestScreenRecordingPermission:
         import app as app_module
 
         library = MagicMock()
-        library.CGRequestScreenCaptureAccess.side_effect = lambda: threading.Event().wait(0.2)
+        release = threading.Event()
+        started = threading.Event()
+
+        def blocking_request():
+            started.set()
+            release.wait(0.5)
+            return True
+
+        library.CGRequestScreenCaptureAccess.side_effect = blocking_request
         with patch.object(
             app_module, "_macos_screen_recording_permission_status", return_value="required"
-        ), patch.object(app_module, "_load_core_graphics", return_value=library):
-            status = app_module._request_macos_screen_recording_permission(0)
+        ), patch.object(
+            app_module, "_load_core_graphics", return_value=library
+        ), patch.object(app_module, "_SCREEN_PERMISSION_REQUEST", None):
+            first_status = app_module._request_macos_screen_recording_permission(0)
+            assert started.wait(0.1)
+            retry_status = app_module._request_macos_screen_recording_permission(0)
+            release.set()
 
-        assert status == "timeout"
+        assert first_status == "timeout"
+        assert retry_status == "in_progress"
+        library.CGRequestScreenCaptureAccess.assert_called_once_with()
 
     def test_api_returns_json_serializable_screen_permission_result(self):
         from app import API

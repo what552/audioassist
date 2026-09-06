@@ -295,6 +295,54 @@ def test_system_mode_requests_only_screen_and_system_audio_permission(
     assert page.evaluate("_mockApi.calls('start_realtime')[0].args[0].capture_mode") == "system"
 
 
+def test_system_permission_wait_can_cancel_without_starting_session(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "missing_permissions": ["screen_recording"],
+            "screen_recording_permission": "required",
+        },
+        "screenPermissionDelayMs": 500,
+    })
+
+    page.locator(".btn-mode[data-mode='system']").click()
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function(
+        "_mockApi.calls('request_screen_recording_permission').length === 1"
+    )
+    assert page.locator("#realtime-status").inner_text() == (
+        "Waiting for Screen & System Audio permission…"
+    )
+
+    page.locator("#btn-start-recording").click()
+    assert page.locator("#realtime-status").inner_text() == "Permission request canceled"
+    page.wait_for_timeout(600)
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+
+
+def test_system_permission_in_progress_restores_controls(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "missing_permissions": ["screen_recording"],
+            "screen_recording_permission": "required",
+        },
+        "screenPermission": {"status": "in_progress", "authorized": False},
+    })
+
+    page.locator(".btn-mode[data-mode='system']").click()
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("!document.querySelector('#btn-start-recording').disabled")
+
+    assert page.locator("#realtime-status").inner_text() == "Permission request in progress"
+    assert page.locator("#btn-open-screen-privacy").is_visible()
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+
+
 def test_mix_mode_requests_microphone_then_screen_permission(
     page: Page, ui_base_url: str
 ) -> None:

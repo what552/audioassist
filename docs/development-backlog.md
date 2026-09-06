@@ -98,6 +98,8 @@ restart, stop, and non-empty WAV checks.
   Mix requires both.
 - Preflight reports both statuses and an ordered `missing_permissions` list. The GUI
   requests each missing permission separately and exposes separate settings actions.
+- The synchronous CoreGraphics system-audio request is process-wide single-flight, so
+  cancel, timeout, and immediate retry cannot create concurrent native requests.
 - HTTP/MCP never trigger privacy prompts and reject any missing permission before
   model, Session/WAV, helper, or stream startup.
 - Package both `NSScreenCaptureUsageDescription` and the newer

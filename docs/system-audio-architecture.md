@@ -45,6 +45,8 @@ Passing a waveform dictionary to pyannote avoids its file-path decoder and there
 - Stop drains pending PCM and ASR work before closing the FIFO and WAV.
 - Missing permissions are listed independently, with separate settings actions, before
   model loading or Session/WAV creation.
+- Screen & System Audio authorization is process-wide single-flight because the native
+  request is synchronous and non-cancelable; UI cancel only abandons its continuation.
 - A microphone device/converter failure in `mix` mode after permission preflight is
   non-fatal: the UI reports degradation and the session continues with system audio.
 

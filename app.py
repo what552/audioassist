@@ -34,6 +34,8 @@ TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
 # Known audio extensions used when copying source files into the output dir
 _AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".mp4", ".aac", ".flac", ".ogg", ".mov", ".mkv")
 _REALTIME_WAV_PREFIX = "realtime_recording"
+_SCREEN_PERMISSION_REQUEST_LOCK = threading.Lock()
+_SCREEN_PERMISSION_REQUEST: Optional[dict] = None
 
 
 def _macos_microphone_permission_status() -> str:
@@ -129,38 +131,53 @@ def _macos_screen_recording_permission_status() -> str:
 
 
 def _request_macos_screen_recording_permission(timeout_seconds: float = 60.0) -> str:
-    """Request Screen & System Audio Recording access before model loading."""
+    """Request Screen & System Audio Recording access before model loading.
+
+    Core Graphics exposes a synchronous, non-cancelable request. Keep it
+    process-wide single-flight so a UI cancel/timeout followed by retry cannot
+    leak concurrent native permission calls.
+    """
+    global _SCREEN_PERMISSION_REQUEST
+
     status = _macos_screen_recording_permission_status()
     if status in {"authorized", "not_applicable"}:
         return status
     try:
         import ctypes
 
-        request = _load_core_graphics().CGRequestScreenCaptureAccess
-        request.argtypes = []
-        request.restype = ctypes.c_bool
-        completed = threading.Event()
-        result = {"status": "unknown"}
+        with _SCREEN_PERMISSION_REQUEST_LOCK:
+            active = _SCREEN_PERMISSION_REQUEST
+            if active is not None and not active["completed"].is_set():
+                return "in_progress"
 
-        def _request() -> None:
-            try:
-                result["status"] = "authorized" if request() else "required"
-            except Exception:
-                logger.warning(
-                    "Unable to request macOS screen recording permission",
-                    exc_info=True,
-                )
-            finally:
-                completed.set()
+            request = _load_core_graphics().CGRequestScreenCaptureAccess
+            request.argtypes = []
+            request.restype = ctypes.c_bool
+            state = {
+                "completed": threading.Event(),
+                "status": "unknown",
+            }
+            _SCREEN_PERMISSION_REQUEST = state
 
-        threading.Thread(
-            target=_request,
-            daemon=True,
-            name="screen-recording-permission",
-        ).start()
-        if not completed.wait(timeout_seconds):
+            def _request() -> None:
+                try:
+                    state["status"] = "authorized" if request() else "required"
+                except Exception:
+                    logger.warning(
+                        "Unable to request macOS screen recording permission",
+                        exc_info=True,
+                    )
+                finally:
+                    state["completed"].set()
+
+            threading.Thread(
+                target=_request,
+                daemon=True,
+                name="screen-recording-permission",
+            ).start()
+        if not state["completed"].wait(timeout_seconds):
             return "timeout"
-        return result["status"]
+        return state["status"]
     except Exception:
         logger.warning("Unable to request macOS screen recording permission", exc_info=True)
         return "unknown"

@@ -322,6 +322,7 @@ const Realtime = (() => {
 
   function _permissionFailureStatus(kind, status) {
     if (status === 'timeout') return 'Permission timed out';
+    if (status === 'in_progress') return 'Permission request in progress';
     if (kind === 'microphone') return 'Microphone unavailable';
     if (kind === 'screen_recording') return 'Screen & System Audio unavailable';
     return 'Permissions required';
