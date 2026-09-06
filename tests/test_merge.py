@@ -180,7 +180,7 @@ class TestMerge:
         blocks = merge(asr, segs)
         assert len(blocks) == 2
         assert blocks[0].text == "Hello world."
-        assert blocks[1].text == "Next topic"
+        assert blocks[1].text == "Next topic."
 
     def test_splits_single_speaker_block_when_duration_grows_too_long(self):
         segs = [SpeakerSegment("SPEAKER_00", 0.0, 80.0)]
@@ -195,7 +195,7 @@ class TestMerge:
         asr = TranscriptResult(text="abcdef", language="en", words=words)
         blocks = merge(asr, segs)
         assert len(blocks) >= 2
-        assert " ".join(" ".join(block.text.split()) for block in blocks) == "a b c d e f"
+        assert " ".join(" ".join(block.text.split()) for block in blocks) == "a b c d e f."
 
     def test_english_words_keep_spaces(self):
         segs = [SpeakerSegment("SPEAKER_00", 0.0, 10.0)]
@@ -244,7 +244,7 @@ class TestMerge:
         assert blocks[0].text == "Please show me your passport."
         assert blocks[1].text == "thank you have a seat."
 
-    def test_cjk_long_block_forces_sentence_break_and_adds_full_stops(self):
+    def test_cjk_length_split_does_not_invent_internal_sentence_boundary(self):
         segs = [SpeakerSegment("SPEAKER_00", 0.0, 40.0)]
         words = [
             WordSegment("这是", 0.0, 0.2),
@@ -269,8 +269,130 @@ class TestMerge:
         )
         blocks = merge(asr, segs)
         assert len(blocks) >= 2
-        assert blocks[0].text.endswith("。")
-        assert "。" in "".join(block.text for block in blocks)
+        assert not blocks[0].text.endswith("。")
+        assert blocks[-1].text.endswith("。")
+
+    def test_speaker_switch_without_pause_does_not_invent_period(self):
+        segs = [
+            SpeakerSegment("SPEAKER_00", 0.0, 0.8),
+            SpeakerSegment("SPEAKER_01", 0.8, 2.0),
+        ]
+        words = [
+            WordSegment("we", 0.0, 0.2),
+            WordSegment("need", 0.2, 0.4),
+            WordSegment("to", 0.4, 0.5),
+            WordSegment("consider", 0.5, 0.8),
+            WordSegment("the", 0.8, 1.0),
+            WordSegment("next", 1.0, 1.2),
+            WordSegment("step", 1.2, 1.4),
+            WordSegment("carefully", 1.4, 1.7),
+        ]
+        blocks = merge(TranscriptResult("", "en", words), segs)
+        assert blocks[0].text == "we need to consider"
+        assert blocks[1].text == "the next step carefully."
+
+    def test_speaker_switch_after_sentence_pause_adds_period(self):
+        segs = [
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+            SpeakerSegment("SPEAKER_01", 1.5, 3.0),
+        ]
+        words = [
+            WordSegment("please", 0.0, 0.2),
+            WordSegment("send", 0.2, 0.4),
+            WordSegment("the", 0.4, 0.5),
+            WordSegment("report", 0.5, 0.8),
+            WordSegment("yes", 1.5, 1.7),
+            WordSegment("I", 1.7, 1.8),
+            WordSegment("will", 1.8, 2.0),
+            WordSegment("do", 2.0, 2.2),
+        ]
+        blocks = merge(TranscriptResult("", "en", words), segs)
+        assert blocks[0].text == "please send the report."
+
+    @pytest.mark.parametrize("ending", [",", ":", "，", "：", "、", "…"])
+    def test_existing_nonterminal_punctuation_is_not_doubled(self, ending):
+        words = [
+            WordSegment("this", 0.0, 0.1),
+            WordSegment("is", 0.1, 0.2),
+            WordSegment("already", 0.2, 0.3),
+            WordSegment("marked" + ending, 0.3, 0.5),
+        ]
+        blocks = merge(
+            TranscriptResult("", "en", words),
+            [SpeakerSegment("SPEAKER_00", 0.0, 1.0)],
+        )
+        assert blocks[0].text.endswith(ending)
+
+    def test_chinese_sentence_punctuation_inside_closing_quote_is_preserved(self):
+        words = [
+            WordSegment("他说", 0.0, 0.2),
+            WordSegment("“我们现在出发。”", 0.2, 0.8),
+        ]
+        blocks = merge(
+            TranscriptResult("", "zh", words),
+            [SpeakerSegment("SPEAKER_00", 0.0, 1.0)],
+        )
+        assert blocks[0].text == "他说“我们现在出发。”"
+
+    def test_japanese_language_uses_full_width_stop_and_no_ascii_spaces(self):
+        words = [
+            WordSegment("これ", 0.0, 0.2),
+            WordSegment("から", 0.2, 0.4),
+            WordSegment("始め", 0.4, 0.6),
+            WordSegment("ます", 0.6, 0.8),
+        ]
+        blocks = merge(
+            TranscriptResult("", "ja", words),
+            [SpeakerSegment("SPEAKER_00", 0.0, 1.0)],
+        )
+        assert blocks[0].text == "これから始めます。"
+
+    def test_mixed_text_uses_dominant_script_for_generated_terminal(self):
+        words = [
+            WordSegment("今天", 0.0, 0.2),
+            WordSegment("讨论", 0.2, 0.4),
+            WordSegment("MLX", 0.4, 0.6),
+            WordSegment("方案", 0.6, 0.8),
+        ]
+        blocks = merge(
+            TranscriptResult("", "mixed", words),
+            [SpeakerSegment("SPEAKER_00", 0.0, 1.0)],
+        )
+        assert blocks[0].text == "今天讨论MLX方案。"
+
+    @pytest.mark.parametrize(
+        ("language", "tokens", "expected"),
+        [
+            ("ru", ["это", "важный", "новый", "результат"], "это важный новый результат."),
+            ("ar", ["هذا", "اختبار", "صوتي", "واضح"], "هذا اختبار صوتي واضح."),
+            ("ko", ["이것은", "명확한", "음성", "테스트"], "이것은 명확한 음성 테스트."),
+        ],
+    )
+    def test_non_ascii_spaced_languages_receive_conservative_terminal(
+        self, language, tokens, expected
+    ):
+        words = [
+            WordSegment(token, index * 0.2, (index + 1) * 0.2)
+            for index, token in enumerate(tokens)
+        ]
+        blocks = merge(
+            TranscriptResult("", language, words),
+            [SpeakerSegment("SPEAKER_00", 0.0, 2.0)],
+        )
+        assert blocks[0].text == expected
+
+    def test_earlier_punctuation_does_not_disable_later_length_split(self):
+        tokens = ["Intro."] + [f"word{index}" for index in range(1, 25)]
+        words = [
+            WordSegment(token, index * 0.2, (index + 1) * 0.2)
+            for index, token in enumerate(tokens)
+        ]
+        blocks = merge(
+            TranscriptResult("", "en", words),
+            [SpeakerSegment("SPEAKER_00", 0.0, 10.0)],
+        )
+        assert len(blocks) >= 2
+        assert "Intro." in blocks[0].text
 
 
 # ── to_json ───────────────────────────────────────────────────────────────────

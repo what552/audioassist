@@ -29,8 +29,8 @@ Priority meanings:
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
 | 12 | ASR-QUALITY-01 | P2 | Complete | Use confidence-gated overlap and same-speaker gap alignment without hiding uncertainty |
-| 13 | TEXT-01 | P2 | Next | Add conservative, language-aware punctuation improvement |
-| 14 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
+| 13 | TEXT-01 | P2 | Complete | Add conservative, language-aware punctuation without semantic rewriting |
+| 14 | R03-B1 | P2 | Next: design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
 | 15 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
@@ -178,7 +178,7 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 | TEST-UI-01 | Complete: close frontend coverage gaps | Eight browser scenarios cover startup/history, setup, cancel/retry, model modal, drag/drop queueing, and Summary Agent flows |
 | TRANS-01 | Complete: cancellation and concurrency hardening | Immediate cancel registration, duplicate-job rejection, transactional output/refine, retryable refine cancellation, and serialized rename/rerun mutations |
 | ASR-QUALITY-01 | Complete: speaker/timestamp quality | Interval-overlap assignment, conservative dominance/coverage gates, and bounded same-speaker gap repair shared by file and realtime paths |
-| TEXT-01 | Conservative punctuation improvement | Language-aware evaluation; no semantic rewriting |
+| TEXT-01 | Complete: conservative punctuation | Pause-backed internal terminals, transcript-final punctuation, punctuation de-duplication, and Chinese/Japanese/mixed/non-ASCII language fixtures; no semantic rewriting |
 | MAC-AUDIO-01 | Mix-mode echo cancellation | Define measurable echo/reference-signal acceptance before implementation |
 | WIN-AUDIO-01 | Windows system-audio capture and EXE | Select a Windows capture backend, add lifecycle tests, then package and smoke-test on Windows |
 | CLOUD-ASR-01 | Optional cloud ASR fallback | Privacy/consent, provider abstraction, cancellation, cost visibility, and local-default behavior required |
@@ -224,7 +224,7 @@ scheduled twice:
 | Agent timeouts and fixed transcript truncation | Still open under AGENT-01 |
 | Per-job lock growth, seek errors, alerts, pause/resume state | Still open under the corresponding P3 maintenance IDs |
 | ffprobe `N/A` and direct ASR timestamp adapter tests | Still open under AUDIO-UTIL-01 and TEST-ASR-01 |
-| UNKNOWN speaker, punctuation, aligner logging | Still open as ASR-QUALITY-01, TEXT-01, and LOG-01 |
+| UNKNOWN speaker, punctuation, aligner logging | Speaker and punctuation work complete as ASR-QUALITY-01/TEXT-01; aligner logging remains LOG-01 |
 | Windows system audio and mix echo cancellation | Still open as WIN-AUDIO-01 and MAC-AUDIO-01 |
 
 ## Deferred ideas, not committed work
