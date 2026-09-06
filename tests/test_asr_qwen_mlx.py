@@ -111,6 +111,7 @@ def test_transcribe_maps_language_and_word_segments(caplog):
 
     assert converted.text == "hello world"
     assert converted.language == "English"
+    assert engine.last_truncated is True
     assert [(word.word, word.start, word.end) for word in converted.words] == [
         ("hello", 0.1, 0.5),
         (" world", 0.5, 1.0),
@@ -119,8 +120,36 @@ def test_transcribe_maps_language_and_word_segments(caplog):
         "/audio/sample.wav",
         return_timestamps=True,
         forced_aligner=aligner,
+        return_chunks=True,
     )
     assert "truncated" in caplog.text
+
+
+def test_transcribe_recovers_empty_aggregate_language_from_chunks():
+    result = SimpleNamespace(
+        text="hello",
+        language="",
+        segments=[],
+        chunks=[
+            {"language": ""},
+            {"language": "Chinese"},
+            {"language": "Chinese"},
+            {"language": "English"},
+        ],
+        truncated=False,
+    )
+    session = MagicMock()
+    session.transcribe.return_value = result
+    engine = MLXQwenASREngine(
+        model_path="/models/qwen",
+        aligner_path="/models/aligner",
+        with_timestamps=True,
+    )
+    engine._session = session
+
+    converted = engine.transcribe("/audio/sample.wav")
+
+    assert converted.language == "Chinese"
 
 
 def test_close_clears_session_aligner_holders_and_mlx_cache():

@@ -21,10 +21,11 @@ Priority meanings:
 | 2 | ENV-01 | P1 | Complete | Unify development, CLI, test, and package builds on the repository `.venv` |
 | 3 | QWEN-01 | P1 | Complete | Add the internal Qwen backend protocol/factory and deterministic model cleanup |
 | 4 | QWEN-02 | P1 | Complete | Implement and package the full-precision MLX Qwen adapter |
-| 5 | QWEN-03 | P1 | Ready | Benchmark CPU, diagnostic MPS, and MLX; decide whether MLX becomes the Mac default |
-| 6 | REL-01 | P1 | Depends on ENV-01/QWEN-03 | Produce and verify a reproducible signed macOS release candidate |
-| 7 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
-| 8 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
+| 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
+| 6 | REL-01 | P1 | Ready | Produce and verify a reproducible signed macOS release candidate |
+| 7 | QWEN-04 | P2 | Deferred evidence | Complete the promotion-level human, long-audio, and signed-app MLX matrix |
+| 8 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
+| 9 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent
@@ -133,7 +134,9 @@ Acceptance:
 - Include source-tree and signed-app results.
 
 MLX becomes the Apple Silicon default only after the gates in the Qwen decision
-document pass. PyTorch MPS is not promoted merely because it initializes.
+document pass. The current evidence and hold decision are recorded in
+`docs/qwen-benchmark-results.md`: MLX remains explicit and `auto` is unchanged.
+Promotion-level gaps move to QWEN-04; they do not silently disappear.
 
 ### REL-01 — Reproducible macOS release
 
@@ -149,6 +152,7 @@ document pass. PyTorch MPS is not promoted merely because it initializes.
 
 | ID | Task | Acceptance direction |
 |---|---|---|
+| QWEN-04 | MLX promotion evidence expansion | Human Mandarin/Cantonese/English/code-switch references, clean/noisy and 30/60/120-minute fixtures, listening review, and signed-app results must satisfy every documented threshold before changing `auto` |
 | R03-B1 | HTTP service lifecycle/security design | Explicit ownership, localhost boundary, port collision, lock, recovery, cancellation, shutdown, and versioned schema before implementation |
 | R03-B2 | HTTP recording control plus MCP adapter | Reuse `src/service.py`; data reads work with the app closed; recording mutations require the visible app and return stable errors |
 | AGENT-01 | Summary Agent reliability | Request/tool timeouts, transcript paging instead of a fixed 6000-character truncation, and summary writes through the shared service |

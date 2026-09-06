@@ -39,6 +39,7 @@ TranscribeApp data directory and are managed by the application.
 .venv/bin/audioassist --json sessions list
 .venv/bin/python -m pytest -q
 bash scripts/build_dmg.sh
+.venv/bin/python -m src.qwen_benchmark run --help
 ```
 
 Activation is optional. If the environment is activated, `python` and

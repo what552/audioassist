@@ -1,0 +1,13 @@
+{
+  "samples": [
+    {
+      "id": "mandarin-clean-5m",
+      "path": "/absolute/path/to/user-approved-clip.wav",
+      "tags": ["mandarin", "clean", "offline", "five-minute"],
+      "expected_language": "Chinese",
+      "reference_path": "/absolute/path/to/human-reference.txt",
+      "reference_kind": "human",
+      "duration_seconds": 300.0
+    }
+  ]
+}

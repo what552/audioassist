@@ -463,6 +463,13 @@ realtime stability, and signed-app comparison remain QWEN-03/REL-01 gates.
 
 ### Phase 3: controlled Mac default
 
+QWEN-03 decision: hold the current automatic backend. The source-tree runner
+and measurements are recorded in `docs/qwen-benchmark-results.md`. MLX passed
+the measured speed, boundary, truncation, and 50-cycle lifecycle checks, but
+MPS was faster on the tested M5 Pro and the full human, long-audio, and signed-
+app matrix is incomplete. QWEN-04 owns that remaining evidence; neither
+accelerated backend is promoted by this batch.
+
 - Select MLX automatically on supported Apple Silicon machines only after the
   acceptance gates pass.
 - Retain official PyTorch CPU/CUDA paths.
