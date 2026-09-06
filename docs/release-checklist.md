@@ -47,9 +47,13 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
 - Run `bash scripts/build_dmg.sh` from the repository root.
 - Inspect `dist/release-verification-<version>.json`; it must report the same
   version as `pyproject.toml`, a valid strict signature, required helper/runtime
-  assets, no developer-only Mach-O load paths, and the DMG SHA-256.
+  assets, no developer-only Mach-O load paths, the DMG SHA-256, and a read-only
+  mounted DMG payload whose app identity and CDHash match the source app.
 - For distribution, the evidence must say `signature: developer-id`, and
-  `xcrun stapler validate dist/AudioAssist-<version>.dmg` must pass.
+  every nested Mach-O must have the same signing team, Hardened Runtime, a
+  secure timestamp, and only the explicitly allowed entitlements. When
+  notarization is requested, `xcrun stapler validate
+  dist/AudioAssist-<version>.dmg` must pass.
 
 ## File transcription
 

@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The REL-01 baseline is 750 automated tests: 747 Python/backend tests and
+The REL-01 baseline is 757 automated tests: 754 Python/backend tests and
 3 browser tests. It includes the pinned `mlx-qwen3-asr` 0.3.5 adapter,
 native Forced Aligner conversion, deterministic holder/cache cleanup, and focused
 PyInstaller resources. Forced-offline 30-second Qwen CPU, diagnostic MPS, and MLX CLI
@@ -36,7 +36,10 @@ builds from the locked repository environment, signs nested code before the
 outer app, creates the DMG without Finder automation, and emits a JSON
 verification record. A real 0.1.0 ad-hoc candidate passed strict signatures,
 focused asset/entitlement checks, 491 Mach-O load-path checks, 582 symlink
-checks, and DMG image verification. The implementation is complete, while a
+checks, DMG image verification, and a read-only mounted payload comparison by
+bundle identity and CDHash. Developer ID mode also audits every nested Mach-O
+for team identity, Hardened Runtime, timestamp, and entitlement drift. The
+implementation is complete, while a
 distributable build remains externally gated by the unavailable Developer ID
 identity/notary credentials and clean-machine release checks.
 

@@ -10,6 +10,7 @@ import plistlib
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from typing import Sequence
 
@@ -89,6 +90,44 @@ def _signature_kind(details: str) -> str:
     return "other"
 
 
+def _detail_value(details: str, key: str) -> str | None:
+    match = re.search(rf"^{re.escape(key)}=(.+)$", details, re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def _verify_developer_signature(
+    details: str,
+    *,
+    label: str,
+    expected_team_identifier: str | None = None,
+    require_hardened_runtime: bool,
+) -> str:
+    if _signature_kind(details) != "developer-id":
+        raise VerificationError(f"Developer ID signature required for {label}")
+    team_identifier = _detail_value(details, "TeamIdentifier")
+    if not team_identifier or team_identifier == "not set":
+        raise VerificationError(f"Developer ID TeamIdentifier missing for {label}")
+    if expected_team_identifier and team_identifier != expected_team_identifier:
+        raise VerificationError(
+            f"Developer ID TeamIdentifier mismatch for {label}: "
+            f"expected {expected_team_identifier}, found {team_identifier}"
+        )
+    if not _detail_value(details, "Timestamp"):
+        raise VerificationError(f"secure signing timestamp missing for {label}")
+    if require_hardened_runtime:
+        code_directory = next(
+            (
+                line
+                for line in details.splitlines()
+                if line.startswith("CodeDirectory ")
+            ),
+            "",
+        )
+        if "runtime" not in code_directory:
+            raise VerificationError(f"Hardened Runtime missing for {label}")
+    return team_identifier
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -107,8 +146,18 @@ def _is_macho(path: Path) -> bool:
         return False
 
 
-def _verify_macho_load_paths(app: Path) -> int:
+def _verify_macho_files(
+    app: Path,
+    *,
+    require_developer_id: bool,
+    team_identifier: str | None,
+) -> tuple[int, int]:
     checked = 0
+    signatures_checked = 0
+    entitlement_targets = {
+        app / "Contents/MacOS/AudioAssist",
+        app / "Contents/Frameworks/AudioAssistCaptureHelper",
+    }
     for path in app.rglob("*"):
         if not _is_macho(path):
             continue
@@ -132,9 +181,132 @@ def _verify_macho_load_paths(app: Path) -> int:
         if leaked:
             relative = path.relative_to(app)
             raise VerificationError(f"developer path in {relative}: {leaked}")
+        if require_developer_id:
+            relative = path.relative_to(app)
+            details = _codesign_details(path)
+            _verify_developer_signature(
+                details,
+                label=str(relative),
+                expected_team_identifier=team_identifier,
+                require_hardened_runtime=True,
+            )
+            expected_entitlements = (
+                EXPECTED_AUDIO_ENTITLEMENTS if path in entitlement_targets else {}
+            )
+            entitlements = _codesign_entitlements(path)
+            if entitlements != expected_entitlements:
+                raise VerificationError(
+                    f"unexpected entitlements for {relative}: {entitlements}"
+                )
+            signatures_checked += 1
     if checked == 0:
         raise VerificationError("app contains no Mach-O binaries")
-    return checked
+    return checked, signatures_checked
+
+
+def _bundle_identity(app: Path, expected_version: str) -> tuple[str, dict[str, str]]:
+    info_path = app / "Contents/Info.plist"
+    if not info_path.is_file():
+        raise VerificationError(f"Info.plist does not exist: {info_path}")
+    with info_path.open("rb") as info_file:
+        info = plistlib.load(info_file)
+    versions = {
+        "short": str(info.get("CFBundleShortVersionString", "")),
+        "build": str(info.get("CFBundleVersion", "")),
+    }
+    if set(versions.values()) != {expected_version}:
+        raise VerificationError(
+            f"bundle version mismatch: expected {expected_version}, found {versions}"
+        )
+    bundle_id = str(info.get("CFBundleIdentifier", ""))
+    if bundle_id != BUNDLE_ID:
+        raise VerificationError(f"bundle identifier mismatch: {bundle_id!r}")
+    return bundle_id, versions
+
+
+def _verify_dmg_payload(
+    dmg: Path,
+    *,
+    source_app: Path,
+    expected_version: str,
+    source_details: str,
+    require_developer_id: bool,
+    team_identifier: str | None,
+) -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="audioassist-dmg-") as mount_dir:
+        mount = Path(mount_dir)
+        attached = False
+        try:
+            _require_success(
+                [
+                    "hdiutil",
+                    "attach",
+                    "-readonly",
+                    "-nobrowse",
+                    "-mountpoint",
+                    str(mount),
+                    str(dmg),
+                ],
+                "read-only DMG mount",
+            )
+            attached = True
+            apps = list(mount.glob("*.app"))
+            if len(apps) != 1 or apps[0].name != source_app.name:
+                names = ", ".join(sorted(path.name for path in apps)) or "none"
+                raise VerificationError(
+                    f"DMG must contain exactly {source_app.name}; found: {names}"
+                )
+            mounted_app = apps[0]
+            bundle_id, versions = _bundle_identity(mounted_app, expected_version)
+            _require_success(
+                [
+                    "codesign",
+                    "--verify",
+                    "--all-architectures",
+                    "--deep",
+                    "--strict",
+                    str(mounted_app),
+                ],
+                "strict mounted-app signature verification",
+            )
+            mounted_details = _codesign_details(mounted_app)
+            mounted_signature_kind = _signature_kind(mounted_details)
+            source_signature_kind = _signature_kind(source_details)
+            if mounted_signature_kind != source_signature_kind:
+                raise VerificationError(
+                    "DMG app signature kind does not match source app: "
+                    f"{mounted_signature_kind} != {source_signature_kind}"
+                )
+            if require_developer_id:
+                _verify_developer_signature(
+                    mounted_details,
+                    label="DMG AudioAssist.app",
+                    expected_team_identifier=team_identifier,
+                    require_hardened_runtime=True,
+                )
+            source_cdhash = _detail_value(source_details, "CDHash")
+            mounted_cdhash = _detail_value(mounted_details, "CDHash")
+            if not source_cdhash or not mounted_cdhash:
+                raise VerificationError("CDHash missing while comparing source and DMG apps")
+            if mounted_cdhash != source_cdhash:
+                raise VerificationError(
+                    "DMG app does not match source app CDHash: "
+                    f"{mounted_cdhash} != {source_cdhash}"
+                )
+            return {
+                "payload_verified": True,
+                "app_name": mounted_app.name,
+                "bundle_id": bundle_id,
+                "versions": versions,
+                "signature": mounted_signature_kind,
+                "cdhash": mounted_cdhash,
+            }
+        finally:
+            if attached:
+                _require_success(
+                    ["hdiutil", "detach", str(mount)],
+                    "DMG detach",
+                )
 
 
 def _verify_symlinks(app: Path) -> int:
@@ -163,22 +335,7 @@ def verify_release(
     app = app.resolve()
     if not app.is_dir():
         raise VerificationError(f"app bundle does not exist: {app}")
-    info_path = app / "Contents/Info.plist"
-    if not info_path.is_file():
-        raise VerificationError(f"Info.plist does not exist: {info_path}")
-    with info_path.open("rb") as info_file:
-        info = plistlib.load(info_file)
-    versions = {
-        "short": str(info.get("CFBundleShortVersionString", "")),
-        "build": str(info.get("CFBundleVersion", "")),
-    }
-    if set(versions.values()) != {expected_version}:
-        raise VerificationError(
-            f"bundle version mismatch: expected {expected_version}, found {versions}"
-        )
-    bundle_id = str(info.get("CFBundleIdentifier", ""))
-    if bundle_id != BUNDLE_ID:
-        raise VerificationError(f"bundle identifier mismatch: {bundle_id!r}")
+    bundle_id, versions = _bundle_identity(app, expected_version)
 
     missing = [relative for relative in REQUIRED_FILES if not (app / relative).is_file()]
     metadata = list(
@@ -195,13 +352,26 @@ def verify_release(
     )
     app_details = _codesign_details(app)
     signature_kind = _signature_kind(app_details)
-    if require_developer_id and signature_kind != "developer-id":
-        raise VerificationError("Developer ID signature required but not present")
+    team_identifier = _detail_value(app_details, "TeamIdentifier")
+    if team_identifier == "not set":
+        team_identifier = None
+    if require_developer_id:
+        team_identifier = _verify_developer_signature(
+            app_details,
+            label="AudioAssist.app",
+            require_hardened_runtime=True,
+        )
 
     helper = app / "Contents/Frameworks/AudioAssistCaptureHelper"
-    helper_signature_kind = _signature_kind(_codesign_details(helper))
-    if require_developer_id and helper_signature_kind != "developer-id":
-        raise VerificationError("Developer ID capture-helper signature required but not present")
+    helper_details = _codesign_details(helper)
+    helper_signature_kind = _signature_kind(helper_details)
+    if require_developer_id:
+        _verify_developer_signature(
+            helper_details,
+            label="AudioAssistCaptureHelper",
+            expected_team_identifier=team_identifier,
+            require_hardened_runtime=True,
+        )
     for target in (app, helper):
         entitlements = _codesign_entitlements(target)
         if entitlements != EXPECTED_AUDIO_ENTITLEMENTS:
@@ -209,10 +379,11 @@ def verify_release(
                 f"unexpected entitlements for {target.name}: {entitlements}"
             )
 
-    team_match = re.search(r"^TeamIdentifier=(.+)$", app_details, re.MULTILINE)
-    team_identifier = team_match.group(1) if team_match else None
-    if team_identifier == "not set":
-        team_identifier = None
+    macho_files_checked, nested_signatures_checked = _verify_macho_files(
+        app,
+        require_developer_id=require_developer_id,
+        team_identifier=team_identifier,
+    )
     report: dict[str, object] = {
         "ok": True,
         "app": str(app),
@@ -222,7 +393,8 @@ def verify_release(
         "capture_helper_signature": helper_signature_kind,
         "team_identifier": team_identifier,
         "entitlements": EXPECTED_AUDIO_ENTITLEMENTS,
-        "macho_files_checked": _verify_macho_load_paths(app),
+        "macho_files_checked": macho_files_checked,
+        "nested_signatures_checked": nested_signatures_checked,
         "symlinks_checked": _verify_symlinks(app),
         "required_files": list(REQUIRED_FILES),
         "mlx_qwen_metadata": str(metadata[0].relative_to(app)),
@@ -236,10 +408,24 @@ def verify_release(
             ["codesign", "--verify", "--verbose=2", str(dmg)],
             "DMG signature verification",
         )
-        dmg_signature_kind = _signature_kind(_codesign_details(dmg))
-        if require_developer_id and dmg_signature_kind != "developer-id":
-            raise VerificationError("Developer ID DMG signature required but not present")
+        dmg_details = _codesign_details(dmg)
+        dmg_signature_kind = _signature_kind(dmg_details)
+        if require_developer_id:
+            _verify_developer_signature(
+                dmg_details,
+                label="DMG",
+                expected_team_identifier=team_identifier,
+                require_hardened_runtime=False,
+            )
         _require_success(["hdiutil", "verify", str(dmg)], "DMG image verification")
+        payload = _verify_dmg_payload(
+            dmg,
+            source_app=app,
+            expected_version=expected_version,
+            source_details=app_details,
+            require_developer_id=require_developer_id,
+            team_identifier=team_identifier,
+        )
         if require_notarized:
             if signature_kind != "developer-id" or dmg_signature_kind != "developer-id":
                 raise VerificationError("notarization requires Developer ID app and DMG signatures")
@@ -253,6 +439,7 @@ def verify_release(
             "image_verified": True,
             "signature": dmg_signature_kind,
             "notarization_required": require_notarized,
+            "payload": payload,
         }
     elif require_notarized:
         raise VerificationError("notarization validation requires --dmg")

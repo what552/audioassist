@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import plistlib
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -49,20 +50,39 @@ def _completed(
     *,
     developer_id: bool = False,
     leaked_path: bool = False,
+    runtime: bool = True,
+    timestamp: bool = True,
+    team_identifier: str = "TEAM",
+    cdhash: str = "ABCDEF1234",
 ) -> subprocess.CompletedProcess[str]:
     if command[:3] == ["codesign", "--display", "--verbose=4"]:
-        signature = (
-            "Authority=Developer ID Application: AudioAssist Test (TEAM)\n"
-            "TeamIdentifier=TEAM"
-            if developer_id
-            else "Signature=adhoc\nTeamIdentifier=not set"
-        )
+        if developer_id:
+            flags = "flags=0x10000(runtime)" if runtime else "flags=0x0(none)"
+            lines = [
+                f"CodeDirectory v=20500 {flags}",
+                "Authority=Developer ID Application: AudioAssist Test (TEAM)",
+                f"TeamIdentifier={team_identifier}",
+                f"CDHash={cdhash}",
+            ]
+            if timestamp:
+                lines.append("Timestamp=Sep 6, 2026 at 12:00:00")
+            signature = "\n".join(lines)
+        else:
+            signature = (
+                "CodeDirectory v=20400 flags=0x2(adhoc)\n"
+                "Signature=adhoc\n"
+                "TeamIdentifier=not set\n"
+                f"CDHash={cdhash}"
+            )
         return subprocess.CompletedProcess(command, 0, "", signature)
     if command[:3] == ["codesign", "--display", "--entitlements"]:
-        entitlements = plistlib.dumps(
-            {"com.apple.security.device.audio-input": True}
-        ).decode("utf-8")
-        return subprocess.CompletedProcess(command, 0, "", entitlements)
+        target = Path(command[-1])
+        if target.name in {"AudioAssist.app", "AudioAssist", "AudioAssistCaptureHelper"}:
+            entitlements = plistlib.dumps(
+                {"com.apple.security.device.audio-input": True}
+            ).decode("utf-8")
+            return subprocess.CompletedProcess(command, 0, "", entitlements)
+        return subprocess.CompletedProcess(command, 0, "", "Executable=fixture")
     if command[:2] == ["otool", "-l"]:
         output = (
             "path /Users/builder/.venv/libbad.dylib"
@@ -78,6 +98,11 @@ def test_release_verifier_accepts_complete_ad_hoc_fixture(tmp_path, monkeypatch)
     dmg = tmp_path / "AudioAssist-0.1.0.dmg"
     dmg.write_bytes(b"dmg")
     monkeypatch.setattr(verify_release, "_run", _completed)
+    monkeypatch.setattr(
+        verify_release,
+        "_verify_dmg_payload",
+        lambda *args, **kwargs: {"payload_verified": True},
+    )
 
     report = verify_release.verify_release(
         app,
@@ -92,10 +117,178 @@ def test_release_verifier_accepts_complete_ad_hoc_fixture(tmp_path, monkeypatch)
     assert report["capture_helper_signature"] == "ad-hoc"
     assert report["version"] == "0.1.0"
     assert report["macho_files_checked"] == 4
+    assert report["nested_signatures_checked"] == 0
     assert report["entitlements"] == {"com.apple.security.device.audio-input": True}
     assert len(report["dmg"]["sha256"]) == 64
     assert report["dmg"]["image_verified"] is True
     assert report["dmg"]["signature"] == "ad-hoc"
+    assert report["dmg"]["payload"]["payload_verified"] is True
+
+
+def test_release_verifier_audits_all_nested_developer_signatures(
+    tmp_path, monkeypatch
+):
+    app = _release_app(tmp_path)
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        return _completed(command, developer_id=True)
+
+    monkeypatch.setattr(verify_release, "_run", fake_run)
+
+    report = verify_release.verify_release(
+        app,
+        dmg=None,
+        expected_version="0.1.0",
+        require_developer_id=True,
+        require_notarized=False,
+    )
+
+    assert report["signature"] == "developer-id"
+    assert report["team_identifier"] == "TEAM"
+    assert report["nested_signatures_checked"] == 4
+
+
+@pytest.mark.parametrize(
+    ("runtime", "timestamp", "message"),
+    [
+        (False, True, "Hardened Runtime"),
+        (True, False, "timestamp"),
+    ],
+)
+def test_release_verifier_requires_distribution_signature_properties(
+    tmp_path, monkeypatch, runtime, timestamp, message
+):
+    app = _release_app(tmp_path)
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        return _completed(
+            command,
+            developer_id=True,
+            runtime=runtime,
+            timestamp=timestamp,
+        )
+
+    monkeypatch.setattr(verify_release, "_run", fake_run)
+
+    with pytest.raises(verify_release.VerificationError, match=message):
+        verify_release.verify_release(
+            app,
+            dmg=None,
+            expected_version="0.1.0",
+            require_developer_id=True,
+            require_notarized=False,
+        )
+
+
+def test_release_verifier_rejects_nested_team_mismatch(tmp_path, monkeypatch):
+    app = _release_app(tmp_path)
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        if command[:3] == ["codesign", "--display", "--verbose=4"]:
+            team_identifier = "OTHER" if Path(command[-1]).name == "ffmpeg" else "TEAM"
+            return _completed(
+                command,
+                developer_id=True,
+                team_identifier=team_identifier,
+            )
+        return _completed(command, developer_id=True)
+
+    monkeypatch.setattr(verify_release, "_run", fake_run)
+
+    with pytest.raises(verify_release.VerificationError, match="TeamIdentifier mismatch"):
+        verify_release.verify_release(
+            app,
+            dmg=None,
+            expected_version="0.1.0",
+            require_developer_id=True,
+            require_notarized=False,
+        )
+
+
+def test_release_verifier_rejects_nested_entitlements(tmp_path, monkeypatch):
+    app = _release_app(tmp_path)
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        if (
+            command[:3] == ["codesign", "--display", "--entitlements"]
+            and Path(command[-1]).name == "ffmpeg"
+        ):
+            entitlements = plistlib.dumps(
+                {"com.apple.security.device.audio-input": True}
+            ).decode("utf-8")
+            return subprocess.CompletedProcess(command, 0, "", entitlements)
+        return _completed(command, developer_id=True)
+
+    monkeypatch.setattr(verify_release, "_run", fake_run)
+
+    with pytest.raises(verify_release.VerificationError, match="unexpected entitlements"):
+        verify_release.verify_release(
+            app,
+            dmg=None,
+            expected_version="0.1.0",
+            require_developer_id=True,
+            require_notarized=False,
+        )
+
+
+def test_dmg_payload_must_match_source_app(tmp_path, monkeypatch):
+    source_app = _release_app(tmp_path / "source")
+    stale_app = _release_app(tmp_path / "stale", version="9.9.9")
+    dmg = tmp_path / "AudioAssist-0.1.0.dmg"
+    dmg.write_bytes(b"dmg")
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        if command[:2] == ["hdiutil", "attach"]:
+            mount = Path(command[command.index("-mountpoint") + 1])
+            shutil.copytree(stale_app, mount / "AudioAssist.app")
+        return _completed(command)
+
+    monkeypatch.setattr(verify_release, "_run", fake_run)
+
+    with pytest.raises(verify_release.VerificationError, match="version mismatch"):
+        verify_release._verify_dmg_payload(
+            dmg,
+            source_app=source_app,
+            expected_version="0.1.0",
+            source_details=_completed(
+                ["codesign", "--display", "--verbose=4", str(source_app)]
+            ).stderr,
+            require_developer_id=False,
+            team_identifier=None,
+        )
+
+
+def test_dmg_payload_is_mounted_read_only_and_compared(tmp_path, monkeypatch):
+    source_app = _release_app(tmp_path / "source")
+    dmg = tmp_path / "AudioAssist-0.1.0.dmg"
+    dmg.write_bytes(b"dmg")
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[:2] == ["hdiutil", "attach"]:
+            mount = Path(command[command.index("-mountpoint") + 1])
+            shutil.copytree(source_app, mount / "AudioAssist.app")
+        return _completed(command)
+
+    monkeypatch.setattr(verify_release, "_run", fake_run)
+    payload = verify_release._verify_dmg_payload(
+        dmg,
+        source_app=source_app,
+        expected_version="0.1.0",
+        source_details=_completed(
+            ["codesign", "--display", "--verbose=4", str(source_app)]
+        ).stderr,
+        require_developer_id=False,
+        team_identifier=None,
+    )
+
+    attach = next(command for command in commands if command[:2] == ["hdiutil", "attach"])
+    assert "-readonly" in attach
+    assert "-nobrowse" in attach
+    assert any(command[:2] == ["hdiutil", "detach"] for command in commands)
+    assert payload["payload_verified"] is True
+    assert payload["cdhash"] == "ABCDEF1234"
 
 
 def test_release_verifier_ignores_otool_file_header(tmp_path, monkeypatch):
@@ -162,7 +355,7 @@ def test_release_verifier_requires_developer_id_on_dmg(tmp_path, monkeypatch):
 
     monkeypatch.setattr(verify_release, "_run", fake_run)
 
-    with pytest.raises(verify_release.VerificationError, match="DMG signature"):
+    with pytest.raises(verify_release.VerificationError, match="Developer ID.*DMG"):
         verify_release.verify_release(
             app,
             dmg=dmg,

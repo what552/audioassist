@@ -23,7 +23,7 @@ profile.
 - App: `dist/AudioAssist.app` (1.1 GiB)
 - DMG: `dist/AudioAssist-0.1.0.dmg` (463 MiB)
 - Final local DMG SHA-256:
-  `452a104553ad7b8af9cc861ada5b8b678971c778f3ebcab0c5c4aea703c2924b`
+  `da041806e015829d7d63fb90c199b53b9df5598f70a3d646e327d03b34d06e2b`
 - Signature: strict ad-hoc app and DMG signatures verified
 - Entitlements: only `com.apple.security.device.audio-input` on the app and
   capture helper; the obsolete sandbox microphone key and undocumented screen
@@ -33,6 +33,9 @@ profile.
 - Required payload: main executable, capture helper, ffmpeg, ffprobe,
   `mlx_qwen3_asr` mel/Korean assets, and distribution metadata present
 - DMG image checksum: valid
+- DMG payload: mounted read-only; exactly one `AudioAssist.app` was present and
+  its version, bundle identifier, strict signature, and CDHash matched the
+  just-built source app
 
 The canonical builder uses headless `hdiutil`; it does not use Finder automation.
 This was made explicit after `create-dmg` timed out while the desktop session was
@@ -55,14 +58,16 @@ security find-identity -v -p codesigning
 The checked-in verifier emits machine-readable JSON and fails on version or
 bundle-id drift, invalid app/DMG signatures, unexpected app/helper entitlements,
 missing focused runtime assets, external/broken symlinks, developer-only Mach-O
-load paths, or an invalid DMG checksum. Distribution runs additionally require
-a Developer ID authority and, when requested, a valid stapled notarization
-ticket.
+load paths, an invalid DMG checksum, or a stale/unrelated app inside the DMG.
+Distribution runs additionally audit every nested Mach-O for the same Developer
+ID team, Hardened Runtime, a secure timestamp, and no unexpected entitlements;
+when requested they also require a valid stapled notarization ticket.
 
 The final complete run (with no `--skip-*` flags) passed all five stages. The
-automated repository suite passed 750 tests. An earlier full-suite attempt hit
-two existing asynchronous callback timing flakes; both passed immediately in
-isolation and the final full-suite rerun passed without exclusions.
+automated repository suite passed 757 tests without exclusions. A sandboxed
+attempt could not launch Chromium due to macOS Mach-port permissions; the
+required system-permission rerun passed all 754 Python/backend and 3 browser
+tests.
 
 ## External distribution gate
 
