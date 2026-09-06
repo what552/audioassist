@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The current baseline is 790 automated tests, including 3 browser tests. It
+The current baseline is 795 automated tests, including 8 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -50,6 +50,12 @@ pipeline failure therefore leaves an existing transcript intact. Re-transcriptio
 refinement hold the existing per-session mutation lock, so a concurrent rename/save is
 applied after the new transcript instead of being silently overwritten. Refine
 cancellation is exposed through the same API and keeps the option available for retry.
+
+TEST-UI-01 expands the browser harness from three startup/history checks to eight
+end-to-end UI scenarios. The real frontend scripts now run against a configurable,
+call-recording PyWebView API double for first-run setup, model download failures,
+upload retry/cancel, model library state, serial drag/drop queueing, and Summary Agent
+history/stream/tool/error/clear behavior.
 
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
@@ -94,4 +100,4 @@ matrix, and the distribution release gate is recorded in
 `docs/release-candidate-results.md`. HTTP/MCP work remains a separate milestone
 and must not imply durable background work until lifecycle, locking, recovery,
 and cancellation are designed. With AGENT-01 paused by the owner, the next ordered
-task is TEST-UI-01, followed by ASR-QUALITY-01, TEXT-01, R03-B1, and R03-B2.
+task is ASR-QUALITY-01, followed by TEXT-01, R03-B1, and R03-B2.

@@ -5,14 +5,13 @@ Spins up a local HTTP server serving ui/, injects mock_api.js via
 Playwright's add_init_script() so window.pywebview.api is available
 before any page script runs, then controls pywebviewready timing manually.
 
-Three scenarios:
-  1. history_loads       — _loadHistory() populates sidebar after pywebviewready
-  2. switch_stops_audio  — _onHistorySelect() calls Player.stop() on session switch
-  3. pywebviewready_timing — App.init() is NOT called before pywebviewready fires
+Coverage includes startup timing/history, first-run setup, upload cancellation and
+retry, model management, drag/drop queueing, and Summary Agent interactions.
 """
 from __future__ import annotations
 
 import http.server
+import json
 import os
 import socketserver
 import threading
@@ -54,8 +53,12 @@ def ui_base_url():
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _inject_and_navigate(page: Page, base_url: str) -> None:
+def _inject_and_navigate(page: Page, base_url: str, config: dict | None = None) -> None:
     """Inject mock API, navigate to index.html, then fire pywebviewready."""
+    if config is not None:
+        page.add_init_script(
+            script=f"window.__AUDIOASSIST_TEST_CONFIG = {json.dumps(config)};"
+        )
     page.add_init_script(path=_MOCK)
     page.goto(f"{base_url}/index.html", wait_until="domcontentloaded")
     page.evaluate("window._mockApi.dispatchReady()")
@@ -157,3 +160,157 @@ def test_pywebviewready_timing(page: Page, ui_base_url: str) -> None:
 
     assert page.locator(".history-item").count() == 2
     assert "meeting.mp3" in page.locator("#history-list").inner_text()
+
+
+def test_first_run_setup_download_progress_and_error(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "setup": {"asr_ready": False, "diarizer_ready": False},
+        "history": [],
+    })
+
+    page.locator("#setup-panel").wait_for(state="visible")
+    assert page.locator("#setup-asr-badge").inner_text() == "Not downloaded"
+    assert page.locator("#setup-diarizer-badge").inner_text() == "Not downloaded"
+
+    page.locator("#btn-setup-asr").click()
+    assert page.evaluate("_mockApi.calls('download_model')")[-1]["args"] == ["qwen3-asr-1.7b"]
+    assert page.locator("#setup-asr-progress").is_visible()
+
+    page.evaluate("_mockApi.setSetup({asr_ready: true})")
+    page.evaluate("onModelDownloadProgress('qwen3-asr-1.7b', 1.0)")
+    page.wait_for_function("document.querySelector('#setup-asr-badge').textContent.includes('Ready')")
+    assert page.locator("#btn-setup-asr").is_disabled()
+
+    page.locator("#btn-setup-diarizer").click()
+    page.evaluate("onModelDownloadError('pyannote-diarization-community-1', 'network unavailable')")
+    assert page.locator("#setup-diarizer-badge").inner_text() == "Error"
+    assert page.locator("#btn-setup-diarizer").is_enabled()
+
+
+def test_upload_error_retry_and_cancel(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "history": [],
+        "selectedFiles": ["/fixtures/interview.wav"],
+        "transcribeIds": ["attempt-1", "attempt-2"],
+    })
+
+    page.locator("#btn-upload").click()
+    page.locator("#progress-panel").wait_for(state="visible")
+    first = page.evaluate("_mockApi.calls('transcribe')")[0]
+    assert first["args"][0] == "/fixtures/interview.wav"
+    assert page.locator("#progress-filename").inner_text() == "interview.wav"
+
+    page.evaluate("onTranscribeError('attempt-1', 'decoder failed')")
+    page.locator("#error-panel").wait_for(state="visible")
+    assert page.locator("#error-msg").inner_text() == "decoder failed"
+
+    page.locator("#btn-retry").click()
+    page.wait_for_function("_mockApi.calls('transcribe').length === 2")
+    second = page.evaluate("_mockApi.calls('transcribe')")[1]
+    assert second["args"][0] == "/fixtures/interview.wav"
+    assert page.locator("#progress-filename").inner_text() == "interview.wav"
+
+    page.locator("#btn-cancel-transcribe").click()
+    page.wait_for_function("_mockApi.calls('cancel_transcription').length === 1")
+    assert page.evaluate("_mockApi.calls('cancel_transcription')")[0]["args"] == ["attempt-2"]
+    page.evaluate("onTranscribeCancel('attempt-2')")
+    page.locator("#empty-hint").wait_for(state="visible")
+    assert page.locator(".history-empty").inner_text() == "No recordings yet"
+
+
+def test_model_library_download_delete_and_selector_refresh(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.on("dialog", lambda dialog: dialog.accept())
+
+    page.locator("#btn-models").click()
+    page.locator(".model-item").first.wait_for(state="visible")
+    assert page.locator(".model-item").count() == 3
+    assert [text.lower() for text in page.locator(".model-role-header").all_inner_texts()] == [
+        "asr models", "aligner models", "diarizer models",
+    ]
+
+    aligner = page.locator('[data-model-id="qwen3-forced-aligner-0.6b"]')
+    aligner.locator(".model-btn-download").click()
+    assert page.evaluate("_mockApi.calls('download_model')")[-1]["args"] == [
+        "qwen3-forced-aligner-0.6b"
+    ]
+    page.evaluate("onModelDownloadProgress('qwen3-forced-aligner-0.6b', 1.0)")
+    assert "Downloaded" in aligner.locator(".model-item-badge").inner_text()
+    assert aligner.locator(".model-btn-download").is_disabled()
+
+    asr = page.locator('[data-model-id="qwen3-asr-1.7b"]')
+    asr.locator(".model-btn-delete").click()
+    page.wait_for_function("_mockApi.calls('delete_model').length === 1")
+    assert asr.locator(".model-item-badge").inner_text() == "Not downloaded"
+    page.wait_for_function("document.querySelector('#sel-engine').value === ''")
+
+
+def test_drag_drop_queue_runs_one_file_at_a_time(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "history": [],
+        "transcribeIds": ["drop-1", "drop-2"],
+    })
+
+    page.evaluate(
+        "document.querySelector('#center-panel').dispatchEvent("
+        "new DragEvent('dragover', {bubbles: true, cancelable: true}))"
+    )
+    assert page.locator("#center-panel").evaluate("el => el.classList.contains('drag-over')")
+    page.evaluate(
+        """
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(['one'], 'first.wav', {type: 'audio/wav'}));
+        transfer.items.add(new File(['two'], 'second.mp3', {type: 'audio/mpeg'}));
+        document.querySelector('#center-panel').dispatchEvent(
+          new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: transfer})
+        );
+        """
+    )
+    page.wait_for_function("_mockApi.calls('transcribe').length === 1")
+    assert page.evaluate("_mockApi.calls('transcribe')")[0]["args"][0] == "first.wav"
+    assert not page.locator("#center-panel").evaluate("el => el.classList.contains('drag-over')")
+
+    page.evaluate("onTranscribeComplete('drop-1', '/mock/transcript.json', false)")
+    page.wait_for_function("_mockApi.calls('transcribe').length === 2")
+    assert page.evaluate("_mockApi.calls('transcribe')")[1]["args"][0] == "second.mp3"
+    assert page.locator(".history-item").count() == 2
+
+
+def test_summary_agent_stream_tool_error_recovery_and_clear(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "agentTurns": [
+            {"role": "user", "content": "Earlier question"},
+            {"role": "assistant", "content": "Earlier answer"},
+        ],
+    })
+    page.locator(".history-item", has_text="meeting.mp3").locator(".history-item-body").click()
+    page.wait_for_function("_mockApi.calls('get_agent_session').length >= 1")
+    assert page.locator("#agent-messages .chat-bubble").count() == 2
+
+    page.locator("#agent-input").fill("列出行动项")
+    page.locator("#btn-agent-send").click()
+    page.wait_for_function("_mockApi.calls('start_agent_turn').length === 1")
+    call = page.evaluate("_mockApi.calls('start_agent_turn')")[0]
+    assert call["args"] == ["job-aaa", "列出行动项"]
+    assert page.locator("#btn-agent-send").is_disabled()
+
+    page.evaluate("onAgentToolStart('job-aaa', 'save_summary')")
+    assert page.locator("#agent-tool-status").is_visible()
+    page.evaluate("onAgentChunk('job-aaa', '**完成** <script>window.bad = true</script>')")
+    assert page.locator("#agent-messages strong").last.inner_text() == "完成"
+    assert page.locator("#agent-messages script").count() == 0
+    assert page.evaluate("window.bad") is None
+    page.evaluate("onAgentToolEnd('job-aaa', 'save_summary')")
+    page.evaluate("onAgentComplete('job-aaa', '**完成**')")
+    assert page.locator("#btn-agent-send").is_enabled()
+    assert page.locator("#agent-tool-status").is_hidden()
+
+    page.locator("#agent-input").fill("再试一次")
+    page.locator("#btn-agent-send").click()
+    page.evaluate("onAgentError('job-aaa', 'tool timeout')")
+    assert "tool timeout" in page.locator(".chat-bubble-error").inner_text()
+    assert page.locator("#btn-agent-send").is_enabled()
+
+    page.locator("#btn-agent-clear").click()
+    page.wait_for_function("_mockApi.calls('clear_agent_session').length === 1")
+    assert page.locator("#agent-messages .chat-bubble").count() == 0
