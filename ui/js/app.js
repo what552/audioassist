@@ -29,6 +29,7 @@ const App = (() => {
   // ── Session store ──────────────────────────────────────────────────────────
   const _sessions = new Map();  // insertion-order preserved
   const _resumingIds = new Set();
+  const _renameStates = new Map();
   let _selectedId        = null;
   let _activeRealtimeId  = null;
   let dom = {};
@@ -314,27 +315,40 @@ const App = (() => {
     const renamed = (newName || '').trim();
     const session = _sessions.get(id);
     if (!renamed || !session) return;
-    const previous = session.filename;
+    let state = _renameStates.get(id);
+    if (!state) {
+      state = { confirmed: session.filename, pending: [], running: false };
+      _renameStates.set(id, state);
+    }
+    state.pending.push(renamed);
 
     // Persisting a rename can wait behind an active transcription's session
     // lock. Keep the in-memory state authoritative meanwhile so any status
-    // rerender does not visually revert the accepted title.
+    // rerender does not visually revert the accepted title. Serialize calls
+    // per session because PyWebView otherwise handles them on independent
+    // Python threads whose lock acquisition order is not deterministic.
     _updateSession(id, { filename: renamed });
-    window.pywebview.api.rename_session(id, renamed)
-      .then(ok => {
-        if (ok) return;
-        const current = _sessions.get(id);
-        if (current && current.filename === renamed) {
-          _updateSession(id, { filename: previous });
+    if (!state.running) void _drainSessionRenames(id, state);
+  }
+
+  async function _drainSessionRenames(id, state) {
+    state.running = true;
+    while (state.pending.length > 0) {
+      const renamed = state.pending.shift();
+      try {
+        if (await window.pywebview.api.rename_session(id, renamed)) {
+          state.confirmed = renamed;
         }
-      })
-      .catch(e => {
+      } catch (e) {
         console.error('[App] rename_session error:', e);
-        const current = _sessions.get(id);
-        if (current && current.filename === renamed) {
-          _updateSession(id, { filename: previous });
-        }
-      });
+      }
+    }
+    state.running = false;
+    _renameStates.delete(id);
+    const current = _sessions.get(id);
+    if (current && current.filename !== state.confirmed) {
+      _updateSession(id, { filename: state.confirmed });
+    }
   }
 
   function _onHistoryDelete(id) {

@@ -202,7 +202,6 @@ def test_pending_rename_survives_status_rerender(page: Page, ui_base_url: str) -
         };
         """
     )
-
     item = page.locator(".history-item", has_text="Before")
     item.locator(".history-item-body").click()
     item = page.locator(".history-item", has_text="Before")
@@ -243,6 +242,105 @@ def test_failed_rename_rolls_back_optimistic_title(page: Page, ui_base_url: str)
         "document.querySelector('.history-item-name').textContent === 'Before'"
     )
     assert page.locator(".history-item", has_text="Rejected").count() == 0
+
+
+def test_rapid_renames_are_serialized_last_write_wins(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-rename",
+            "filename": "Before",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "done",
+            "audio_path": "/audio/work.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.renameCalls = [];
+        window.pywebview.api.rename_session = async function (_id, name) {
+          window.renameCalls.push(Array.from(arguments));
+          if (name === 'A') {
+            return await new Promise(resolve => {
+              window.releaseFirstRename = () => resolve(true);
+            });
+          }
+          return true;
+        };
+        void 0;
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Before")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("A")
+    page.keyboard.press("Enter")
+    assert page.evaluate("window.renameCalls") == [["job-rename", "A"]]
+
+    item = page.locator(".history-item", has_text="A")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("B")
+    page.keyboard.press("Enter")
+
+    assert page.evaluate("window.renameCalls") == [["job-rename", "A"]]
+    page.evaluate("window.releaseFirstRename()")
+    page.wait_for_function("window.renameCalls.length === 2")
+    assert page.evaluate("window.renameCalls") == [
+        ["job-rename", "A"], ["job-rename", "B"]
+    ]
+    assert page.locator(".history-item", has_text="B").count() == 1
+
+
+def test_two_failed_renames_restore_last_confirmed_title(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-rename",
+            "filename": "Before",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "done",
+            "audio_path": "/audio/work.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.renameCalls = [];
+        window.pywebview.api.rename_session = async function (_id, name) {
+          window.renameCalls.push(Array.from(arguments));
+          if (name === 'A') {
+            return await new Promise(resolve => {
+              window.releaseFirstRename = () => resolve(false);
+            });
+          }
+          return false;
+        };
+        void 0;
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Before")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("A")
+    page.keyboard.press("Enter")
+    item = page.locator(".history-item", has_text="A")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("B")
+    page.keyboard.press("Enter")
+
+    page.evaluate("window.releaseFirstRename()")
+    page.wait_for_function(
+        "window.renameCalls.length === 2 && "
+        "document.querySelector('.history-item-name').textContent === 'Before'"
+    )
+    assert page.evaluate("window.renameCalls") == [
+        ["job-rename", "A"], ["job-rename", "B"]
+    ]
 
 
 def test_failed_resume_remains_visible_and_retryable(page: Page, ui_base_url: str) -> None:
