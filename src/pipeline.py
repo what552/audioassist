@@ -12,7 +12,7 @@ from .types import WordSegment, TranscriptResult
 from .asr_factory import QwenASREngineProtocol, create_qwen_engine
 from .asr_whisper import WhisperASREngine
 from .diarize import DiarizationEngine, SpeakerSegment, DEFAULT_DIARIZER_MODEL
-from .merge import SpeakerBlock, merge, to_json, to_markdown
+from .merge import SpeakerBlock, merge, speaker_for_interval, to_json, to_markdown
 from .audio_utils import to_wav, split_to_chunks
 from .model_errors import ModelNotReadyError
 from .model_manager import ModelManager
@@ -403,12 +403,5 @@ def run_realtime_segments(
 def _dominant_speaker(
     start: float, end: float, speaker_segs: list[SpeakerSegment]
 ) -> str:
-    """Return the speaker label with the most overlap in [start, end]."""
-    overlaps: dict[str, float] = {}
-    for ss in speaker_segs:
-        overlap = max(0.0, min(end, ss.end) - max(start, ss.start))
-        if overlap > 0:
-            overlaps[ss.speaker] = overlaps.get(ss.speaker, 0.0) + overlap
-    if not overlaps:
-        return "UNKNOWN"
-    return max(overlaps, key=lambda k: overlaps[k])
+    """Return a confidence-gated speaker label for a realtime segment."""
+    return speaker_for_interval(start, end, speaker_segs)

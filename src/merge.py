@@ -24,6 +24,11 @@ MIN_CJK_TERMINAL_CHARS = 4
 FORCE_LATIN_SENTENCE_WORDS = 18
 FORCE_LATIN_SENTENCE_CHARS = 120
 FORCE_CJK_SENTENCE_CHARS = 28
+UNKNOWN_SPEAKER = "UNKNOWN"
+MIN_DOMINANT_SPEAKER_SHARE = 0.60
+MIN_DIARIZED_INTERVAL_COVERAGE = 0.20
+MAX_SAME_SPEAKER_GAP_SECONDS = 0.35
+MAX_EDGE_SNAP_SECONDS = 0.12
 
 
 @dataclass
@@ -39,7 +44,70 @@ def get_speaker_at(time: float, segments: list[SpeakerSegment]) -> str:
     for seg in segments:
         if seg.start <= time <= seg.end:
             return seg.speaker
-    return "UNKNOWN"
+    return UNKNOWN_SPEAKER
+
+
+def speaker_for_interval(
+    start: float,
+    end: float,
+    segments: list[SpeakerSegment],
+) -> str:
+    """Assign a speaker from overlap evidence while preserving ambiguity.
+
+    Short diarization gaps are filled only when both neighbouring turns belong
+    to the same speaker. Intervals split nearly evenly across speakers remain
+    ``UNKNOWN`` instead of choosing whichever segment happened to appear first.
+    """
+    if not segments:
+        return UNKNOWN_SPEAKER
+    if end < start:
+        start, end = end, start
+    duration = end - start
+    if duration <= 0:
+        return get_speaker_at(start, segments)
+
+    overlaps: dict[str, float] = {}
+    for segment in segments:
+        overlap = max(0.0, min(end, segment.end) - max(start, segment.start))
+        if overlap > 0:
+            overlaps[segment.speaker] = overlaps.get(segment.speaker, 0.0) + overlap
+
+    if overlaps:
+        ranked = sorted(overlaps.items(), key=lambda item: (-item[1], item[0]))
+        speaker, winner_overlap = ranked[0]
+        covered = sum(overlaps.values())
+        if winner_overlap / duration < MIN_DIARIZED_INTERVAL_COVERAGE:
+            return UNKNOWN_SPEAKER
+        if len(ranked) > 1 and winner_overlap / covered < MIN_DOMINANT_SPEAKER_SHARE:
+            return UNKNOWN_SPEAKER
+        return speaker
+
+    left = max(
+        (segment for segment in segments if segment.end <= start),
+        key=lambda segment: segment.end,
+        default=None,
+    )
+    right = min(
+        (segment for segment in segments if segment.start >= end),
+        key=lambda segment: segment.start,
+        default=None,
+    )
+    left_gap = start - left.end if left else float("inf")
+    right_gap = right.start - end if right else float("inf")
+
+    if (
+        left is not None
+        and right is not None
+        and left.speaker == right.speaker
+        and left_gap <= MAX_SAME_SPEAKER_GAP_SECONDS
+        and right_gap <= MAX_SAME_SPEAKER_GAP_SECONDS
+    ):
+        return left.speaker
+    if left is not None and right is None and left_gap <= MAX_EDGE_SNAP_SECONDS:
+        return left.speaker
+    if right is not None and left is None and right_gap <= MAX_EDGE_SNAP_SECONDS:
+        return right.speaker
+    return UNKNOWN_SPEAKER
 
 
 def merge(
@@ -54,9 +122,11 @@ def merge(
 
     # No word timestamps: return single block with full text
     if not words:
-        speaker = get_speaker_at(
-            speaker_segments[0].start if speaker_segments else 0,
-            speaker_segments,
+        distinct_speakers = {segment.speaker for segment in speaker_segments}
+        speaker = (
+            next(iter(distinct_speakers))
+            if len(distinct_speakers) == 1
+            else UNKNOWN_SPEAKER
         )
         text = _finalize_block_text(asr_result.text, [])
         return [SpeakerBlock(
@@ -72,8 +142,7 @@ def merge(
     current_words: list[WordSegment] = []
 
     for w in words:
-        mid = (w.start + w.end) / 2
-        speaker = get_speaker_at(mid, speaker_segments)
+        speaker = speaker_for_interval(w.start, w.end, speaker_segments)
 
         if speaker != current_speaker:
             if current_words:

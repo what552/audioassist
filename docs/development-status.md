@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The current baseline is 795 automated tests, including 8 browser tests. It
+The current baseline is 805 automated tests, including 8 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -56,6 +56,14 @@ end-to-end UI scenarios. The real frontend scripts now run against a configurabl
 call-recording PyWebView API double for first-run setup, model download failures,
 upload retry/cancel, model library state, serial drag/drop queueing, and Summary Agent
 history/stream/tool/error/clear behavior.
+
+ASR-QUALITY-01 replaces midpoint-only speaker assignment with a shared interval
+overlap policy for file and realtime results. A speaker must cover at least 20% of
+the ASR interval and, when multiple speakers overlap it, own at least 60% of the
+diarized overlap. Gaps up to 350 ms are repaired only when both adjacent turns have
+the same speaker; near-even cross-speaker boundaries and weakly covered intervals
+remain explicitly `UNKNOWN`. Transcript-level results without word timestamps also
+remain `UNKNOWN` when diarization contains multiple identities.
 
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
@@ -100,4 +108,4 @@ matrix, and the distribution release gate is recorded in
 `docs/release-candidate-results.md`. HTTP/MCP work remains a separate milestone
 and must not imply durable background work until lifecycle, locking, recovery,
 and cancellation are designed. With AGENT-01 paused by the owner, the next ordered
-task is ASR-QUALITY-01, followed by TEXT-01, R03-B1, and R03-B2.
+task is TEXT-01, followed by R03-B1 and R03-B2.

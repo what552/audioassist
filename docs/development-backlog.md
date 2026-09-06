@@ -28,8 +28,8 @@ Priority meanings:
 | 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
-| 12 | ASR-QUALITY-01 | P2 | Next | Improve speaker ownership and realtime alignment without hiding uncertainty |
-| 13 | TEXT-01 | P2 | Planned | Add conservative, language-aware punctuation improvement |
+| 12 | ASR-QUALITY-01 | P2 | Complete | Use confidence-gated overlap and same-speaker gap alignment without hiding uncertainty |
+| 13 | TEXT-01 | P2 | Next | Add conservative, language-aware punctuation improvement |
 | 14 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
 | 15 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
 
@@ -177,7 +177,7 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 | AGENT-01 | Summary Agent reliability (paused by owner) | Request/tool timeouts, transcript paging instead of a fixed 6000-character truncation, and summary writes through the shared service |
 | TEST-UI-01 | Complete: close frontend coverage gaps | Eight browser scenarios cover startup/history, setup, cancel/retry, model modal, drag/drop queueing, and Summary Agent flows |
 | TRANS-01 | Complete: cancellation and concurrency hardening | Immediate cancel registration, duplicate-job rejection, transactional output/refine, retryable refine cancellation, and serialized rename/rerun mutations |
-| ASR-QUALITY-01 | Speaker/timestamp quality | Evaluate UNKNOWN-speaker reassignment and realtime diarization alignment without hiding uncertainty |
+| ASR-QUALITY-01 | Complete: speaker/timestamp quality | Interval-overlap assignment, conservative dominance/coverage gates, and bounded same-speaker gap repair shared by file and realtime paths |
 | TEXT-01 | Conservative punctuation improvement | Language-aware evaluation; no semantic rewriting |
 | MAC-AUDIO-01 | Mix-mode echo cancellation | Define measurable echo/reference-signal acceptance before implementation |
 | WIN-AUDIO-01 | Windows system-audio capture and EXE | Select a Windows capture backend, add lifecycle tests, then package and smoke-test on Windows |
