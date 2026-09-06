@@ -123,7 +123,11 @@ class MLXQwenASREngine:
                     try:
                         setattr(session, attribute, None)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Failed to clear MLX Qwen session attribute %s",
+                            attribute,
+                            exc_info=True,
+                        )
 
         if aligner is not None and hasattr(aligner, "_backend"):
             backend = getattr(aligner, "_backend", None)
@@ -133,11 +137,18 @@ class MLXQwenASREngine:
                         try:
                             setattr(backend, attribute, None)
                         except Exception:
-                            pass
+                            logger.debug(
+                                "Failed to clear MLX aligner backend attribute %s",
+                                attribute,
+                                exc_info=True,
+                            )
             try:
                 aligner._backend = None
             except Exception:
-                pass
+                logger.debug(
+                    "Failed to release MLX aligner backend",
+                    exc_info=True,
+                )
 
         try:
             from mlx_qwen3_asr.load_models import _ModelHolder

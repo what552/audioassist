@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from importlib.metadata import distribution
+import logging
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 import sys
@@ -194,6 +195,45 @@ def test_close_clears_session_aligner_holders_and_mlx_cache():
     model_holder.clear.assert_called_once()
     tokenizer_holder.clear.assert_called_once()
     mx.clear_cache.assert_called_once()
+
+
+def test_close_logs_traceback_when_aligner_backend_cannot_be_released(caplog):
+    class StubbornAligner:
+        _backend = SimpleNamespace(model=None, tokenizer=None, config=None)
+
+        def __setattr__(self, name, value):
+            if name == "_backend":
+                raise RuntimeError("read-only backend")
+            object.__setattr__(self, name, value)
+
+    model_holder = SimpleNamespace(clear=MagicMock())
+    tokenizer_holder = SimpleNamespace(clear=MagicMock())
+    load_models = ModuleType("mlx_qwen3_asr.load_models")
+    load_models._ModelHolder = model_holder
+    tokenizer = ModuleType("mlx_qwen3_asr.tokenizer")
+    tokenizer._TokenizerHolder = tokenizer_holder
+    engine = MLXQwenASREngine(
+        model_path="/models/qwen",
+        aligner_path="/models/aligner",
+        with_timestamps=True,
+    )
+    engine._aligner = StubbornAligner()
+    caplog.set_level(logging.DEBUG, logger="src.asr_qwen_mlx")
+
+    with patch.dict(
+        sys.modules,
+        {
+            "mlx_qwen3_asr.load_models": load_models,
+            "mlx_qwen3_asr.tokenizer": tokenizer,
+        },
+    ):
+        engine.close()
+
+    record = next(
+        item for item in caplog.records
+        if "release MLX aligner backend" in item.getMessage()
+    )
+    assert record.exc_info is not None
 
 
 def test_adapter_requires_aligner_for_timestamps():

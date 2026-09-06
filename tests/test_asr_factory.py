@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import logging
 import subprocess
 import sys
 from unittest.mock import MagicMock, patch
@@ -212,6 +213,32 @@ def test_close_clears_model_references_and_mps_cache():
     assert model.processor is None
     assert model.forced_aligner is None
     empty_cache.assert_called_once()
+
+
+def test_close_logs_traceback_when_aligner_reference_cannot_be_cleared(caplog):
+    class StubbornWrapper:
+        forced_aligner = object()
+        model = object()
+        processor = object()
+
+        def __setattr__(self, name, value):
+            if name == "forced_aligner":
+                raise RuntimeError("read-only aligner")
+            object.__setattr__(self, name, value)
+
+    from src.asr import ASREngine
+
+    engine = ASREngine(with_timestamps=False, model_path="/models/qwen")
+    engine._model = StubbornWrapper()
+    caplog.set_level(logging.DEBUG, logger="src.asr")
+
+    engine.close()
+
+    record = next(
+        item for item in caplog.records
+        if "forced_aligner" in item.getMessage()
+    )
+    assert record.exc_info is not None
 
 
 def test_pytorch_adapter_converts_qwen_timestamp_result():
