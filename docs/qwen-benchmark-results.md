@@ -8,10 +8,11 @@ Do not promote MLX or PyTorch MPS to the automatic Apple Silicon backend in
 this release. Keep `auto` on the official PyTorch CPU policy and retain both
 accelerated paths as explicit developer overrides.
 
-This is a hold, not a rejection of MLX. MLX passed source-tree correctness,
-short/medium-duration performance, timestamp, and lifecycle stability checks,
-but the promotion-level corpus and signed-app evidence are incomplete. The
-remaining evidence is tracked as QWEN-04 rather than silently disappearing.
+This is a hold, not a rejection of MLX. MLX passed the measured performance,
+short-sample timestamp, and realtime lifecycle checks, but one 10-minute sample
+failed the cross-backend text/timestamp thresholds and the promotion-level
+corpus and signed-app evidence are incomplete. The remaining evidence is
+tracked as QWEN-04 rather than silently disappearing.
 
 ## Test environment
 
@@ -65,22 +66,34 @@ aggregate language is empty, uses the most common non-empty chunk language. A
 real 10-minute rerun returned Chinese with an unchanged transcript hash and
 unchanged 3,002 timestamp items.
 
-The MLX lifecycle stress run completed 50 model load/close cycles and 100
-serialized five-second utterances:
+That language fallback does not erase the other 10-minute differences: MLX
+matched only 70.7% of CPU tokens for timestamp comparison, boundary p95 was
+425 ms, and normalized text distance from CPU was 34.8%. The automated gate
+now reports each of those per-file failures instead of dropping a low-alignment
+row or allowing a stronger sample to mask it.
 
-- 100/100 transcript hashes identical; zero explicit truncations
-- utterance latency p95: 2.96 seconds, below the 5-second input duration
-- load time: 0.26-0.35 seconds after filesystem warmup
-- cleanup median/max: 28/45 ms
-- maximum peak RSS: 6.09 GiB
-- first-to-last RSS after cleanup growth: 164 MiB, below the 256 MiB alert line
+The corrected MLX realtime lifecycle run disabled the Forced Aligner and word
+timestamps, then completed 50 model load/close cycles. Each cycle ran one cold
+and two warm five-second utterances, giving 100 measured warm utterances:
+
+- 150/150 total transcript hashes identical; zero explicit truncations
+- warm utterance latency p95: 2.67 seconds, below the 5-second input duration
+- cleanup median: 20 ms
+- maximum peak RSS: 4.73 GiB on a 64 GiB machine
+- all 50 post-cleanup RSS samples captured; range 128-364 MiB
+- first-to-last RSS after cleanup growth: 237 MiB, below the 256 MiB alert line
 
 ## Reproducible runner
 
 The committed runner validates an explicit manifest, runs every backend in an
 isolated child process, forces offline mode, records cold/warm and lifecycle
 measurements, compares matching token boundaries, and emits a machine-readable
-promotion assessment. It never treats missing evidence as a pass.
+promotion assessment. Audio duration is measured from the file and checked
+against declared duration classes. Realtime and offline/aligned samples cannot
+be mixed in one run. Cold realtime passes are excluded from the 100-utterance
+latency gate, and lifecycle evidence comes from the completed cycles and full
+RSS sample sequence rather than a requested count. It never treats missing
+evidence as a pass or self-labels a source-tree run as signed-app evidence.
 
 ```bash
 .venv/bin/python -m src.qwen_benchmark run \
@@ -97,8 +110,8 @@ promotion assessment. It never treats missing evidence as a pass.
 
 .venv/bin/python -m src.qwen_benchmark run \
   --manifest /tmp/audioassist-qwen03-corpus/manifest-realtime.json \
-  --output /tmp/audioassist-qwen03-corpus/report-mlx-realtime-stress.json \
-  --backends mlx --warm-runs 1 --lifecycle-cycles 50 --timeout 1800
+  --output /tmp/audioassist-qwen03-corpus/report-mlx-realtime-stress-v2.json \
+  --backends mlx --warm-runs 2 --lifecycle-cycles 50 --timeout 1800
 ```
 
 ## Evidence still required before promotion

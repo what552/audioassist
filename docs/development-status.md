@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The QWEN-03 baseline is 735 automated tests: 732 Python/backend tests and
+The QWEN-03 baseline is 740 automated tests: 737 Python/backend tests and
 3 browser tests. It includes the pinned `mlx-qwen3-asr` 0.3.5 adapter,
 native Forced Aligner conversion, deterministic holder/cache cleanup, and focused
 PyInstaller resources. Forced-offline 30-second Qwen CPU, diagnostic MPS, and MLX CLI
@@ -22,11 +22,13 @@ smoke jobs all completed against the application-managed 1.7B and aligner direct
 The frozen app contains the adapter, metadata, and required mel/Korean assets and passes
 strict ad-hoc signature verification. QWEN-03 adds a redacted, isolated-process
 benchmark runner. On an M5 Pro, MLX
-was 34-58% faster than CPU across three 5/5/10-minute samples and passed 50
-load/close cycles plus 100 serialized utterances, but MPS was faster on this
-machine and promotion-level human/long/signed-app evidence is incomplete. The
-decision is therefore to keep `auto` unchanged and track the remaining evidence
-as QWEN-04. Real audio-device and permission behavior remains
+was 34-58% faster than CPU across three 5/5/10-minute samples and passed a
+corrected realtime-only run of 50 load/close cycles plus 100 warm serialized
+utterances. MPS was faster on this machine, the 10-minute MLX result exceeded
+the cross-backend text/timestamp thresholds, and promotion-level
+human/long/signed-app evidence is incomplete. The decision is therefore to
+keep `auto` unchanged and track the remaining evidence as QWEN-04. Real
+audio-device and permission behavior remains
 release-level manual validation rather than CI coverage.
 
 ## Historical gate record

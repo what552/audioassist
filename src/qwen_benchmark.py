@@ -32,6 +32,13 @@ from .model_manager import ModelManager
 
 SCHEMA_VERSION = 1
 BACKENDS = ("pytorch-cpu", "pytorch-mps", "mlx")
+_DURATION_TAG_RANGES = {
+    "realtime": (1.0, 10.0),
+    "five-minute": (240.0, 360.0),
+    "meeting-30m": (25 * 60.0, 35 * 60.0),
+    "meeting-60m": (55 * 60.0, 65 * 60.0),
+    "meeting-120m": (110 * 60.0, 130 * 60.0),
+}
 
 
 @dataclass(frozen=True)
@@ -139,6 +146,30 @@ def _audio_duration(path: str) -> float:
     return float(result.stdout.strip())
 
 
+def _validated_duration(sample: BenchmarkSample) -> float:
+    actual = _audio_duration(sample.path)
+    if not math.isfinite(actual) or actual <= 0:
+        raise ValueError(f"audio duration must be positive and finite: {sample.id!r}")
+    if sample.duration_seconds is not None:
+        tolerance = max(0.25, actual * 0.001)
+        if abs(sample.duration_seconds - actual) > tolerance:
+            raise ValueError(
+                f"declared duration for {sample.id!r} differs from audio "
+                f"({sample.duration_seconds:.3f}s versus {actual:.3f}s)"
+            )
+    duration_tags = [tag for tag in sample.tags if tag in _DURATION_TAG_RANGES]
+    if len(duration_tags) > 1:
+        raise ValueError(f"sample {sample.id!r} has conflicting duration tags")
+    if duration_tags:
+        tag = duration_tags[0]
+        lower, upper = _DURATION_TAG_RANGES[tag]
+        if not lower <= actual <= upper:
+            raise ValueError(
+                f"audio duration for {sample.id!r} does not match tag {tag!r}"
+            )
+    return actual
+
+
 def _normalize_characters(text: str) -> list[str]:
     normalized = unicodedata.normalize("NFKC", text).casefold()
     return [
@@ -225,6 +256,17 @@ def _peak_rss_mb() -> float:
     return value / (1024 * 1024) if sys.platform == "darwin" else value / 1024
 
 
+def _physical_memory_mb() -> float | None:
+    try:
+        return (
+            float(os.sysconf("SC_PHYS_PAGES"))
+            * float(os.sysconf("SC_PAGE_SIZE"))
+            / (1024 * 1024)
+        )
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
 def _result_payload(
     result: Any,
     duration: float,
@@ -258,12 +300,16 @@ def run_worker(
     lifecycle_cycles: int,
 ) -> dict[str, Any]:
     samples = load_manifest(manifest_path)
+    realtime_flags = ["realtime" in sample.tags for sample in samples]
+    if any(realtime_flags) and not all(realtime_flags):
+        raise ValueError("a benchmark manifest cannot mix realtime and offline samples")
+    realtime_mode = all(realtime_flags)
     cycles: list[dict[str, Any]] = []
     for cycle_index in range(lifecycle_cycles):
         engine = create_qwen_engine(
             model_path=model_path,
-            aligner_path=aligner_path,
-            with_timestamps=True,
+            aligner_path=None if realtime_mode else aligner_path,
+            with_timestamps=not realtime_mode,
             backend_override=backend,
         )
         rss_before = _rss_mb()
@@ -274,7 +320,7 @@ def run_worker(
             engine.load()
             load_seconds = time.perf_counter() - started
             for sample in samples:
-                duration = sample.duration_seconds or _audio_duration(sample.path)
+                duration = _validated_duration(sample)
                 passes: list[dict[str, Any]] = []
                 for _ in range(warm_runs + 1):
                     started = time.perf_counter()
@@ -331,6 +377,7 @@ def run_worker(
     ]
     return {
         "backend": backend,
+        "mode": "realtime-asr" if realtime_mode else "offline-aligned-asr",
         "platform": platform.platform(),
         "machine": platform.machine(),
         "python": platform.python_version(),
@@ -341,6 +388,10 @@ def run_worker(
                 cycle["cleanup_seconds"] for cycle in cycles
             ),
             "peak_rss_mb_max": max(cycle["peak_rss_mb"] for cycle in cycles),
+            "physical_memory_mb": _physical_memory_mb(),
+            "rss_after_cleanup_samples": len(rss_after_values),
+            "rss_after_cleanup_min_mb": min(rss_after_values) if rss_after_values else None,
+            "rss_after_cleanup_max_mb": max(rss_after_values) if rss_after_values else None,
             "rss_after_cleanup_growth_mb": (
                 rss_after_values[-1] - rss_after_values[0]
                 if len(rss_after_values) >= 2
@@ -407,7 +458,9 @@ def compare_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
                     "text_vs_cpu_cer": cross_error["cer"],
                     "timestamp_matched_words": matched_words,
                     "timestamp_alignment_ratio": alignment_ratio,
-                    "timestamp_median_abs_seconds": statistics.median(boundaries) if boundaries else None,
+                    "timestamp_median_abs_seconds": (
+                        statistics.median(boundaries) if boundaries else None
+                    ),
                     "timestamp_p95_abs_seconds": _percentile(boundaries, 0.95),
                 }
             )
@@ -416,7 +469,7 @@ def compare_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
-    """Apply the documented promotion gates without treating missing data as a pass."""
+    """Apply automated gates; final promotion always requires independent review."""
     missing: list[str] = []
     failures: list[str] = []
     successful = {
@@ -427,10 +480,8 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
     for backend in BACKENDS:
         if backend not in successful:
             missing.append(f"successful {backend} run")
-    if report.get("source") != "signed-app":
-        missing.append("signed-app benchmark report")
-    if report.get("lifecycle_cycles", 0) < 50:
-        missing.append("50 lifecycle start/stop cycles")
+    missing.append("independently verified signed-app release checklist")
+    missing.append("manual listening review of severe per-file differences")
 
     samples_by_backend: dict[str, dict[str, dict[str, Any]]] = {}
     all_tags: set[str] = set()
@@ -473,6 +524,26 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
         mlx_cer = statistics.mean(mlx_samples[item]["metrics"]["cer"] for item in human)
         if mlx_cer - cpu_cer > 0.005:
             failures.append("MLX aggregate CER regresses by more than 0.5 percentage points")
+        human_with_wer = [
+            item
+            for item in human
+            if cpu_samples[item]["metrics"].get("wer") is not None
+            and mlx_samples[item]["metrics"].get("wer") is not None
+        ]
+        if human_with_wer:
+            cpu_wer = statistics.mean(
+                cpu_samples[item]["metrics"]["wer"] for item in human_with_wer
+            )
+            mlx_wer = statistics.mean(
+                mlx_samples[item]["metrics"]["wer"] for item in human_with_wer
+            )
+            if mlx_wer - cpu_wer > 0.005:
+                failures.append(
+                    "MLX aggregate WER regresses by more than 0.5 percentage points"
+                )
+        for item in human:
+            if mlx_samples[item]["metrics"]["cer"] - cpu_samples[item]["metrics"]["cer"] > 0.05:
+                failures.append(f"severe per-file CER regression: {item}")
 
     long_samples = [
         sample_id
@@ -503,7 +574,7 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
             if "realtime" in sample.get("tags", []):
                 realtime_passes.extend(
                     (item["seconds"], sample["duration_seconds"])
-                    for item in sample["passes"]
+                    for item in sample["passes"][1:]
                 )
     if len(realtime_passes) < 100:
         missing.append("100 serialized realtime utterances")
@@ -513,11 +584,45 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
         failures.append("MLX warm realtime p95 is not below utterance duration")
 
     lifecycle = successful.get("mlx", {}).get("lifecycle_summary", {})
+    completed_cycles = lifecycle.get("completed_cycles", 0)
+    if completed_cycles < 50:
+        missing.append("50 completed lifecycle start/stop cycles")
+    if lifecycle.get("rss_after_cleanup_samples", 0) != completed_cycles:
+        missing.append("complete lifecycle RSS samples")
     growth = lifecycle.get("rss_after_cleanup_growth_mb")
-    if report.get("lifecycle_cycles", 0) >= 50 and growth is not None and growth > 256:
-        failures.append("MLX cleanup RSS grows by more than 256MB across lifecycle cycles")
+    rss_min = lifecycle.get("rss_after_cleanup_min_mb")
+    rss_max = lifecycle.get("rss_after_cleanup_max_mb")
+    if completed_cycles >= 50:
+        if growth is None or rss_min is None or rss_max is None:
+            missing.append("usable lifecycle RSS growth evidence")
+        else:
+            if growth > 256:
+                failures.append(
+                    "MLX cleanup RSS grows by more than 256MB across lifecycle cycles"
+                )
+            if rss_max - rss_min > 1024:
+                failures.append("MLX intermediate cleanup RSS range exceeds 1GiB")
+        physical_memory = lifecycle.get("physical_memory_mb")
+        peak_memory = lifecycle.get("peak_rss_mb_max")
+        if physical_memory is None or peak_memory is None:
+            missing.append("usable lifecycle peak-memory evidence")
+        elif peak_memory > physical_memory * 0.9:
+            failures.append("MLX peak RSS exceeds 90% of physical memory")
 
     mlx_comparison = report.get("comparisons_against_pytorch_cpu", {}).get("mlx", [])
+    low_alignment_rows = [
+        item
+        for item in mlx_comparison
+        if item.get("timestamp_alignment_ratio", 0) < 0.8
+    ]
+    for item in low_alignment_rows:
+        failures.append(f"timestamp token alignment below 80%: {item['id']}")
+    for item in mlx_comparison:
+        if not item.get("language_agrees", False):
+            failures.append(f"detected language differs from CPU: {item['id']}")
+        if (item.get("text_vs_cpu_cer") or 0) > 0.25:
+            failures.append(f"text differs from CPU by more than 25% CER: {item['id']}")
+
     timestamp_rows = [
         item
         for item in mlx_comparison
@@ -527,10 +632,19 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
     if not timestamp_rows:
         missing.append("MLX versus CPU timestamp comparison with at least 80% token alignment")
     else:
-        median = statistics.median(item["timestamp_median_abs_seconds"] for item in timestamp_rows)
-        p95 = max(item["timestamp_p95_abs_seconds"] for item in timestamp_rows)
-        if median > 0.050 or p95 > 0.150:
-            failures.append("MLX word-boundary difference exceeds the 50ms/150ms gate")
+        for item in timestamp_rows:
+            if (
+                item["timestamp_median_abs_seconds"] > 0.050
+                or item["timestamp_p95_abs_seconds"] > 0.150
+            ):
+                failures.append(
+                    f"MLX word-boundary difference exceeds the 50ms/150ms gate: {item['id']}"
+                )
+
+    for sample in mlx_samples.values():
+        for item in sample.get("passes", []):
+            if item.get("expected_language_agrees") is False:
+                failures.append(f"detected language differs from expected: {sample['id']}")
 
     for backend, result in successful.items():
         for cycle in result.get("cycles", []):
@@ -538,10 +652,10 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
                 if any(item.get("possible_truncation") for item in sample.get("passes", [])):
                     failures.append(f"possible truncation: {backend}/{sample['id']}")
 
-    status = "fail" if failures else ("insufficient-evidence" if missing else "pass")
+    status = "fail" if failures else "insufficient-evidence"
     return {
         "status": status,
-        "recommendation": "promote-mlx" if status == "pass" else "keep-current-auto",
+        "recommendation": "keep-current-auto",
         "missing_evidence": missing,
         "failures": sorted(set(failures)),
     }
@@ -648,7 +762,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     report = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source": args.source,
+        "source": "source-tree",
         "offline_environment": True,
         "manifest_sha256": hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest(),
         "warm_runs": args.warm_runs,
@@ -675,7 +789,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--lifecycle-cycles", type=int, default=1)
     run.add_argument("--timeout", type=float, default=None)
     run.add_argument("--include-transcripts", action="store_true")
-    run.add_argument("--source", choices=("source-tree", "signed-app"), default="source-tree")
 
     worker = subparsers.add_parser("_worker")
     worker.add_argument("--backend", required=True, choices=BACKENDS)

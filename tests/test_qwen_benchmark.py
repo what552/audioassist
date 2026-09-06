@@ -11,13 +11,16 @@ import wave
 import pytest
 
 from src.qwen_benchmark import (
+    BenchmarkSample,
     _redact,
+    _validated_duration,
     assess_mlx_gate,
     compare_runs,
     edit_distance,
     error_rates,
     load_manifest,
     run_benchmark,
+    run_worker,
 )
 
 
@@ -133,6 +136,83 @@ def test_manifest_rejects_nonpositive_declared_duration(tmp_path):
         load_manifest(str(path))
 
 
+def test_measured_duration_rejects_false_declaration_and_duration_tag(tmp_path):
+    audio = tmp_path / "sample.wav"
+    _wav(audio)
+    declared = BenchmarkSample("declared", str(audio), (), duration_seconds=300)
+    tagged = BenchmarkSample("tagged", str(audio), ("five-minute",))
+
+    with pytest.raises(ValueError, match="differs from audio"):
+        _validated_duration(declared)
+    with pytest.raises(ValueError, match="does not match tag"):
+        _validated_duration(tagged)
+
+
+def test_worker_rejects_mixed_realtime_and_offline_manifest(tmp_path):
+    _wav(tmp_path / "realtime.wav")
+    _wav(tmp_path / "offline.wav")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {"id": "realtime", "path": "realtime.wav", "tags": ["realtime"]},
+                    {"id": "offline", "path": "offline.wav", "tags": ["offline"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="cannot mix"):
+        run_worker(
+            backend="mlx",
+            manifest_path=str(manifest),
+            model_path="/model",
+            aligner_path="/aligner",
+            warm_runs=0,
+            lifecycle_cycles=1,
+        )
+
+
+def test_realtime_worker_disables_aligner_and_timestamps(tmp_path):
+    audio = tmp_path / "sample.wav"
+    _wav(audio, seconds=5)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {"samples": [{"id": "short", "path": "sample.wav", "tags": ["realtime"]}]}
+        ),
+        encoding="utf-8",
+    )
+    engine = SimpleNamespace(
+        load=lambda: None,
+        close=lambda: None,
+        transcribe=lambda _path: SimpleNamespace(text="hello", language="English", words=[]),
+        last_truncated=False,
+    )
+
+    with (
+        patch("src.qwen_benchmark.create_qwen_engine", return_value=engine) as create,
+        patch("src.qwen_benchmark._rss_mb", return_value=100.0),
+        patch("src.qwen_benchmark._peak_rss_mb", return_value=200.0),
+        patch("src.qwen_benchmark._physical_memory_mb", return_value=1024.0),
+    ):
+        result = run_worker(
+            backend="mlx",
+            manifest_path=str(manifest),
+            model_path="/model",
+            aligner_path="/aligner",
+            warm_runs=1,
+            lifecycle_cycles=1,
+        )
+
+    assert create.call_args.kwargs["aligner_path"] is None
+    assert create.call_args.kwargs["with_timestamps"] is False
+    assert result["mode"] == "realtime-asr"
+    assert len(result["cycles"][0]["samples"][0]["passes"]) == 2
+
+
 def test_edit_distance_and_language_aware_error_rates():
     assert edit_distance(list("kitten"), list("sitting")) == 3
     rates = error_rates("你好，World!", "你好 world")
@@ -228,7 +308,7 @@ def test_gate_never_promotes_incomplete_source_tree_evidence():
     gate = assess_mlx_gate(report)
     assert gate["status"] == "insufficient-evidence"
     assert gate["recommendation"] == "keep-current-auto"
-    assert "signed-app benchmark report" in gate["missing_evidence"]
+    assert "independently verified signed-app release checklist" in gate["missing_evidence"]
 
 
 def test_gate_counts_realtime_utterances_across_lifecycle_cycles():
@@ -237,13 +317,21 @@ def test_gate_counts_realtime_utterances_across_lifecycle_cycles():
     sample.update({"tags": ["realtime"], "duration_seconds": 5})
     sample["passes"] = [
         {**sample["passes"][0], "seconds": 1.0, "rtf": 0.2, "possible_truncation": False}
-        for _ in range(2)
+        for _ in range(3)
     ]
     mlx["result"]["cycles"] = [
         {"samples": [sample]}
         for _ in range(50)
     ]
-    mlx["result"]["lifecycle_summary"] = {"rss_after_cleanup_growth_mb": 10}
+    mlx["result"]["lifecycle_summary"] = {
+        "completed_cycles": 50,
+        "rss_after_cleanup_samples": 50,
+        "rss_after_cleanup_growth_mb": 10,
+        "rss_after_cleanup_min_mb": 500,
+        "rss_after_cleanup_max_mb": 510,
+        "physical_memory_mb": 65536,
+        "peak_rss_mb_max": 6000,
+    }
     report = {
         "source": "source-tree",
         "lifecycle_cycles": 50,
@@ -255,6 +343,54 @@ def test_gate_counts_realtime_utterances_across_lifecycle_cycles():
 
     assert "100 serialized realtime utterances" not in gate["missing_evidence"]
     assert not any("cleanup RSS" in failure for failure in gate["failures"])
+
+
+def test_gate_ignores_cold_realtime_passes_and_requires_measured_lifecycle():
+    mlx = _run("mlx", "hello", 0.0)
+    sample = mlx["result"]["cycles"][0]["samples"][0]
+    sample.update({"tags": ["realtime"], "duration_seconds": 5})
+    sample["passes"] = [
+        {**sample["passes"][0], "seconds": 1.0, "possible_truncation": False}
+        for _ in range(2)
+    ]
+    mlx["result"]["cycles"] = [{"samples": [sample]} for _ in range(50)]
+    mlx["result"]["lifecycle_summary"] = {
+        "completed_cycles": 49,
+        "rss_after_cleanup_samples": 0,
+    }
+
+    gate = assess_mlx_gate(
+        {"runs": [mlx], "comparisons_against_pytorch_cpu": {}, "warm_runs": 1}
+    )
+
+    assert "100 serialized realtime utterances" in gate["missing_evidence"]
+    assert "50 completed lifecycle start/stop cycles" in gate["missing_evidence"]
+    assert "complete lifecycle RSS samples" in gate["missing_evidence"]
+
+
+def test_gate_fails_low_alignment_language_and_severe_text_difference():
+    report = {
+        "runs": [],
+        "comparisons_against_pytorch_cpu": {
+            "mlx": [
+                {
+                    "id": "bad",
+                    "language_agrees": False,
+                    "text_vs_cpu_cer": 0.4,
+                    "timestamp_alignment_ratio": 0.5,
+                    "timestamp_median_abs_seconds": 0.01,
+                    "timestamp_p95_abs_seconds": 0.02,
+                }
+            ]
+        },
+    }
+
+    gate = assess_mlx_gate(report)
+
+    assert gate["status"] == "fail"
+    assert "timestamp token alignment below 80%: bad" in gate["failures"]
+    assert "detected language differs from CPU: bad" in gate["failures"]
+    assert "text differs from CPU by more than 25% CER: bad" in gate["failures"]
 
 
 def test_parent_forces_offline_subprocess_and_redacts_output(tmp_path):
