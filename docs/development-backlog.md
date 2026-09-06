@@ -331,7 +331,7 @@ PID reuse, and lock contention.
 
 | ID | Task |
 |---|---|
-| CORE-LOCK-01 | Bound or evict the per-job `_transcript_locks` registry in long-running processes |
+| CORE-LOCK-01 | Complete: weak-value per-job locks remain shared by active owners/waiters and are evicted after use |
 | UI-ERROR-01 | Replace remaining blocking `alert()` paths with the app error/toast pattern |
 | PLAYER-01 | Surface actionable `seekTo()` media failures instead of only logging them |
 | UI-STATE-01 | Recheck the historical player/empty-hint state transitions with browser regression tests |

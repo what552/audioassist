@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import weakref
 import datetime as dt
 from typing import Optional
 
@@ -261,9 +262,13 @@ def _write_json_atomic(path: str, data: dict) -> None:
 
 def _get_transcript_lock(job_id: str) -> threading.Lock:
     with _transcript_locks_mutex:
-        if job_id not in _transcript_locks:
-            _transcript_locks[job_id] = threading.Lock()
-        return _transcript_locks[job_id]
+        lock = _transcript_locks.get(job_id)
+        if lock is None:
+            # Keep the new lock strongly referenced in this stack frame until
+            # it has been returned to the caller; the registry itself is weak.
+            lock = threading.Lock()
+            _transcript_locks[job_id] = lock
+        return lock
 
 
 _DEFAULT_TEMPLATES = [
@@ -319,12 +324,12 @@ class _TranscriptionCancelled(Exception):
     """Raised inside transcribe() thread when the job is cancelled."""
 
 
-# Per-job lock to prevent concurrent read-modify-write on transcript files
-# TODO: _transcript_locks grows unbounded (one entry per job for the lifetime of
-#   the process).  Fine for a single-session desktop app, but should be cleaned
-#   up (e.g. evict locks after save_transcript returns, or use a WeakValueDictionary)
-#   if the app ever supports long-running multi-session use.
-_transcript_locks: dict[str, threading.Lock] = {}
+# Per-job lock to prevent concurrent read-modify-write on transcript files.
+# Weak values retain a lock while any owner/waiter holds a strong reference and
+# evict it automatically once the operation finishes, bounding long-lived apps.
+_transcript_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
 _transcript_locks_mutex = threading.Lock()
 
 
@@ -630,10 +635,7 @@ class API:
         concurrent saves or a mid-write crash.
         """
         path = _transcript_path(job_id)
-        with _transcript_locks_mutex:
-            if job_id not in _transcript_locks:
-                _transcript_locks[job_id] = threading.Lock()
-            lock = _transcript_locks[job_id]
+        lock = _get_transcript_lock(job_id)
 
         with lock:
             if not path or not os.path.exists(path):
@@ -672,10 +674,7 @@ class API:
             return {"ok": False, "error": "Speaker name cannot be empty"}
 
         path = _transcript_path(job_id)
-        with _transcript_locks_mutex:
-            if job_id not in _transcript_locks:
-                _transcript_locks[job_id] = threading.Lock()
-            lock = _transcript_locks[job_id]
+        lock = _get_transcript_lock(job_id)
 
         with lock:
             if not path or not os.path.exists(path):
@@ -715,10 +714,7 @@ class API:
             return {"ok": False, "error": "Speaker name cannot be empty"}
 
         path = _transcript_path(job_id)
-        with _transcript_locks_mutex:
-            if job_id not in _transcript_locks:
-                _transcript_locks[job_id] = threading.Lock()
-            lock = _transcript_locks[job_id]
+        lock = _get_transcript_lock(job_id)
 
         with lock:
             if not path or not os.path.exists(path):
