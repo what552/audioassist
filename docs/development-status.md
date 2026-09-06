@@ -34,7 +34,7 @@ release-level manual validation rather than CI coverage.
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
 outer app, creates the DMG without Finder automation, and emits a JSON
-verification record. A real 0.1.0 ad-hoc candidate passed strict signatures,
+verification record. A real 2.0.0 ad-hoc candidate passed strict signatures,
 focused asset/entitlement checks, 491 Mach-O load-path checks, 582 symlink
 checks, DMG image verification, and a read-only mounted payload comparison by
 bundle identity and CDHash. Developer ID mode also audits every nested Mach-O

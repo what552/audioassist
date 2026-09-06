@@ -5,7 +5,7 @@ Updated: 2026-09-06
 ## Outcome
 
 The reproducible release implementation is complete and a local ad-hoc
-AudioAssist 0.1.0 release candidate passed all mechanical checks. It is not a
+AudioAssist 2.0.0 release candidate passed all mechanical checks. It is not a
 distribution release: this machine has no Developer ID Application identity,
 so Developer ID signing, Apple notarization, stapling, Gatekeeper validation on
 a quarantined download, and clean-machine checks remain external release gates.
@@ -18,12 +18,12 @@ profile.
 
 ## Verified local candidate
 
-- Version: `0.1.0`, sourced from `pyproject.toml` into both bundle version keys
+- Version: `2.0.0`, sourced from `pyproject.toml` into both bundle version keys
 - Bundle identifier: `com.audioassist.app`
 - App: `dist/AudioAssist.app` (1.1 GiB)
-- DMG: `dist/AudioAssist-0.1.0.dmg` (463 MiB)
+- DMG: `dist/AudioAssist-2.0.0.dmg` (462 MiB)
 - Final local DMG SHA-256:
-  `da041806e015829d7d63fb90c199b53b9df5598f70a3d646e327d03b34d06e2b`
+  `48cf73f58a06ce3b58d2d18d51a75facaf2c9fc43d07c677abc591eb949c19c8`
 - Signature: strict ad-hoc app and DMG signatures verified
 - Entitlements: only `com.apple.security.device.audio-input` on the app and
   capture helper; the obsolete sandbox microphone key and undocumented screen
@@ -49,9 +49,9 @@ uv sync --frozen --extra mac --extra dev --extra build
 bash scripts/build_dmg.sh
 .venv/bin/python scripts/verify_release.py \
   --app dist/AudioAssist.app \
-  --dmg dist/AudioAssist-0.1.0.dmg \
-  --expected-version 0.1.0 \
-  --output dist/release-verification-0.1.0.json
+  --dmg dist/AudioAssist-2.0.0.dmg \
+  --expected-version 2.0.0 \
+  --output dist/release-verification-2.0.0.json
 security find-identity -v -p codesigning
 ```
 
