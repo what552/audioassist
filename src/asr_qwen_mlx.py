@@ -6,6 +6,7 @@ factory before construction; the adapter never supplies repository IDs.
 """
 from __future__ import annotations
 
+from collections import Counter
 import gc
 import logging
 
@@ -38,6 +39,7 @@ class MLXQwenASREngine:
         self._session = None
         self._aligner = None
         self._mx = None
+        self.last_truncated = False
 
     def load(self) -> None:
         if self._session is not None:
@@ -69,8 +71,10 @@ class MLXQwenASREngine:
             audio_path,
             return_timestamps=self.with_timestamps,
             forced_aligner=self._aligner if self.with_timestamps else None,
+            return_chunks=True,
         )
-        if getattr(result, "truncated", False):
+        self.last_truncated = bool(getattr(result, "truncated", False))
+        if self.last_truncated:
             logger.warning("MLX Qwen transcription was truncated: %s", audio_path)
 
         words = [
@@ -81,9 +85,20 @@ class MLXQwenASREngine:
             )
             for segment in (getattr(result, "segments", None) or [])
         ]
+        language = str(result.language or "")
+        if not language:
+            chunk_languages = [
+                str(chunk.get("language", "")).strip()
+                for chunk in (getattr(result, "chunks", None) or [])
+                if str(chunk.get("language", "")).strip()
+                and str(chunk.get("language", "")).strip().lower() != "unknown"
+            ]
+            if chunk_languages:
+                language = Counter(chunk_languages).most_common(1)[0][0]
+
         return TranscriptResult(
             text=str(result.text),
-            language=str(result.language or ""),
+            language=language,
             words=words,
         )
 
@@ -100,6 +115,7 @@ class MLXQwenASREngine:
         self._session = None
         self._aligner = None
         self._mx = None
+        self.last_truncated = False
 
         if session is not None:
             for attribute in ("model", "tokenizer", "config"):
