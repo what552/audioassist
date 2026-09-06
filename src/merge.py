@@ -17,6 +17,8 @@ STRONG_PAUSE_SECONDS = 1.2
 SOFT_PAUSE_SECONDS = 0.6
 SENTENCE_PAUSE_SECONDS = 0.45
 SENTENCE_ENDINGS = ".!?。！？；;"
+TERMINAL_PUNCTUATION = SENTENCE_ENDINGS + ",:，：、…"
+CLOSING_PUNCTUATION = "\"')]}”’》】）〉」』"
 NO_SPACE_BEFORE = ".,!?;:)]}%。，！？；：、"
 NO_SPACE_AFTER = "([{"
 MIN_LATIN_TERMINAL_WORDS = 4
@@ -128,7 +130,7 @@ def merge(
             if len(distinct_speakers) == 1
             else UNKNOWN_SPEAKER
         )
-        text = _finalize_block_text(asr_result.text, [])
+        text = _finalize_block_text(asr_result.text, [], asr_result.language)
         return [SpeakerBlock(
             speaker=speaker,
             start=speaker_segments[0].start if speaker_segments else 0.0,
@@ -146,20 +148,29 @@ def merge(
 
         if speaker != current_speaker:
             if current_words:
-                blocks.append(_make_block(current_speaker, current_words))
+                blocks.append(_make_block(current_speaker, current_words, add_terminal=False))
             current_speaker = speaker
             current_words = [w]
         else:
             current_words.append(w)
 
     if current_words:
-        blocks.append(_make_block(current_speaker, current_words))
+        blocks.append(_make_block(current_speaker, current_words, add_terminal=False))
 
-    return split_long_blocks(blocks)
+    split_blocks = split_long_blocks(blocks, finalize=False)
+    return _finalize_blocks(split_blocks, asr_result.language)
 
 
-def _make_block(speaker: str, words: list[WordSegment]) -> SpeakerBlock:
-    text = _finalize_block_text(_join_words(words), words)
+def _make_block(
+    speaker: str,
+    words: list[WordSegment],
+    *,
+    language: str = "",
+    add_terminal: bool = True,
+) -> SpeakerBlock:
+    text = _finalize_block_text(
+        _join_words(words), words, language, allow_terminal=add_terminal
+    )
     return SpeakerBlock(
         speaker=speaker,
         start=words[0].start,
@@ -174,11 +185,12 @@ def _is_cjk_char(ch: str) -> bool:
         "\u3400" <= ch <= "\u4dbf"
         or "\u4e00" <= ch <= "\u9fff"
         or "\uf900" <= ch <= "\ufaff"
+        or "\u3040" <= ch <= "\u30ff"
     )
 
 
 def _is_wordish_char(ch: str) -> bool:
-    return ch.isascii() and (ch.isalnum() or ch in "'")
+    return ch.isalnum() or ch in "'"
 
 
 def _needs_space_between(left: str, right: str) -> bool:
@@ -233,7 +245,7 @@ def _dominant_script(words: list[WordSegment], text: str = "") -> str:
 
 
 def _has_sentence_ending(words: list[WordSegment]) -> bool:
-    return any(_ends_sentence(w.word) for w in words)
+    return bool(words) and _ends_sentence(words[-1].word)
 
 
 def _wordish_count(words: list[WordSegment]) -> int:
@@ -247,17 +259,22 @@ def _wordish_count(words: list[WordSegment]) -> int:
 
 def _terminal_char(text: str) -> str:
     stripped = text.rstrip()
-    while stripped and stripped[-1] in "\"')]}":
+    while stripped and stripped[-1] in CLOSING_PUNCTUATION:
         stripped = stripped[:-1].rstrip()
     return stripped[-1:] if stripped else ""
 
 
-def _has_terminal_sentence_punctuation(text: str) -> bool:
-    return _terminal_char(text) in SENTENCE_ENDINGS
+def _has_terminal_punctuation(text: str) -> bool:
+    return _terminal_char(text) in TERMINAL_PUNCTUATION
 
 
-def _should_add_terminal_punctuation(text: str, words: list[WordSegment]) -> bool:
-    if not text or _has_terminal_sentence_punctuation(text):
+def _should_add_terminal_punctuation(
+    text: str,
+    words: list[WordSegment],
+    *,
+    allow_terminal: bool = True,
+) -> bool:
+    if not allow_terminal or not text or _has_terminal_punctuation(text):
         return False
 
     script = _dominant_script(words, text)
@@ -267,15 +284,74 @@ def _should_add_terminal_punctuation(text: str, words: list[WordSegment]) -> boo
     return _wordish_count(words) >= MIN_LATIN_TERMINAL_WORDS
 
 
-def _terminal_punctuation(words: list[WordSegment], text: str) -> str:
-    return "。" if _dominant_script(words, text) == "cjk" else "."
+def _terminal_punctuation(
+    words: list[WordSegment], text: str, language: str = ""
+) -> str:
+    language_code = (
+        (language or "").strip().lower().replace("_", "-").split("-", 1)[0]
+    )
+    return "。" if language_code in {"zh", "yue", "ja"} or _dominant_script(words, text) == "cjk" else "."
 
 
-def _finalize_block_text(text: str, words: list[WordSegment]) -> str:
+def _finalize_block_text(
+    text: str,
+    words: list[WordSegment],
+    language: str = "",
+    *,
+    allow_terminal: bool = True,
+) -> str:
     final = text.strip()
-    if _should_add_terminal_punctuation(final, words):
-        final += _terminal_punctuation(words, final)
+    if _should_add_terminal_punctuation(
+        final, words, allow_terminal=allow_terminal
+    ):
+        final += _terminal_punctuation(words, final, language)
     return final
+
+
+def _word_segments(block: SpeakerBlock) -> list[WordSegment]:
+    return [
+        WordSegment(word=word["word"], start=word["start"], end=word["end"])
+        for word in block.words
+    ]
+
+
+def _finalize_blocks(
+    blocks: list[SpeakerBlock], language: str
+) -> list[SpeakerBlock]:
+    """Add punctuation only at evidence-backed or transcript-final boundaries."""
+    finalized: list[SpeakerBlock] = []
+    all_words = [word for block in blocks for word in _word_segments(block)]
+    full_text = "".join(block.text for block in blocks)
+    transcript_warrants_terminal = _should_add_terminal_punctuation(
+        full_text, all_words
+    )
+    for index, block in enumerate(blocks):
+        is_final = index == len(blocks) - 1
+        next_block = None if is_final else blocks[index + 1]
+        boundary_pause = (
+            max(0.0, next_block.start - block.end) if next_block is not None else 0.0
+        )
+        words = _word_segments(block)
+        text = _finalize_block_text(
+            block.text,
+            words,
+            language,
+            allow_terminal=is_final or boundary_pause >= SENTENCE_PAUSE_SECONDS,
+        )
+        if (
+            is_final
+            and transcript_warrants_terminal
+            and not _has_terminal_punctuation(text)
+        ):
+            text += _terminal_punctuation(words, text, language)
+        finalized.append(SpeakerBlock(
+            speaker=block.speaker,
+            start=block.start,
+            end=block.end,
+            text=text,
+            words=block.words,
+        ))
+    return finalized
 
 
 def _should_force_sentence_break(words: list[WordSegment]) -> bool:
@@ -323,7 +399,9 @@ def _should_split(words: list[WordSegment], next_word: WordSegment) -> bool:
     return False
 
 
-def split_long_blocks(blocks: list[SpeakerBlock]) -> list[SpeakerBlock]:
+def split_long_blocks(
+    blocks: list[SpeakerBlock], *, finalize: bool = True
+) -> list[SpeakerBlock]:
     """Split overly long single-speaker blocks using pauses and sentence boundaries."""
     split_blocks: list[SpeakerBlock] = []
 
@@ -340,13 +418,17 @@ def split_long_blocks(blocks: list[SpeakerBlock]) -> list[SpeakerBlock]:
                 end=raw_word["end"],
             )
             if current_words and _should_split(current_words, word):
-                split_blocks.append(_make_block(block.speaker, current_words))
+                split_blocks.append(_make_block(
+                    block.speaker, current_words, add_terminal=finalize
+                ))
                 current_words = [word]
             else:
                 current_words.append(word)
 
         if current_words:
-            split_blocks.append(_make_block(block.speaker, current_words))
+            split_blocks.append(_make_block(
+                block.speaker, current_words, add_terminal=finalize
+            ))
 
     return split_blocks
 

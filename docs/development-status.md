@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The current baseline is 805 automated tests, including 8 browser tests. It
+The current baseline is 820 automated tests, including 8 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -65,6 +65,14 @@ the same speaker; near-even cross-speaker boundaries and weakly covered interval
 remain explicitly `UNKNOWN`. Transcript-level results without word timestamps also
 remain `UNKNOWN` when diarization contains multiple identities.
 
+TEXT-01 removes unconditional punctuation at every generated block boundary. Existing
+commas, colons, ellipses, sentence marks, and closing quotes are preserved without
+doubling. Internal generated terminals now require at least a 450 ms pause; splits
+caused only by display-length limits do not invent a sentence boundary. The final
+transcript still receives a conservative terminal when the whole utterance is long
+enough. Script/language fixtures cover English, Chinese, Japanese, mixed Chinese-English,
+Russian, Arabic, and Korean, and the transformation never changes lexical tokens.
+
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
 outer app, creates the DMG without Finder automation, and emits a JSON
@@ -108,4 +116,5 @@ matrix, and the distribution release gate is recorded in
 `docs/release-candidate-results.md`. HTTP/MCP work remains a separate milestone
 and must not imply durable background work until lifecycle, locking, recovery,
 and cancellation are designed. With AGENT-01 paused by the owner, the next ordered
-task is TEXT-01, followed by R03-B1 and R03-B2.
+task is the R03-B1 HTTP lifecycle/security design gate, followed by R03-B2 only if
+that design provides an implementable local boundary.
