@@ -332,7 +332,7 @@ PID reuse, and lock contention.
 | ID | Task |
 |---|---|
 | CORE-LOCK-01 | Complete: weak-value per-job locks remain shared by active owners/waiters and are evicted after use |
-| UI-ERROR-01 | Replace remaining blocking `alert()` paths with the app error/toast pattern |
+| UI-ERROR-01 | Complete: blocking `alert()` paths use non-blocking app toasts with actionable errors |
 | PLAYER-01 | Surface actionable `seekTo()` media failures instead of only logging them |
 | UI-STATE-01 | Recheck the historical player/empty-hint state transitions with browser regression tests |
 | REALTIME-01 | Complete through R03-B2: pause/resume failures produce an error state and never emit false confirmed UI events |
