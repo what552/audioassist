@@ -129,6 +129,58 @@ def test_switch_stops_audio(page: Page, ui_base_url: str) -> None:
     )
 
 
+def test_player_load_preserves_same_session_and_resets_on_source_change(
+    page: Page, ui_base_url: str
+) -> None:
+    """A rerender must not restart one session; a new source must stop the old one."""
+    _inject_and_navigate(page, ui_base_url)
+    result = page.evaluate(
+        """
+        () => {
+          const audio = document.getElementById('audio-el');
+          let pauses = 0;
+          let loads = 0;
+          audio.pause = () => { pauses += 1; };
+          audio.load = () => { loads += 1; };
+
+          Player.load('/audio/session-a.wav');
+          audio.currentTime = 17;
+          Player.load('/audio/session-a.wav');
+          const afterSame = {
+            pauses,
+            loads,
+            currentTime: audio.currentTime,
+            path: Player.loadedPath,
+          };
+
+          Player.load('/audio/session-b.wav');
+          return {
+            afterSame,
+            afterSwitch: {
+              pauses,
+              loads,
+              currentTime: audio.currentTime,
+              path: Player.loadedPath,
+              display: document.getElementById('player-time').textContent,
+            },
+          };
+        }
+        """
+    )
+
+    assert result["afterSame"] == {
+        "pauses": 1,
+        "loads": 1,
+        "currentTime": 17,
+        "path": "/audio/session-a.wav",
+    }
+    assert result["afterSwitch"]["pauses"] == 2
+    assert result["afterSwitch"]["loads"] == 2
+    assert result["afterSwitch"]["currentTime"] == 0
+    assert result["afterSwitch"]["path"] == "/audio/session-b.wav"
+    assert result["afterSwitch"]["display"].startswith("00:00 / ")
+
+
 def test_pywebviewready_timing(page: Page, ui_base_url: str) -> None:
     """
     Scenario 3 — App.init() is NOT triggered before pywebviewready.

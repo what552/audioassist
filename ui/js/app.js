@@ -97,6 +97,11 @@ const App = (() => {
     _render();
   }
 
+  function _selectSession(id) {
+    if (_selectedId !== id) Player.stop();
+    _selectedId = id;
+  }
+
   function _sortedSessions() {
     const active = ['recording', 'transcribing', 'paused'];
     return [..._sessions.values()].sort((a, b) => {
@@ -261,7 +266,7 @@ const App = (() => {
         filename: 'Recording ' + sessionId.slice(0, 8), created_at: _now(),
         audioPath: wavPath || null,
       });
-      _selectedId = sessionId;
+      _selectSession(sessionId);
       _startTimer();
       _render();
     } else if (state === 'paused') {
@@ -277,7 +282,7 @@ const App = (() => {
       const discard   = rtSession?.discarding;
       const rtId      = _activeRealtimeId;
       _sessions.delete(_activeRealtimeId);
-      if (_selectedId === _activeRealtimeId) _selectedId = null;
+      if (_selectedId === _activeRealtimeId) _selectSession(null);
       _activeRealtimeId = null;
       _resetTimer();
       if (discard) {
@@ -289,7 +294,7 @@ const App = (() => {
         _render();
       }
     } else if (state === 'error') {
-      if (_selectedId === _activeRealtimeId) _selectedId = null;
+      if (_selectedId === _activeRealtimeId) _selectSession(null);
       _sessions.delete(_activeRealtimeId);
       _activeRealtimeId = null;
       _resetTimer();
@@ -300,8 +305,7 @@ const App = (() => {
   // ── History ────────────────────────────────────────────────────────────────
 
   function _onHistorySelect(id) {
-    Player.stop();
-    _selectedId = id;
+    _selectSession(id);
     _render();
   }
 
@@ -317,7 +321,7 @@ const App = (() => {
     window.pywebview.api.delete_session(id)
       .then(ok => {
         if (!ok) return;
-        if (_selectedId === id) _selectedId = null;
+        if (_selectedId === id) _selectSession(null);
         _sessions.delete(id);
         _render();
       })
@@ -398,7 +402,7 @@ const App = (() => {
         filename, created_at: _now(), audioPath: filePath,
         refineAvailable: opts.refineAvailable || false,
       });
-      _selectedId = job_id;
+      _selectSession(job_id);
       _setProgress(0, 'Starting…');
       _render();
     } catch (err) {
@@ -415,7 +419,7 @@ const App = (() => {
     if (s.status === 'interrupted') {
       // F2: Resume from checkpoint — reuse same job_id, skip done chunks
       _updateSession(id, { status: 'transcribing', errorMsg: null });
-      _selectedId = id;
+      _selectSession(id);
       _setProgress(0, 'Resuming…');
       _render();
       try {
@@ -433,7 +437,7 @@ const App = (() => {
     const filePath    = s.audioPath;
     const displayName = s.filename;
     _sessions.delete(id);
-    if (_selectedId === id) _selectedId = null;
+    if (_selectedId === id) _selectSession(null);
     _enqueueFiles([filePath], [displayName]);
   }
 
@@ -498,7 +502,7 @@ const App = (() => {
       _render();
       return;
     }
-    if (_selectedId === jobId) _selectedId = null;
+    if (_selectedId === jobId) _selectSession(null);
     _sessions.delete(jobId);
     _render();
   }
@@ -637,7 +641,7 @@ const App = (() => {
       const filePath    = s.audioPath;
       const displayName = s.filename;
       _sessions.delete(_selectedId);
-      _selectedId = null;
+      _selectSession(null);
       _startTranscription(filePath, displayName);
     });
 

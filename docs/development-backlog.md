@@ -34,7 +34,7 @@ Priority meanings:
 | 15 | R03-B2 | P2 | Complete | Authenticated desktop/read-only HTTP service and eight-tool stdio MCP adapter, without a daemon |
 | 16 | REALTIME-DIAG-01 | P1 | Complete | Prove the 44-byte WAV failure is a TCC code-requirement mismatch after replacing an ad-hoc signed build |
 | 17 | REALTIME-START-01 | P1 | Complete | Request microphone access before PortAudio/model/session startup, with cancel and timeout recovery; installed 2.0.1 gate passed |
-| 18 | PLAYER-02 | P2 | Ready | Prevent playback position and active playback from leaking across session switches |
+| 18 | PLAYER-02 | P2 | Complete | Prevent playback position and active playback from leaking across session switches |
 | 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
@@ -274,6 +274,18 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
   current implementation uses the Apple GPU through Metal.
 
 ## P2 product and reliability backlog
+
+### PLAYER-02 — Session-safe playback state
+
+- Route every selected-session transition through one helper that stops the prior
+  audio only when the selected session actually changes.
+- Make loading the same source idempotent so rename/status rerenders preserve its
+  current position and playback state.
+- Pause and reset immediately before a different source is loaded, and publish a
+  zero-time update so the previous session's position cannot remain visible while
+  the new media metadata loads.
+- Browser regression covers both same-source preservation and different-source
+  pause/reset behavior.
 
 | ID | Task | Acceptance direction |
 |---|---|---|
