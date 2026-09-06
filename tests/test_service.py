@@ -415,6 +415,36 @@ def test_transcribe_preserves_existing_display_name(tmp_path):
     assert transcript["filename"] == "用户重命名"
 
 
+def test_transcribe_failure_preserves_previous_session_and_cleans_staging(tmp_path):
+    source = tmp_path / "source.wav"
+    source.write_bytes(b"RIFF")
+    output = tmp_path / "output"
+    session_dir = output / "meetings" / "job-1"
+    session_dir.mkdir(parents=True)
+    transcript_path = session_dir / "transcript.json"
+    previous = {
+        "job_id": "job-1",
+        "filename": "Previous",
+        "audio": str(source),
+        "language": "en",
+        "created_at": "",
+        "segments": [],
+    }
+    transcript_path.write_text(json.dumps(previous), encoding="utf-8")
+
+    def failing_pipeline(audio_path, output_dir, **_kwargs):
+        with open(os.path.join(output_dir, "transcript.json"), "w", encoding="utf-8") as file:
+            json.dump({**previous, "filename": "Partial"}, file)
+        raise RuntimeError("pipeline failed after writing staged JSON")
+
+    with patch("src.pipeline.run", side_effect=failing_pipeline), \
+         pytest.raises(RuntimeError, match="pipeline failed"):
+        AudioAssistService(str(output)).transcribe(str(source), job_id="job-1")
+
+    assert json.loads(transcript_path.read_text(encoding="utf-8")) == previous
+    assert not list(session_dir.glob(".transcribe-*"))
+
+
 def test_corrupt_summary_file_recovers_on_save(tmp_path):
     session_dir = tmp_path / "meetings" / "job-1"
     session_dir.mkdir(parents=True)

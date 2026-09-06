@@ -129,6 +129,23 @@ _DEFAULT_TEMPLATES = [
 _cancel_flags: dict[str, threading.Event] = {}
 _cancel_flags_mutex = threading.Lock()
 
+
+def _register_transcription(job_id: str) -> Optional[threading.Event]:
+    """Register one active operation per job, returning None on conflict."""
+    with _cancel_flags_mutex:
+        if job_id in _cancel_flags:
+            return None
+        event = threading.Event()
+        _cancel_flags[job_id] = event
+        return event
+
+
+def _unregister_transcription(job_id: str, event: threading.Event) -> None:
+    """Remove an operation only when the caller still owns its registration."""
+    with _cancel_flags_mutex:
+        if _cancel_flags.get(job_id) is event:
+            _cancel_flags.pop(job_id, None)
+
 # Guard so the Obsidian startup scan runs only once per process
 _obsidian_startup_done = False
 
@@ -247,10 +264,6 @@ class API:
         if job_id is None:
             job_id = str(uuid.uuid4())
 
-        # Pop realtime segments if this is a just-finished realtime session.
-        # Must be popped here (before the thread starts) to avoid a TOCTOU race.
-        rt_segments = self._rt_segments.pop(path, None)
-
         # Resolve ASR engine/model before spawning thread so both the main
         # transcription and the optional background refine use the same choice.
         model_id = options.get("model_id")
@@ -261,10 +274,17 @@ class API:
             if _info:
                 engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
+        # Register before starting the thread so an immediate cancel cannot
+        # miss the job. A job id owns at most one transcription/refine worker.
+        cancel_ev = _register_transcription(job_id)
+        if cancel_ev is None:
+            return {"error": "job_in_progress", "job_id": job_id}
+
+        # Pop realtime segments only after registration succeeds. A rejected
+        # duplicate must not consume the pending realtime result.
+        rt_segments = self._rt_segments.pop(path, None)
+
         def _run():
-            cancel_ev = threading.Event()
-            with _cancel_flags_mutex:
-                _cancel_flags[job_id] = cancel_ev
             try:
                 def _progress(pct: float, msg: str):
                     if cancel_ev.is_set():
@@ -274,28 +294,36 @@ class API:
 
                 hf_token = options.get("hf_token") or os.environ.get("HF_TOKEN")
                 num_speakers = options.get("num_speakers")
-                result = _service().transcribe(
-                    path,
-                    engine=engine,
-                    model_id=model_id,
-                    hf_token=hf_token,
-                    num_speakers=num_speakers,
-                    job_id=job_id,
-                    realtime_segments=rt_segments,
-                    progress_callback=_progress,
-                )
-                s_dir = _session_dir(job_id)
-                json_path = result["json_path"]
-                audio_copy = result.get("audio_copy") or None
+                lock = _get_transcript_lock(job_id)
+                with lock:
+                    if cancel_ev.is_set():
+                        raise _TranscriptionCancelled()
+                    result = _service().transcribe(
+                        path,
+                        engine=engine,
+                        model_id=model_id,
+                        hf_token=hf_token,
+                        num_speakers=num_speakers,
+                        job_id=job_id,
+                        realtime_segments=rt_segments,
+                        progress_callback=_progress,
+                    )
+                    s_dir = _session_dir(job_id)
+                    json_path = result["json_path"]
+                    audio_copy = result.get("audio_copy") or None
 
-                # Store options for optional manual high-accuracy refine (realtime only).
-                if rt_segments:
-                    self._refine_options[job_id] = {
-                        "path": path, "s_dir": s_dir, "engine": engine,
-                        "model_id": model_id, "hf_token": hf_token,
-                        "num_speakers": num_speakers, "audio_copy": audio_copy,
-                        "json_path": json_path,
-                    }
+                    # Store options for optional manual high-accuracy refine (realtime only).
+                    if rt_segments:
+                        self._refine_options[job_id] = {
+                            "path": path, "s_dir": s_dir, "engine": engine,
+                            "model_id": model_id, "hf_token": hf_token,
+                            "num_speakers": num_speakers, "audio_copy": audio_copy,
+                            "json_path": json_path,
+                        }
+
+                # Stop accepting cancellation once the transactional service
+                # has committed the completed session.
+                _unregister_transcription(job_id, cancel_ev)
 
                 # Notify frontend — hasRefine is always False; manual refine via refine().
                 has_refine = False
@@ -319,8 +347,7 @@ class API:
                 js = f"onTranscribeError({json.dumps(job_id)}, {json.dumps(str(e))})"
                 _push(js)
             finally:
-                with _cancel_flags_mutex:
-                    _cancel_flags.pop(job_id, None)
+                _unregister_transcription(job_id, cancel_ev)
 
         threading.Thread(target=_run, daemon=True).start()
         return {"job_id": job_id}
@@ -334,66 +361,60 @@ class API:
         Returns {"job_id": str} immediately; progress is pushed via onTranscribeProgress.
         Pushes onTranscribeRefined(jobId) on completion (success or error).
         """
-        opts = self._refine_options.pop(job_id, None)
+        with _cancel_flags_mutex:
+            if job_id in _cancel_flags:
+                return {"error": "job_in_progress", "job_id": job_id}
+
+        opts = self._refine_options.get(job_id)
         if opts is None:
             return {"error": "no_refine_options"}
 
+        cancel_ev = _register_transcription(job_id)
+        if cancel_ev is None:
+            return {"error": "job_in_progress", "job_id": job_id}
+        self._refine_options.pop(job_id, None)
+
         path         = opts["path"]
-        s_dir        = opts["s_dir"]
         engine       = opts["engine"]
         model_id     = opts["model_id"]
         hf_token     = opts["hf_token"]
         num_speakers = opts["num_speakers"]
-        audio_copy   = opts.get("audio_copy")
-        json_path    = opts["json_path"]
 
         def _run():
             try:
                 def _progress(pct: float, msg: str):
+                    if cancel_ev.is_set():
+                        raise _TranscriptionCancelled()
                     js = f"onTranscribeProgress({json.dumps(job_id)}, {pct:.4f}, {json.dumps(msg)})"
                     _push(js)
 
-                from src.pipeline import run as pipeline_run
                 logger.info("Refine ASR started for job %s", job_id)
                 lock = _get_transcript_lock(job_id)
-                preserved_filename = None
-                preserved_job_id   = job_id
-                if os.path.exists(json_path):
-                    with lock:
-                        current = _read_json_file(json_path, {})
-                    if isinstance(current, dict):
-                        preserved_filename = current.get("filename") or None
-                        preserved_job_id   = current.get("job_id") or job_id
-
-                refined_json, _ = pipeline_run(
-                    audio_path=path,
-                    output_dir=s_dir,
-                    hf_token=hf_token,
-                    engine=engine,
-                    asr_model_id=model_id,
-                    num_speakers=num_speakers,
-                    job_id=job_id,
-                    output_stem="transcript",
-                    session_dir=s_dir,
-                    progress_callback=_progress,
-                )
                 with lock:
-                    try:
-                        rdata = _read_json_file(refined_json, {})
-                        if audio_copy:
-                            rdata["audio"] = audio_copy
-                        rdata["job_id"] = preserved_job_id
-                        if preserved_filename:
-                            rdata["filename"] = preserved_filename
-                        _write_json_atomic(refined_json, rdata)
-                    except Exception:
-                        logger.warning("refine: failed to patch metadata", exc_info=True)
+                    if cancel_ev.is_set():
+                        raise _TranscriptionCancelled()
+                    _service().transcribe(
+                        path,
+                        engine=engine,
+                        model_id=model_id,
+                        hf_token=hf_token,
+                        num_speakers=num_speakers,
+                        job_id=job_id,
+                        progress_callback=_progress,
+                    )
 
+                _unregister_transcription(job_id, cancel_ev)
                 _push(f"onTranscribeRefined({json.dumps(job_id)})")
                 logger.info("Refine ASR complete for job %s", job_id)
+            except _TranscriptionCancelled:
+                logger.info("Refine ASR cancelled for job %s", job_id)
+                self._refine_options[job_id] = opts
+                _push(f"onTranscribeCancel({json.dumps(job_id)})")
             except Exception:
                 logger.exception("Refine ASR failed for job %s", job_id)
                 _push(f"onTranscribeRefined({json.dumps(job_id)})")
+            finally:
+                _unregister_transcription(job_id, cancel_ev)
 
         threading.Thread(target=_run, daemon=True).start()
         return {"job_id": job_id}
@@ -407,10 +428,10 @@ class API:
         """
         with _cancel_flags_mutex:
             ev = _cancel_flags.get(job_id)
-        if ev is None:
-            return False
-        ev.set()
-        return True
+            if ev is None:
+                return False
+            ev.set()
+            return True
 
     def get_transcript(self, job_id: str) -> Optional[dict]:
         """Load transcript JSON for a given job_id."""

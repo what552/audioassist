@@ -44,6 +44,29 @@ def _fake_pipeline_slow(audio_path, output_dir, job_id, progress_callback=None, 
 
 
 class TestCancelTranscription:
+    def test_immediate_cancel_is_registered_before_worker_starts(self, env, tmp_path):
+        api, _ = env
+        src = tmp_path / "immediate.mp3"
+        src.write_bytes(b"x")
+        worker = {}
+        pushes = []
+
+        class DeferredThread:
+            def __init__(self, *, target, daemon):
+                worker["target"] = target
+
+            def start(self):
+                return None
+
+        with patch.object(app_module.threading, "Thread", DeferredThread), \
+             patch.object(app_module, "_push", side_effect=pushes.append):
+            result = api.transcribe(str(src), {})
+            assert api.cancel_transcription(result["job_id"]) is True
+            worker["target"]()
+
+        assert any("onTranscribeCancel" in call for call in pushes)
+        assert api.cancel_transcription(result["job_id"]) is False
+
     def test_cancel_returns_false_when_no_job_running(self, env):
         api, _ = env
         assert api.cancel_transcription("nonexistent-job-id") is False
@@ -139,3 +162,78 @@ class TestCancelTranscription:
 
         # After cancellation completes the flag is removed
         assert api.cancel_transcription(job_id) is False
+
+    def test_duplicate_job_id_is_rejected_while_running(self, env, tmp_path):
+        api, _ = env
+        src = tmp_path / "duplicate.mp3"
+        src.write_bytes(b"x")
+        started = threading.Event()
+        release = threading.Event()
+
+        def _pipeline(audio_path, output_dir, job_id, progress_callback=None, **kw):
+            started.set()
+            assert release.wait(2)
+            if progress_callback:
+                progress_callback(0.5, "working")
+            return _fake_pipeline_slow(audio_path, output_dir, job_id, progress_callback, **kw)
+
+        with patch("src.pipeline.run", side_effect=_pipeline), \
+             patch.object(app_module, "_push"):
+            first = api.transcribe(str(src), {}, job_id="same-job")
+            assert started.wait(2)
+            second = api.transcribe(str(src), {}, job_id="same-job")
+            assert second == {"error": "job_in_progress", "job_id": "same-job"}
+            assert first == {"job_id": "same-job"}
+            assert api.cancel_transcription("same-job") is True
+            release.set()
+            deadline = time.monotonic() + 2
+            while api.cancel_transcription("same-job") and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        assert api.cancel_transcription("same-job") is False
+
+    def test_cancel_after_pipeline_output_preserves_previous_transcript(self, env, tmp_path):
+        api, out_dir = env
+        job_id = "existing-job"
+        src = tmp_path / "rerun.mp3"
+        src.write_bytes(b"x")
+        session_dir = out_dir / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        transcript_path = session_dir / "transcript.json"
+        original = {
+            "job_id": job_id,
+            "filename": "Original",
+            "audio": str(src),
+            "language": "en",
+            "created_at": "",
+            "segments": [{"speaker": "A", "start": 0, "end": 1, "text": "old", "words": []}],
+        }
+        transcript_path.write_text(json.dumps(original), encoding="utf-8")
+        written = threading.Event()
+        release = threading.Event()
+        cancelled = threading.Event()
+
+        def _pipeline(audio_path, output_dir, job_id, progress_callback=None, **kw):
+            json_path = os.path.join(output_dir, "transcript.json")
+            md_path = os.path.join(output_dir, "transcript.md")
+            with open(json_path, "w", encoding="utf-8") as file:
+                json.dump({**original, "segments": [{**original["segments"][0], "text": "new"}]}, file)
+            open(md_path, "w").close()
+            written.set()
+            assert release.wait(2)
+            return json_path, md_path
+
+        def _push(call):
+            if "onTranscribeCancel" in call:
+                cancelled.set()
+
+        with patch("src.pipeline.run", side_effect=_pipeline), \
+             patch.object(app_module, "_push", side_effect=_push):
+            api.transcribe(str(src), {}, job_id=job_id)
+            assert written.wait(2)
+            assert api.cancel_transcription(job_id) is True
+            release.set()
+            assert cancelled.wait(2)
+
+        assert json.loads(transcript_path.read_text(encoding="utf-8")) == original
+        assert not list(session_dir.glob(".transcribe-*"))

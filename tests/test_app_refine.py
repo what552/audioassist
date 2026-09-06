@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import time
 import pytest
 from unittest.mock import MagicMock, patch
@@ -324,6 +325,90 @@ class TestManualRefine:
                 _wait(0.5)
 
         assert not any("onTranscribeRefined" in c for c in js_calls)
+
+    def test_cancel_refine_keeps_draft_and_allows_retry(self):
+        with tempfile.TemporaryDirectory() as td:
+            job_id = "cancel-refine-job"
+            session_dir = os.path.join(td, "meetings", job_id)
+            os.makedirs(session_dir)
+            wav = os.path.join(session_dir, "recording.wav")
+            open(wav, "wb").close()
+            transcript_path = os.path.join(session_dir, "transcript.json")
+            draft = {
+                "job_id": job_id,
+                "filename": "Draft",
+                "audio": wav,
+                "language": "en",
+                "created_at": "",
+                "segments": [{"speaker": "A", "start": 0, "end": 1, "text": "draft", "words": []}],
+            }
+            with open(transcript_path, "w", encoding="utf-8") as file:
+                json.dump(draft, file)
+
+            api = API()
+            api._refine_options[job_id] = {
+                "path": wav,
+                "s_dir": session_dir,
+                "engine": "qwen",
+                "model_id": None,
+                "hf_token": None,
+                "num_speakers": None,
+                "audio_copy": wav,
+                "json_path": transcript_path,
+            }
+            written = threading.Event()
+            release = threading.Event()
+            cancelled = threading.Event()
+
+            def _pipeline(audio_path, output_dir, **kwargs):
+                result = _make_fake_pipeline_run(td, refined_text="refined")(
+                    audio_path, output_dir, **kwargs
+                )
+                written.set()
+                assert release.wait(2)
+                return result
+
+            def _push(call):
+                if "onTranscribeCancel" in call:
+                    cancelled.set()
+
+            with patch("src.pipeline.run", side_effect=_pipeline), \
+                 patch.object(app_module, "_push", side_effect=_push), \
+                 patch.object(app_module, "OUTPUT_DIR", td):
+                assert api.refine(job_id) == {"job_id": job_id}
+                assert written.wait(2)
+                assert api.cancel_transcription(job_id) is True
+                release.set()
+                assert cancelled.wait(2)
+
+            with open(transcript_path, encoding="utf-8") as file:
+                assert json.load(file) == draft
+            assert job_id in api._refine_options
+            assert not any(name.startswith(".transcribe-") for name in os.listdir(session_dir))
+
+    def test_duplicate_refine_is_rejected_while_first_is_running(self):
+        with tempfile.TemporaryDirectory() as td:
+            wav = os.path.join(td, "session.wav")
+            open(wav, "wb").close()
+            api, job_id = self._setup_after_phase1(td, wav)
+            started = threading.Event()
+            release = threading.Event()
+
+            def _pipeline(audio_path, output_dir, **kwargs):
+                started.set()
+                assert release.wait(2)
+                return _make_fake_pipeline_run(td)(audio_path, output_dir, **kwargs)
+
+            with patch("src.pipeline.run", side_effect=_pipeline), \
+                 patch.object(app_module, "_push"), \
+                 patch.object(app_module, "OUTPUT_DIR", td):
+                assert api.refine(job_id) == {"job_id": job_id}
+                assert started.wait(2)
+                assert api.refine(job_id) == {"error": "job_in_progress", "job_id": job_id}
+                release.set()
+                deadline = time.monotonic() + 2
+                while api.cancel_transcription(job_id) and time.monotonic() < deadline:
+                    time.sleep(0.01)
 
 
 # ── Metadata durability across refine ────────────────────────────────────────
