@@ -243,9 +243,15 @@ class AudioAssistService:
             if not job_id or job_id in seen_job_ids:
                 continue
             seen_job_ids.add(job_id)
+            meta = _read_json(
+                os.path.join(meetings_dir, job_id, "meta.json"), {}
+            )
+            display_name = (
+                meta.get("filename") if isinstance(meta, dict) else None
+            ) or os.path.basename(checkpoint.get("source_audio", job_id))
             result.append({
                 "job_id": job_id,
-                "filename": os.path.basename(checkpoint.get("source_audio", job_id)),
+                "filename": display_name,
                 "date": checkpoint.get("updated_at", ""),
                 "duration": 0,
                 "language": "",

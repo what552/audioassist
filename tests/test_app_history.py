@@ -206,6 +206,31 @@ class TestGetHistoryWavEntries:
         assert result[0]["filename"] == "deadbeef"
         assert result[0]["audio_path"].endswith("realtime_recording.wav")
 
+    def test_interrupted_session_uses_persisted_rename(self, env):
+        api, tmp = env
+        from src.checkpoint import write as write_checkpoint
+
+        job_id = "interrupted-renamed-job"
+        session_dir = tmp / "meetings" / job_id
+        write_checkpoint(str(session_dir), {
+            "job_id": job_id,
+            "source_audio": "/audio/original-name.wav",
+            "status": "interrupted",
+            "chunks": [],
+            "completed_chunks": 0,
+            "total_chunks": 1,
+        })
+        (session_dir / "meta.json").write_text(
+            json.dumps({"filename": "讨论后的标题"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        result = api.get_history()
+
+        assert len(result) == 1
+        assert result[0]["status"] == "interrupted"
+        assert result[0]["filename"] == "讨论后的标题"
+
 
 # ── get_summary_versions ───────────────────────────────────────────────────────
 

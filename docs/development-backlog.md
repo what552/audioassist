@@ -35,7 +35,7 @@ Priority meanings:
 | 16 | REALTIME-DIAG-01 | P1 | Complete | Prove the 44-byte WAV failure is a TCC code-requirement mismatch after replacing an ad-hoc signed build |
 | 17 | REALTIME-START-01 | P1 | Complete | Request microphone access before PortAudio/model/session startup, with cancel and timeout recovery; installed 2.0.1 gate passed |
 | 18 | PLAYER-02 | P2 | Complete | Prevent playback position and active playback from leaking across session switches |
-| 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
+| 19 | UI-SESSION-REFRESH-01 | P2 | Complete | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
@@ -286,6 +286,18 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
   the new media metadata loads.
 - Browser regression covers both same-source preservation and different-source
   pause/reset behavior.
+
+### UI-SESSION-REFRESH-01 — Durable session labels and transitions
+
+- Apply valid renames optimistically so a status rerender cannot restore the old
+  title while persistence waits behind the session mutation lock; roll back only
+  if that exact rename fails.
+- Preserve the renamed title in `meta.json` for interrupted sessions and read it
+  back in history instead of falling back to the source basename.
+- Treat an explicit resume error as interrupted and retryable rather than leaving
+  the session indefinitely marked as transcribing or hiding its Resume action.
+- Backend and browser regressions cover renamed interruption, pending rename plus
+  completion, and failed resume visibility without restarting the app.
 
 | ID | Task | Acceptance direction |
 |---|---|---|

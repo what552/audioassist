@@ -187,7 +187,7 @@ const App = (() => {
 
   function _showFileDone(session) {
     const data = session._data;
-    dom.playerFilename.textContent = data.audio || data.filename || session.filename;
+    dom.playerFilename.textContent = session.filename || data.filename || data.audio;
     dom.transcriptMeta.textContent =
       `${(data.segments || []).length} segments · ${data.language || ''}`;
     Player.load(session.audioPath || '');
@@ -310,10 +310,30 @@ const App = (() => {
   }
 
   function _onHistoryRename(id, newName) {
-    if (!newName || !newName.trim()) return;
-    window.pywebview.api.rename_session(id, newName.trim())
-      .then(() => _updateSession(id, { filename: newName.trim() }))
-      .catch(e => console.error('[App] rename_session error:', e));
+    const renamed = (newName || '').trim();
+    const session = _sessions.get(id);
+    if (!renamed || !session) return;
+    const previous = session.filename;
+
+    // Persisting a rename can wait behind an active transcription's session
+    // lock. Keep the in-memory state authoritative meanwhile so any status
+    // rerender does not visually revert the accepted title.
+    _updateSession(id, { filename: renamed });
+    window.pywebview.api.rename_session(id, renamed)
+      .then(ok => {
+        if (ok) return;
+        const current = _sessions.get(id);
+        if (current && current.filename === renamed) {
+          _updateSession(id, { filename: previous });
+        }
+      })
+      .catch(e => {
+        console.error('[App] rename_session error:', e);
+        const current = _sessions.get(id);
+        if (current && current.filename === renamed) {
+          _updateSession(id, { filename: previous });
+        }
+      });
   }
 
   function _onHistoryDelete(id) {
@@ -423,11 +443,19 @@ const App = (() => {
       _setProgress(0, 'Resuming…');
       _render();
       try {
-        await window.pywebview.api.resume_transcription(id);
+        const result = await window.pywebview.api.resume_transcription(id);
+        if (result && result.error) {
+          _updateSession(id, {
+            status: 'interrupted',
+            errorMsg: `Resume failed: ${result.error}`,
+          });
+        }
       } catch (err) {
         console.error('[App] resume_transcription error:', err);
-        _updateSession(id, { status: 'error', errorMsg: String(err) });
-        _render();
+        _updateSession(id, {
+          status: 'interrupted',
+          errorMsg: `Resume failed: ${String(err)}`,
+        });
       }
       return;
     }

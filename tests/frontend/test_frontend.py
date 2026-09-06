@@ -181,6 +181,72 @@ def test_player_load_preserves_same_session_and_resets_on_source_change(
     assert result["afterSwitch"]["display"].startswith("00:00 / ")
 
 
+def test_pending_rename_survives_status_rerender(page: Page, ui_base_url: str) -> None:
+    """A rename queued behind transcription locking stays visible immediately."""
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-work",
+            "filename": "Before",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "transcribing",
+            "audio_path": "/audio/work.wav",
+        }],
+    })
+    page.evaluate(
+        """
+        window.pywebview.api.rename_session = async () => {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          return true;
+        };
+        """
+    )
+
+    item = page.locator(".history-item", has_text="Before")
+    item.locator(".history-item-body").click()
+    item = page.locator(".history-item", has_text="Before")
+    item.hover()
+    item.locator('button[title="Rename"]').click()
+    page.locator(".history-item-rename-input").fill("During transcription")
+    page.keyboard.press("Enter")
+    page.evaluate("onTranscribeComplete('job-work', '', false)")
+
+    assert page.locator(".history-item", has_text="During transcription").count() == 1
+    assert page.locator("#player-filename").inner_text() == "During transcription"
+    page.wait_for_timeout(300)
+
+
+def test_failed_resume_remains_visible_and_retryable(page: Page, ui_base_url: str) -> None:
+    page.set_default_timeout(3000)
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "job-interrupted",
+            "filename": "Keep me",
+            "date": "2026-09-06T23:00:00",
+            "type": "file",
+            "status": "interrupted",
+            "audio_path": "/audio/keep.wav",
+        }],
+    })
+    page.evaluate(
+        "window.pywebview.api.resume_transcription = async () => "
+        "({error: 'no_checkpoint'});"
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    item.hover()
+    item.locator('button[title="Resume"]').click()
+    page.wait_for_function(
+        "document.querySelector('#error-msg').textContent.includes('no_checkpoint')"
+    )
+
+    item = page.locator(".history-item", has_text="Keep me")
+    assert item.count() == 1
+    assert "history-item-interrupted" in (item.get_attribute("class") or "")
+    assert item.locator('button[title="Resume"]').count() == 1
+
+
 def test_pywebviewready_timing(page: Page, ui_base_url: str) -> None:
     """
     Scenario 3 — App.init() is NOT triggered before pywebviewready.
