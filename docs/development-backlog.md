@@ -1,6 +1,6 @@
 # AudioAssist Development Backlog
 
-Updated: 2026-09-06
+Updated: 2026-09-07
 
 This is the authoritative development task list. `agentops/TODO.md` and the
 older roadmap/report files are historical inputs; an unchecked box in those
@@ -339,7 +339,7 @@ PID reuse, and lock contention.
 | LOG-01 | Complete: Qwen/aligner cleanup failures retain traceback logging; missing aligners already fail explicitly rather than degrading |
 | AUDIO-UTIL-01 | Complete: nonnumeric, nonfinite, and negative ffprobe durations raise actionable application errors |
 | TEST-ASR-01 | Complete: direct mocked timestamp/result conversion covers Qwen and both Whisper adapters |
-| DOC-01 | Remove stale historical warnings/checklists and keep feature/status documents consistent |
+| DOC-01 | Complete: current status, release evidence, historical audit, and task dispositions are consistent |
 
 ## Historical backlog audit
 
@@ -355,7 +355,7 @@ scheduled twice:
 | Local-only file transcription | Complete; retain as a regression requirement for every backend |
 | Local-only realtime transcription | Complete under RUNTIME-01; retain as a regression requirement |
 | Real-audio smoke test | Complete for R03-a and retained as a recurring release gate |
-| macOS DMG support | Implemented; reproducible clean-machine release verification remains REL-01 |
+| macOS DMG support | Implemented; installed 2.0.1 local ad-hoc capture passed, while distributable clean-machine verification remains externally gated |
 | Windows EXE | Still open under WIN-AUDIO-01 |
 | Qwen MPS fix | Re-scoped into QWEN-01 through QWEN-03; MPS is diagnostic and MLX is the candidate default |
 | Spacebar playback and stale summary reset | Complete |
@@ -365,9 +365,9 @@ scheduled twice:
 | Setup/cancel/retry/model/drag-drop/Agent UI coverage | Complete under TEST-UI-01 |
 | Drag/drop concurrency and refine cancellation | Complete through TEST-UI-01 and TRANS-01 |
 | Agent timeouts and fixed transcript truncation | Still open under AGENT-01 |
-| Per-job lock growth, seek errors, alerts, pause/resume state | Still open under the corresponding P3 maintenance IDs |
-| ffprobe `N/A` and direct ASR timestamp adapter tests | Still open under AUDIO-UTIL-01 and TEST-ASR-01 |
-| UNKNOWN speaker, punctuation, aligner logging | Speaker and punctuation work complete as ASR-QUALITY-01/TEXT-01; aligner logging remains LOG-01 |
+| Per-job lock growth, seek errors, alerts, pause/resume state | Complete under CORE-LOCK-01, PLAYER-01, UI-ERROR-01, UI-STATE-01, and REALTIME-01 |
+| ffprobe `N/A` and direct ASR timestamp adapter tests | Complete under AUDIO-UTIL-01 and TEST-ASR-01 |
+| UNKNOWN speaker, punctuation, aligner logging | Complete under ASR-QUALITY-01, TEXT-01, and LOG-01 |
 | Windows system audio and mix echo cancellation | Still open as WIN-AUDIO-01 and MAC-AUDIO-01 |
 
 ## Deferred ideas, not committed work
