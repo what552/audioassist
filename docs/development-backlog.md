@@ -333,8 +333,8 @@ PID reuse, and lock contention.
 |---|---|
 | CORE-LOCK-01 | Complete: weak-value per-job locks remain shared by active owners/waiters and are evicted after use |
 | UI-ERROR-01 | Complete: blocking `alert()` paths use non-blocking app toasts with actionable errors |
-| PLAYER-01 | Surface actionable `seekTo()` media failures instead of only logging them |
-| UI-STATE-01 | Recheck the historical player/empty-hint state transitions with browser regression tests |
+| PLAYER-01 | Complete: `seekTo()` failures show an actionable missing/unreadable-audio toast |
+| UI-STATE-01 | Complete: browser state-matrix regression prevents player/empty/error views from leaking across selection and deletion |
 | REALTIME-01 | Complete through R03-B2: pause/resume failures produce an error state and never emit false confirmed UI events |
 | LOG-01 | Preserve stack traces on remaining aligner fallback/error paths |
 | AUDIO-UTIL-01 | Convert nonnumeric ffprobe duration output such as `N/A` into an actionable application error |

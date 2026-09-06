@@ -187,6 +187,73 @@ def test_player_load_preserves_same_session_and_resets_on_source_change(
     assert result["afterSwitch"]["display"].startswith("00:00 / ")
 
 
+def test_seek_playback_failure_shows_actionable_toast(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.locator(".history-item", has_text="meeting.mp3").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#transcript-list .transcript-row").wait_for(state="visible")
+    page.evaluate(
+        """
+        document.querySelector('#audio-el').play = () =>
+          Promise.reject(new DOMException('media missing', 'NotSupportedError'));
+        void 0;
+        """
+    )
+
+    page.locator("#transcript-list .transcript-row").first.click()
+    page.wait_for_function(
+        "document.querySelector('#toast').textContent.includes('still exists and is readable')"
+    )
+
+    assert page.locator("#toast").is_visible()
+
+
+def test_selected_session_views_never_leak_player_or_empty_state(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [
+            {
+                "job_id": "job-done", "filename": "Done", "type": "file",
+                "status": "done", "date": "2026-09-07T01:00:00",
+                "audio_path": "/audio/done.wav",
+            },
+            {
+                "job_id": "job-interrupted", "filename": "Interrupted",
+                "type": "file", "status": "interrupted",
+                "date": "2026-09-07T00:00:00", "audio_path": "/audio/interrupted.wav",
+            },
+        ],
+    })
+
+    assert page.locator("#empty-hint").is_visible()
+    assert page.locator("#player-bar").is_hidden()
+
+    page.locator(".history-item", has_text="Done").locator(".history-item-body").click()
+    page.locator("#player-bar").wait_for(state="visible")
+    assert page.locator("#empty-hint").is_hidden()
+    assert page.locator("#error-panel").is_hidden()
+
+    page.locator(".history-item", has_text="Interrupted").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#error-panel").wait_for(state="visible")
+    assert page.locator("#player-bar").is_hidden()
+    assert page.locator("#empty-hint").is_hidden()
+
+    page.on("dialog", lambda dialog: dialog.accept())
+    interrupted = page.locator(".history-item", has_text="Interrupted")
+    interrupted.hover()
+    interrupted.locator('button[title="Delete"]').click()
+    done = page.locator(".history-item", has_text="Done")
+    done.hover()
+    done.locator('button[title="Delete"]').click()
+    page.locator("#empty-hint").wait_for(state="visible")
+    assert page.locator("#player-bar").is_hidden()
+    assert page.locator("#error-panel").is_hidden()
+
+
 def test_pending_rename_survives_status_rerender(page: Page, ui_base_url: str) -> None:
     """A rename queued behind transcription locking stays visible immediately."""
     page.set_default_timeout(3000)
