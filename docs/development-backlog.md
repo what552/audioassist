@@ -24,8 +24,8 @@ Priority meanings:
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
-| 8 | QWEN-04A | P1 | Next | Run human-reference CPU/MPS/MLX comparisons on short and 5/10-minute fixtures |
-| 9 | QWEN-04B | P1 | Conditional | Promote a Mac backend only if QWEN-04A and release gates pass |
+| 8 | QWEN-04A | P1 | Complete: no-go | Human-reference short fixtures plus existing 5/10-minute evidence reject MPS and do not yet clear MLX |
+| 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
 | 11 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
 

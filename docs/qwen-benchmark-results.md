@@ -14,6 +14,42 @@ failed the cross-backend text/timestamp thresholds and the promotion-level
 corpus and signed-app evidence are incomplete. The remaining evidence is
 tracked as QWEN-04 rather than silently disappearing.
 
+## QWEN-04A human-reference follow-up
+
+Three synthetic voice-clone samples with exact source scripts were added on
+2026-09-06: 12.48-second Mandarin, 8.39-second English, and 103.94-second
+Mandarin/English code-switching. Each backend ran one cold and one warm pass in
+an isolated offline process. Reports retain backend language metadata, canonical
+product language, transcript hashes, metrics, timing, memory, and timestamp tails;
+transcript content is redacted.
+
+| Backend | Mandarin CER / warm | English CER / warm | Code-switch CER / warm | Peak RSS | Result |
+|---|---:|---:|---:|---:|---|
+| PyTorch CPU | 0.00% / 4.09 s | 0.00% / 3.40 s | 0.65% / 33.97 s | 15.32 GiB | Pass |
+| PyTorch MPS | 0.00% / 0.96 s | 0.00% / 0.80 s | 98.95% / 5.09 s | 5.18 GiB | Fail: truncated |
+| MLX | 0.00% / 2.80 s | 0.00% / 2.37 s | 0.65% / 24.13 s | 5.73 GiB | Pass |
+
+The MPS code-switching run failed repeatedly rather than merely producing a fast
+result: different runs returned only 14-143 characters and left 79-103 seconds
+uncovered by timestamps. MPS therefore cannot become the Mac default. MLX completed
+all three fixtures; on the long short-suite fixture its warm RTF was 0.232 versus
+CPU's 0.327, about 29% faster, and its matched timestamp p95 difference was 80 ms.
+
+The benchmark now detects implausibly large timestamp tail gaps as possible
+truncation, falls back to `ffprobe` when a streaming WAV header declares an
+unbounded data length, compares expected language at the canonical product
+boundary, and restricts whitespace-based WER promotion checks to non-code-switching
+English fixtures. It also reports absolute quality separately for every backend,
+so a diagnostic MPS failure is not misattributed to the MLX promotion gate.
+
+The QWEN-04B condition is not met. The new short human-reference evidence supports
+continued MLX investigation, but the earlier 10-minute MLX result still differs
+from CPU by 34.8% normalized characters, aligns only 70.7% of timestamp tokens,
+and has a 425 ms boundary p95. Automatic Mac selection remains PyTorch CPU.
+
+Durable redacted reports are stored outside the repository under
+`Documents/AudioAssist Benchmark Reports/QWEN-04A-20260906/`.
+
 ## Test environment
 
 - Hardware: Apple M5 Pro, 64 GiB unified memory
