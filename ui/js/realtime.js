@@ -16,6 +16,7 @@ const Realtime = (() => {
   let _captureMode = 'mic';      // 'mic' | 'system' | 'mix'
   let _onStateChange = null;
   let _canStart = null;
+  let _permissionSettingsTarget = 'screen';
   let dom = {};
 
   const MODE_LABELS = { mic: '麦克风', system: '系统音频', mix: '混合' };
@@ -39,7 +40,7 @@ const Realtime = (() => {
     dom.modeButtons.forEach(btn => btn.addEventListener('click', _onModeClick));
     if (dom.btnOpenPriv) {
       dom.btnOpenPriv.addEventListener('click', () => {
-        window.pywebview.api.open_privacy_settings().catch(() => {});
+        window.pywebview.api.open_privacy_settings(_permissionSettingsTarget).catch(() => {});
       });
     }
   }
@@ -81,29 +82,35 @@ const Realtime = (() => {
     if (_canStart && !_canStart()) return;
     _setLoading(true, 'Loading…');
 
-    // Preflight check for system / mix modes
-    if (_captureMode !== 'mic') {
-      _setStatus('Checking…');
-      let pre;
-      try {
-        pre = await window.pywebview.api.preflight_capture(_captureMode);
-      } catch (e) {
-        console.error('[Realtime] preflight error:', e);
-        _setLoading(false);
-        _setStatus('Error');
-        return;
-      }
-      if (!pre.supported) {
-        _setLoading(false);
-        _setStatus('Unavailable');
-        _showPermNotice(pre);
-        return;
-      }
-      _hidePermNotice();
+    _setStatus('Checking…');
+    let pre;
+    try {
+      pre = await window.pywebview.api.preflight_capture(_captureMode);
+    } catch (e) {
+      console.error('[Realtime] preflight error:', e);
+      _setLoading(false);
+      _setStatus('Error');
+      return;
     }
+    if (pre && pre.supported === false) {
+      _setLoading(false);
+      _setStatus('Unavailable');
+      _showPermNotice(pre);
+      return;
+    }
+    const awaitingMicPermission = (
+      _captureMode === 'mic' && pre && pre.microphone_permission === 'not_determined'
+    );
+    if (awaitingMicPermission) {
+      _setLoading(true, 'Allow Microphone…');
+      _setStatus('Waiting for microphone permission…');
+    } else {
+      _setStatus('Loading…');
+    }
+    _hidePermNotice();
 
     const model_id = document.getElementById('sel-engine').value;
-    _setStatus('Loading…');
+    if (!awaitingMicPermission) _setStatus('Loading…');
     try {
       await window.pywebview.api.start_realtime({
         model_id,
@@ -207,11 +214,16 @@ const Realtime = (() => {
     const reason = info.reason || '';
     let msg = '';
     let showOpenBtn = false;
+    _permissionSettingsTarget = 'screen';
 
     if (reason === 'screencapturekit_requires_macos_13_0') {
       msg = '需要 macOS 13.0 或更高版本才能使用系统音频捕获。';
     } else if (reason === 'helper_not_found') {
       msg = '系统音频助手未构建。请先运行: swift build -c release';
+    } else if (reason.startsWith('microphone_permission_')) {
+      msg = '需要「麦克风」权限才能录音。请在系统设置中授权后重新启动录音。';
+      showOpenBtn = true;
+      _permissionSettingsTarget = 'microphone';
     } else if (reason.includes('screen_recording') || reason.includes('permission_required')) {
       msg = '需要「屏幕录制」权限才能捕获系统音频。请在系统设置中授权。';
       showOpenBtn = true;

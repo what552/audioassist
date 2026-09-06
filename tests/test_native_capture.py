@@ -551,11 +551,55 @@ class TestAppCaptureMode:
 # ── app.py: preflight_capture ─────────────────────────────────────────────────
 
 class TestPreflightCapture:
-    def test_mic_mode_always_supported(self):
+    @pytest.mark.parametrize("raw, expected", [
+        (0, "not_determined"),
+        (1, "restricted"),
+        (2, "denied"),
+        (3, "authorized"),
+        (99, "unknown"),
+    ])
+    def test_macos_microphone_status_mapping(self, raw, expected):
+        import sys
+        import types
+        import app as app_module
+
+        capture_device = MagicMock()
+        capture_device.authorizationStatusForMediaType_.return_value = raw
+        objc = types.ModuleType("objc")
+        objc.loadBundle = MagicMock()
+        objc.lookUpClass = MagicMock(return_value=capture_device)
+
+        with patch.object(app_module.sys, "platform", "darwin"), \
+             patch.dict(sys.modules, {"objc": objc}):
+            assert app_module._macos_microphone_permission_status() == expected
+
+        capture_device.authorizationStatusForMediaType_.assert_called_once_with("soun")
+
+    def test_mic_mode_supported_when_authorized(self):
         from app import API
         api = API()
-        result = api.preflight_capture("mic")
+        with patch("app._macos_microphone_permission_status", return_value="authorized"):
+            result = api.preflight_capture("mic")
         assert result["supported"] is True
+        assert result["microphone_permission"] == "authorized"
+
+    @pytest.mark.parametrize("status", ["denied", "restricted"])
+    def test_mic_mode_reports_blocked_permission(self, status):
+        from app import API
+        api = API()
+        with patch("app._macos_microphone_permission_status", return_value=status):
+            result = api.preflight_capture("mic")
+        assert result["supported"] is False
+        assert result["missing_permissions"] == ["microphone"]
+        assert result["reason"] == f"microphone_permission_{status}"
+
+    def test_mic_mode_allows_system_prompt_when_not_determined(self):
+        from app import API
+        api = API()
+        with patch("app._macos_microphone_permission_status", return_value="not_determined"):
+            result = api.preflight_capture("mic")
+        assert result["supported"] is True
+        assert result["microphone_permission"] == "not_determined"
 
     def test_system_mode_unsupported_on_old_macos(self):
         from app import API
@@ -590,7 +634,8 @@ class TestPreflightCapture:
     def test_returns_os_version(self):
         from app import API
         api = API()
-        with patch("platform.mac_ver", return_value=("14.2.1", ("", "", ""), "")):
+        with patch("platform.mac_ver", return_value=("14.2.1", ("", "", ""), "")), \
+             patch("app._macos_microphone_permission_status", return_value="authorized"):
             result = api.preflight_capture("mic")
         assert result["os_version"] == "14.2.1"
 
@@ -1195,6 +1240,17 @@ class TestOpenPrivacySettings:
 
         assert result["status"] == "ok"
         assert any("Privacy_ScreenCapture" in str(c) for c in called_cmds)
+
+    def test_microphone_target_opens_microphone_pane(self):
+        from app import API
+        api = API()
+        called_cmds: list = []
+
+        with patch("subprocess.Popen", side_effect=lambda cmd, **kw: called_cmds.append(cmd)):
+            result = api.open_privacy_settings("microphone")
+
+        assert result["status"] == "ok"
+        assert any("Privacy_Microphone" in str(c) for c in called_cmds)
 
     def test_returns_error_dict_on_failure(self):
         from app import API

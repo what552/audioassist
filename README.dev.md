@@ -256,6 +256,15 @@ macOS requires the Screen Recording permission for System and Mix modes:
 
 Alternatively, click **Open System Settings →** in the permission notice that appears inside the app.
 
+#### Microphone permission and local ad-hoc builds
+
+Mic mode checks the macOS microphone authorization state before loading the realtime
+model. A denied or restricted state shows a direct link to the Microphone privacy pane;
+a first request is labelled **Allow Microphone…** while macOS presents its prompt.
+Locally rebuilt ad-hoc candidates have a different CDHash after their executable
+changes, so macOS can require authorization again even when an older AudioAssist entry
+is enabled. Developer ID signed release upgrades use a stable designated requirement.
+
 #### Microphone degradation (Mix mode)
 
 If the microphone is unavailable when Mix mode starts (no mic connected, or microphone permission denied), AudioAssist automatically falls back to system-audio-only capture and shows an inline notice without stopping the session.

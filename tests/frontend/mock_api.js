@@ -37,6 +37,7 @@
     transcribeIds: ['upload-job-1', 'upload-job-2', 'upload-job-3'],
     agentTurns: [],
     summaries: {},
+    preflight: { supported: true },
   };
 
   var supplied = window.__AUDIOASSIST_TEST_CONFIG || {};
@@ -49,6 +50,7 @@
   state.selectedFiles = (supplied.selectedFiles || defaults.selectedFiles).slice();
   state.transcribeIds = (supplied.transcribeIds || defaults.transcribeIds).slice();
   state.agentTurns = (supplied.agentTurns || defaults.agentTurns).slice();
+  state.preflight = Object.assign({}, defaults.preflight, supplied.preflight || {});
   state.calls = [];
 
   function record(name, args) {
@@ -110,7 +112,7 @@
     save_transcript: async function () { record('save_transcript', arguments); return true; },
     rename_speaker: async function () { record('rename_speaker', arguments); return { ok: true, segments: [] }; },
     rename_segment_speaker: async function () { record('rename_segment_speaker', arguments); return { ok: true }; },
-    preflight_capture: async function () { record('preflight_capture', arguments); return { status: 'ok' }; },
+    preflight_capture: async function () { record('preflight_capture', arguments); return Object.assign({}, state.preflight); },
     start_realtime: async function () { record('start_realtime', arguments); return { status: 'started' }; },
     stop_realtime: async function () { record('stop_realtime', arguments); return { status: 'stopped' }; },
     pause_realtime: async function () { record('pause_realtime', arguments); return { status: 'pausing' }; },
@@ -124,6 +126,7 @@
     calls: function (name) { return state.calls.filter(function (call) { return call.name === name; }); },
     setSetup: function (patch) { Object.assign(state.setup, patch); },
     setModels: function (models) { state.models = models.map(function (model) { return Object.assign({}, model); }); },
+    setPreflight: function (preflight) { state.preflight = Object.assign({}, preflight); },
     dispatchReady: function () { window.dispatchEvent(new Event('pywebviewready')); },
   };
 })();

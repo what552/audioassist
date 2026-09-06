@@ -88,6 +88,7 @@ class TestJSEvents:
 
         def capture_init(*args, **kwargs):
             captured["output_path"] = kwargs.get("output_path")
+            captured["diagnostic_id"] = kwargs.get("diagnostic_id")
             inst = MagicMock()
             inst.start.return_value = None
             return inst
@@ -103,6 +104,7 @@ class TestJSEvents:
         match = re.fullmatch(r"realtime_recording_([0-9a-f]{8})\.wav", basename)
         assert match, basename
         assert parent.startswith(match.group(1))
+        assert captured["diagnostic_id"] == parent
 
     def test_start_exception_pushes_onRealtimeError(self):
         api = API()

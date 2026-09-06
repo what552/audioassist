@@ -36,6 +36,36 @@ _AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".mp4", ".aac", ".flac", ".ogg", ".mov", 
 _REALTIME_WAV_PREFIX = "realtime_recording"
 
 
+def _macos_microphone_permission_status() -> str:
+    """Return the current TCC microphone status without prompting.
+
+    PyWebView already bundles PyObjC, but the optional generated AVFoundation
+    wrapper is not part of the application environment. Load the system
+    framework dynamically and use the stable AVCaptureDevice class API.
+    """
+    if sys.platform != "darwin":
+        return "not_applicable"
+    try:
+        import objc
+
+        objc.loadBundle(
+            "AVFoundation",
+            globals(),
+            bundle_path="/System/Library/Frameworks/AVFoundation.framework",
+        )
+        capture_device = objc.lookUpClass("AVCaptureDevice")
+        status = int(capture_device.authorizationStatusForMediaType_("soun"))
+    except Exception:
+        logger.warning("Unable to query macOS microphone permission", exc_info=True)
+        return "unknown"
+    return {
+        0: "not_determined",
+        1: "restricted",
+        2: "denied",
+        3: "authorized",
+    }.get(status, "unknown")
+
+
 def _resolve_output_dir() -> str:
     """Return OUTPUT_DIR: persisted path from config if valid, else default."""
     try:
@@ -597,8 +627,9 @@ class API:
             "reason": str | None,
           }
 
-        For "mic" mode this always returns supported=True (existing path).
-        For "system" / "mix" modes it checks macOS version and helper binary.
+        For "mic" mode on macOS this also checks the current TCC authorization
+        status without triggering a prompt. For "system" / "mix" modes it
+        checks macOS version and helper binary.
         """
         import platform
 
@@ -609,6 +640,15 @@ class API:
             "os_version":          os_version,
             "reason":              None,
         }
+
+        if mode == "mic":
+            permission_status = _macos_microphone_permission_status()
+            result["microphone_permission"] = permission_status
+            if permission_status in {"denied", "restricted"}:
+                result["supported"] = False
+                result["missing_permissions"] = ["microphone"]
+                result["reason"] = f"microphone_permission_{permission_status}"
+            return result
 
         if mode in ("system", "mix"):
             # macOS version gate
@@ -632,12 +672,13 @@ class API:
 
         return result
 
-    def open_privacy_settings(self) -> dict:
-        """Open macOS System Settings → Privacy & Security → Screen Recording."""
+    def open_privacy_settings(self, permission: str = "screen") -> dict:
+        """Open the requested bounded macOS Privacy & Security pane."""
+        pane = "Privacy_Microphone" if permission == "microphone" else "Privacy_ScreenCapture"
         try:
             subprocess.Popen([
                 "open",
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                f"x-apple.systempreferences:com.apple.preference.security?{pane}",
             ])
             return {"status": "ok"}
         except Exception as e:
@@ -716,6 +757,13 @@ class API:
                 rt_session_dir = _session_dir(session_id)
                 os.makedirs(rt_session_dir, exist_ok=True)
                 output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
+                logger.info(
+                    "Realtime start attempt=%s stage=backend_create.begin mode=%s engine=%s model=%s",
+                    session_id,
+                    capture_mode,
+                    engine,
+                    model_id or "default",
+                )
 
                 if capture_mode in ("system", "mix"):
                     from src.native_capture import NativeCaptureHelper
@@ -734,9 +782,15 @@ class API:
                         engine=engine,
                         model_id=model_id,
                         output_path=output_path,
+                        diagnostic_id=session_id,
                         on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                     )
+                logger.info(
+                    "Realtime start attempt=%s stage=backend_create.done backend=%s",
+                    session_id,
+                    type(rt).__name__,
+                )
                 rt.start()
                 # Race: stop_realtime() may have cleared self._realtime while
                 # models were loading. If so, shut down immediately and return.
@@ -757,9 +811,16 @@ class API:
                     started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
                     error=None,
                 )
+                logger.info(
+                    "Realtime start attempt=%s stage=recording.confirmed",
+                    session_id,
+                )
                 _push(f"onRealtimeStarted({json.dumps(session_id)}, {json.dumps(output_path)})")
             except Exception as e:
-                logger.exception("Realtime start failed")
+                logger.exception(
+                    "Realtime start attempt=%s stage=failed",
+                    locals().get("session_id", "unassigned"),
+                )
                 with self._recording_lock:
                     if generation != self._recording_generation:
                         return

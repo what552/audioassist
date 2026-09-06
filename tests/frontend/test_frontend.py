@@ -162,6 +162,49 @@ def test_pywebviewready_timing(page: Page, ui_base_url: str) -> None:
     assert "meeting.mp3" in page.locator("#history-list").inner_text()
 
 
+def test_microphone_permission_denied_blocks_start_and_opens_correct_settings(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": False,
+            "microphone_permission": "denied",
+            "missing_permissions": ["microphone"],
+            "reason": "microphone_permission_denied",
+        },
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('preflight_capture').length === 1")
+
+    assert page.evaluate("_mockApi.calls('preflight_capture')[0].args") == ["mic"]
+    assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
+    notice = page.locator("#capture-perm-notice")
+    assert notice.is_visible()
+    assert "麦克风" in page.locator("#capture-perm-text").inner_text()
+
+    page.locator("#btn-open-privacy").click()
+    page.wait_for_function("_mockApi.calls('open_privacy_settings').length === 1")
+    assert page.evaluate("_mockApi.calls('open_privacy_settings')[0].args") == ["microphone"]
+
+
+def test_undetermined_microphone_permission_explains_pending_system_prompt(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {
+        "preflight": {
+            "supported": True,
+            "microphone_permission": "not_determined",
+        },
+    })
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+
+    assert page.locator("#btn-start-recording").inner_text() == "Allow Microphone…"
+    assert page.locator("#realtime-status").inner_text() == "Waiting for microphone permission…"
+
+
 def test_first_run_setup_download_progress_and_error(page: Page, ui_base_url: str) -> None:
     _inject_and_navigate(page, ui_base_url, {
         "setup": {"asr_ready": False, "diarizer_ready": False},

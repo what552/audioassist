@@ -6,6 +6,7 @@ import queue
 import threading
 import tempfile
 import os
+import logging
 import pytest
 from unittest.mock import MagicMock, patch, call
 
@@ -90,6 +91,22 @@ def _set_vad_prob(rt, prob):
 
 
 class TestAudioCallback:
+    def test_first_audio_frame_is_logged_once(self, caplog):
+        rt, _ = _make_rt(diagnostic_id="session-123")
+        _set_vad_prob(rt, 0.1)
+        with caplog.at_level(logging.INFO, logger="src.realtime"), \
+             patch.dict(sys.modules, {"torch": _fake_torch()}):
+            rt._audio_callback(_chunk(), 512, None, None)
+            rt._audio_callback(_chunk(), 512, None, None)
+
+        markers = [
+            record.message for record in caplog.records
+            if "stage=first_audio_frame" in record.message
+        ]
+        assert len(markers) == 1
+        assert "attempt=session-123" in markers[0]
+        assert "frames=512" in markers[0]
+
     def test_speech_accumulated(self):
         rt, m = _make_rt()
         _set_vad_prob(rt, 0.9)
@@ -611,6 +628,39 @@ class TestLoadModels:
         backend.close.assert_called_once()
         assert rt._worker_thread is None
         assert rt._asr is None
+
+    def test_stream_open_stage_markers_pinpoint_blocking_boundary(self, caplog, tmp_path):
+        rt, _ = _make_rt(
+            output_path=str(tmp_path / "session.wav"),
+            diagnostic_id="session-456",
+        )
+        stream = MagicMock()
+        sounddevice = types.ModuleType("sounddevice")
+        sounddevice.__version__ = "test-version"
+        sounddevice.InputStream = MagicMock(return_value=stream)
+
+        with caplog.at_level(logging.INFO, logger="src.realtime"), \
+             patch.object(rt, "_load_models"), \
+             patch.dict(sys.modules, {"sounddevice": sounddevice}):
+            rt.start()
+
+        messages = [record.message for record in caplog.records]
+        expected = [
+            "stage=model_load.begin",
+            "stage=model_load.done",
+            "stage=wav_open.begin",
+            "stage=wav_open.done",
+            "stage=sounddevice_import.begin",
+            "stage=sounddevice_import.done",
+            "stage=stream_open.begin",
+            "stage=stream_open.done",
+            "stage=stream_start.begin",
+            "stage=stream_start.done",
+        ]
+        positions = [next(i for i, msg in enumerate(messages) if marker in msg) for marker in expected]
+        assert positions == sorted(positions)
+        assert all("attempt=session-456" in messages[i] for i in positions)
+        rt.stop()
 
 
 # ── _write_wav ────────────────────────────────────────────────────────────────

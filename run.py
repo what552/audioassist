@@ -57,6 +57,7 @@ from src.local_api import (
     LocalAPIError,
     LocalAPIServer,
 )
+from src.runtime_logging import configure_runtime_file_logging
 
 
 def _start_desktop_local_api(api: API) -> LocalAPIServer | None:
@@ -79,6 +80,8 @@ def _start_desktop_local_api(api: API) -> LocalAPIServer | None:
 
 
 def main():
+    log_path = configure_runtime_file_logging(_app_module.APP_DATA_DIR)
+    logging.getLogger(__name__).info("Desktop runtime log: %s", log_path)
     api = API()
     # Resolve UI path for both development and PyInstaller frozen builds.
     # In frozen mode, bundled resources land in sys._MEIPASS (onefile) or

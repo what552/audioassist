@@ -32,6 +32,45 @@ Priority meanings:
 | 13 | TEXT-01 | P2 | Complete | Add conservative, language-aware punctuation without semantic rewriting |
 | 14 | R03-B1 | P2 | Complete: go | Foreground/read-only and visible-app server modes have explicit lifecycle, locking, recovery, cancellation, schema, and security boundaries |
 | 15 | R03-B2 | P2 | Complete | Authenticated desktop/read-only HTTP service and eight-tool stdio MCP adapter, without a daemon |
+| 16 | REALTIME-DIAG-01 | P1 | Complete | Prove the 44-byte WAV failure is a TCC code-requirement mismatch after replacing an ad-hoc signed build |
+| 17 | REALTIME-START-01 | P1 | In progress | Preflight microphone TCC state and provide accurate pending/denied permission UX; Developer ID remains the release identity fix |
+| 18 | PLAYER-02 | P2 | Ready | Prevent playback position and active playback from leaking across session switches |
+| 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
+| 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
+
+### REALTIME-DIAG-01 — Intermittent packaged microphone startup
+
+The installed 2.0.0 app produced one microphone session that remained in
+`starting` with a header-only 44-byte WAV, followed by a successful recording in
+the same app process. Re-signed isolated app copies produced similar symptoms but
+are not valid permission evidence because changing their signature invalidated
+their TCC identity.
+
+- Persist a bounded desktop runtime log because the Finder-launched PyInstaller
+  app has no console.
+- Correlate each attempt across model loading, WAV creation, sounddevice import,
+  PortAudio stream open/start, the first audio callback, and UI confirmation.
+- Reproduce with the formally installed app and compare cold/warm Qwen and Whisper
+  attempts without changing production capture parameters first.
+- Do not select a sample-rate, timeout, retry, or permission fix until the last
+  completed stage of a failed attempt is captured.
+
+Acceptance:
+
+- Runtime logs rotate and never contain transcript or audio content.
+- Unit tests prove one handler is installed and startup stage markers remain
+  correlated and ordered.
+- At least one installed-app failure or a bounded repeated-pass result is recorded
+  before REALTIME-START-01 changes behavior.
+
+Result: the diagnostic build reproduced the failure on its first attempt. The
+last application marker was `stream_open.begin`; the thread was blocked inside
+PortAudio `Pa_OpenStream` while CoreAudio requested microphone access. macOS TCC
+then reported that the prior permission's code requirement did not match the new
+ad-hoc build CDHash and remained in `AUTHREQ_PROMPTING`. The default device was
+the 48 kHz built-in MacBook Pro microphone, but the block occurred while assigning
+the AUHAL device/IOProc, before stream activation; sample rate is not the proven
+cause. See `docs/realtime-start-diagnosis.md`.
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent

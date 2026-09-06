@@ -82,6 +82,15 @@ offers three durable session reads plus five live-recording tools; reads work wi
 app closed, while recording calls validate a live authenticated desktop instance. There
 is still no daemon, remote listener, background inference queue, or automatic app launch.
 
+Installed-app UI acceptance found an apparent intermittent microphone-start symptom:
+one formal 2.0.0 attempt remained in `starting` and left a 44-byte WAV, while a later
+attempt recorded valid frames. REALTIME-DIAG-01 reproduced and explained it: replacing
+an ad-hoc signed build changed its CDHash, so macOS rejected the prior TCC code
+requirement and waited for a new microphone prompt inside PortAudio's AUHAL device-open
+call. REALTIME-START-01 adds microphone permission preflight and accurate pending/denied
+UX; a stable Developer ID signature is still required to preserve permissions across
+real upgrades. PLAYER-02 and UI-SESSION-REFRESH-01 retain the other confirmed findings.
+
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
 outer app, creates the DMG without Finder automation, and emits a JSON
