@@ -40,6 +40,20 @@ permanent builder/researcher/reviewer worktree workflow.
   `docs/release-checklist.md`; they are release gates rather than routine unit tests.
 - Report the exact commands and results in the development handoff.
 
+## Packaging and versioning
+
+- Treat every newly generated `.app` or DMG intended for installation or user testing as
+  a new release artifact. Increment the SemVer version in `pyproject.toml` before building;
+  never rebuild or replace an artifact while reusing its previous version number.
+- Use a patch bump for fixes, a minor bump for backward-compatible features, and a major
+  bump for incompatible product or data-contract changes. The current packaged baseline
+  is `2.0.0`, so the next packaged build must be `2.0.1` or higher.
+- Keep the application bundle version, DMG filename, and
+  `dist/release-verification-<version>.json` aligned with the `pyproject.toml` version,
+  and update the packaged baseline in this file when that release is produced.
+- Do not increment the version merely for source or UI development runs that do not
+  generate an installable/testable `.app` or DMG.
+
 ## R03 CLI
 
 - The stable command contract is documented in `docs/cli-contract.md`.
