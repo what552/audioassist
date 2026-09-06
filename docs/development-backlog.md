@@ -30,8 +30,8 @@ Priority meanings:
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
 | 12 | ASR-QUALITY-01 | P2 | Complete | Use confidence-gated overlap and same-speaker gap alignment without hiding uncertainty |
 | 13 | TEXT-01 | P2 | Complete | Add conservative, language-aware punctuation without semantic rewriting |
-| 14 | R03-B1 | P2 | Next: design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
-| 15 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |
+| 14 | R03-B1 | P2 | Complete: go | Foreground/read-only and visible-app server modes have explicit lifecycle, locking, recovery, cancellation, schema, and security boundaries |
+| 15 | R03-B2 | P2 | Next | Implement the approved local HTTP resources/recording control and separate MCP adapter |
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent
@@ -172,7 +172,7 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 |---|---|---|
 | QWEN-04A | Accelerated-backend evidence | Human Mandarin/Cantonese/English/code-switch references plus short and 5/10-minute fixtures compare CPU, MPS, and MLX before longer promotion runs |
 | QWEN-04B | Conditional Mac default promotion | The selected backend must pass lifecycle, offline, checkpoint, packaged-app, and approved long-audio gates before changing `auto` |
-| R03-B1 | HTTP service lifecycle/security design | Explicit ownership, localhost boundary, port collision, lock, recovery, cancellation, shutdown, and versioned schema before implementation |
+| R03-B1 | Complete: HTTP service lifecycle/security design | Approved bounded v1 contract in `docs/http-mcp-contract.md`; no daemon or background inference queue |
 | R03-B2 | HTTP recording control plus MCP adapter | Reuse `src/service.py`; data reads work with the app closed; recording mutations require the visible app and return stable errors |
 | AGENT-01 | Summary Agent reliability (paused by owner) | Request/tool timeouts, transcript paging instead of a fixed 6000-character truncation, and summary writes through the shared service |
 | TEST-UI-01 | Complete: close frontend coverage gaps | Eight browser scenarios cover startup/history, setup, cancel/retry, model modal, drag/drop queueing, and Summary Agent flows |
