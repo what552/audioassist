@@ -96,7 +96,9 @@ def select_qwen_backend(
                 "Qwen PyTorch MPS diagnostic backend requires Apple Silicon "
                 "and an available PyTorch MPS runtime"
             )
-        return QwenBackendConfig(choice, "mps", "float16")
+        # qwen-asr 0.0.6 / torch 2.10 can terminate early on MPS fp16.
+        # Keep ASR and alignment fp32, with bounded chunks in the adapter.
+        return QwenBackendConfig(choice, "mps", "float32")
 
     return QwenBackendConfig("pytorch-cpu", "cpu", "float32")
 

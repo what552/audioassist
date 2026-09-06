@@ -189,6 +189,20 @@ Files written inside the data directory:
 - **Qwen3-ASR** (`engine="qwen"`): best accuracy for Chinese + 30 languages; the official PyTorch adapter selects CUDA when available and CPU otherwise. Apple Silicon supports explicit `AUDIOASSIST_QWEN_BACKEND=mlx` and diagnostic `pytorch-mps` overrides; the QWEN-03 evidence hold keeps automatic selection unchanged (see [benchmark record](docs/qwen-benchmark-results.md)).
 - **Whisper** (`engine="whisper"`): Apple Silicon — uses `mlx-whisper` on the Apple GPU through Metal; other platforms — uses `faster-whisper` (CPU/CUDA).
 
+Qwen adapters share local float32 audio decoding and lossless low-energy chunks
+of at most 30 seconds (`src/qwen_audio.py`). Inference is serial, with a 1024-token
+budget per chunk. The explicit MPS path uses float32 for both ASR and alignment;
+MLX remains float16. The pinned qwen-asr 0.0.6 adapter restores the missing
+non-FA2 audio window mask through removable, instance-local hooks. A dependency
+upgrade requires reviewing this shim; package builds preserve qwen-asr metadata.
+
+Generation limits, non-EOS stops, and invalid chunk timestamps fail the job
+instead of returning a successful partial transcript. Diagnostic per-chunk
+metadata is included in Qwen benchmark reports without transcript content;
+`generated_tokens` excludes the EOS sentinel on both runtimes. Large trailing
+gaps remain a *possible* truncation signal, not proof of an error or a reason
+to clamp timestamps. Public CLI/session result schemas are unchanged.
+
 > **First run:** On launch, the app checks whether the required ASR model is present. If not, the setup panel is shown (see [First-run model setup](#first-run-model-setup)). Once downloaded, subsequent runs use the cached weights with no network access.
 
 ### Speaker diarization

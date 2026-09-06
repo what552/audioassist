@@ -358,6 +358,11 @@ def run_worker(
                         if sample.expected_language is not None
                         else None
                     )
+                    pass_result["inference_config"] = dict(getattr(engine, "inference_config", {}))
+                    pass_result["chunks"] = [dict(item) for item in getattr(engine, "last_chunk_diagnostics", [])]
+                    pass_result["possible_truncation"] |= any(
+                        item.get("possible_truncation", False) for item in pass_result["chunks"]
+                    )
                     passes.append(pass_result)
                 first = passes[0]
                 metrics = (

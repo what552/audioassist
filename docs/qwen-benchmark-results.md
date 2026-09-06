@@ -1,6 +1,6 @@
 # Qwen Backend Benchmark Record
 
-Updated: 2026-09-06
+Updated: 2026-09-07
 
 ## Decision
 
@@ -13,6 +13,18 @@ short-sample timestamp, and realtime lifecycle checks, but one 10-minute sample
 failed the cross-backend text/timestamp thresholds and the promotion-level
 corpus and signed-app evidence are incomplete. The remaining evidence is
 tracked as QWEN-04 rather than silently disappearing.
+
+**Investigation update (2026-09-07):** the historical results below used
+unequal chunking/generation conditions and the installed PyTorch dependency's
+unmasked audio attention path. MPS early-EOS can be avoided in the short
+fixture by using a float32 audio encoder. See the
+[controlled follow-up](qwen-backend-investigation.md). Do not interpret the
+old CPU comparison as a ground-truth accuracy ranking; QWEN-04A is reopened.
+The completed 10-minute matched-chunk experiment reduces MLX/CPU text distance
+to **0.166%**, with **99.83%** timestamp token agreement and **0 ms** matched
+boundary p95. Corrected CPU and MPS outputs are identical. These are diagnostic
+configurations, not changes already applied to the application or a default
+promotion decision.
 
 ## QWEN-04A human-reference follow-up
 

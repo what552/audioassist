@@ -8,6 +8,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+import numpy as np
 
 from src.asr_factory import (
     QWEN_BACKEND_ENV,
@@ -67,7 +68,7 @@ def test_mps_is_explicit_diagnostic_override():
         sys_platform="darwin",
         machine="arm64",
     )
-    assert selected == QwenBackendConfig("pytorch-mps", "mps", "float16")
+    assert selected == QwenBackendConfig("pytorch-mps", "mps", "float32")
 
 
 @pytest.mark.parametrize(
@@ -163,7 +164,7 @@ def test_factory_lazy_constructs_mlx_adapter(tmp_path):
 
 
 def test_pytorch_adapter_configures_asr_and_aligner_independently():
-    wrapper = SimpleNamespace(model=object(), processor=object(), forced_aligner=object())
+    wrapper = SimpleNamespace(model=object(), processor=object(), forced_aligner=SimpleNamespace(model=object()))
     qwen_class = SimpleNamespace(from_pretrained=MagicMock(return_value=wrapper))
     fake_qwen = SimpleNamespace(Qwen3ASRModel=qwen_class)
     fake_torch = SimpleNamespace(
@@ -174,7 +175,9 @@ def test_pytorch_adapter_configures_asr_and_aligner_independently():
         mps=SimpleNamespace(empty_cache=MagicMock()),
     )
 
-    with patch.dict(sys.modules, {"qwen_asr": fake_qwen, "torch": fake_torch}):
+    with patch.dict(sys.modules, {"qwen_asr": fake_qwen, "torch": fake_torch}), \
+            patch("src.asr.install_audio_window_masks", return_value=[]), \
+            patch("src.asr.GenerationObserver"):
         from src.asr import ASREngine
 
         engine = ASREngine(
@@ -191,6 +194,8 @@ def test_pytorch_adapter_configures_asr_and_aligner_independently():
         forced_aligner_kwargs={"device_map": "mps", "dtype": "float16"},
         device_map="mps",
         dtype="float16",
+        max_inference_batch_size=1,
+        max_new_tokens=1024,
     )
 
 
@@ -258,14 +263,20 @@ def test_pytorch_adapter_converts_qwen_timestamp_result():
         aligner_path="/models/aligner",
     )
     engine._model = model
-
-    converted = engine.transcribe("/audio/sample.wav")
+    engine._observer = SimpleNamespace(records=[])
+    def transcribe(*args, **kwargs):
+        engine._observer.records.append({"truncated": False, "finish_reason": "eos"})
+        return [result]
+    model.transcribe.side_effect = transcribe
+    audio = np.zeros(16000, dtype=np.float32)
+    with patch("src.asr.load_local_audio", return_value=audio):
+        converted = engine.transcribe("/audio/sample.wav")
 
     assert converted.text == "你好"
     assert converted.language == "Chinese"
     assert [(word.word, word.start, word.end) for word in converted.words] == [
         ("你好", 0.25, 0.75)
     ]
-    model.transcribe.assert_called_once_with(
-        "/audio/sample.wav", return_time_stamps=True
-    )
+    assert model.transcribe.call_args.args[0][1] == 16000
+    np.testing.assert_array_equal(model.transcribe.call_args.args[0][0], audio)
+    assert model.transcribe.call_args.kwargs == {"return_time_stamps": True}

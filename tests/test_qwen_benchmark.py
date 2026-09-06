@@ -207,6 +207,9 @@ def test_realtime_worker_disables_aligner_and_timestamps(tmp_path):
         close=lambda: None,
         transcribe=lambda _path: SimpleNamespace(text="hello", language="English", words=[]),
         last_truncated=False,
+        inference_config={"batch_size": 1, "max_chunk_seconds": 30},
+        last_chunk_diagnostics=[{"start": 0, "end": 5, "possible_truncation": True,
+                                 "generated_tokens": 3, "finish_reason": "eos"}],
     )
 
     with (
@@ -228,6 +231,11 @@ def test_realtime_worker_disables_aligner_and_timestamps(tmp_path):
     assert create.call_args.kwargs["with_timestamps"] is False
     assert result["mode"] == "realtime-asr"
     assert len(result["cycles"][0]["samples"][0]["passes"]) == 2
+    recorded = result["cycles"][0]["samples"][0]["passes"][0]
+    assert recorded["possible_truncation"]
+    assert recorded["chunks"] == engine.last_chunk_diagnostics
+    assert recorded["chunks"] is not engine.last_chunk_diagnostics
+    assert recorded["inference_config"] == engine.inference_config
 
 
 def test_edit_distance_and_language_aware_error_rates():

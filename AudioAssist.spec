@@ -88,6 +88,7 @@ a = Analysis(
         # qwen_asr loads inference/assets/korean_dict_jieba.dict at runtime
         # via __file__-relative paths.
         (os.path.join(SITE, "qwen_asr"), "qwen_asr"),
+        *copy_metadata("qwen-asr"),  # version-gated instance compatibility shim
 
         # mlx-qwen3-asr loads mel filters and the Korean aligner dictionary via
         # package-relative paths. Keep one shared mlx framework tree above.

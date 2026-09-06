@@ -6,11 +6,13 @@ factory before construction; the adapter never supplies repository IDs.
 """
 from __future__ import annotations
 
-from collections import Counter
 import gc
 import logging
 
 from .types import TranscriptResult, WordSegment
+from .qwen_audio import (SAMPLE_RATE, MAX_CHUNK_SECONDS, MAX_NEW_TOKENS,
+                         load_local_audio, split_audio, merged_language,
+                         validate_words, chunk_diagnostic)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,12 @@ class MLXQwenASREngine:
         self._aligner = None
         self._mx = None
         self.last_truncated = False
+        self.last_chunk_diagnostics = []
+        self.inference_config = {
+            "dtype": "float16", "max_chunk_seconds": MAX_CHUNK_SECONDS,
+            "max_new_tokens": MAX_NEW_TOKENS, "batch_size": 1,
+            "audio_window_mask": True,
+        }
 
     def load(self) -> None:
         if self._session is not None:
@@ -67,38 +75,49 @@ class MLXQwenASREngine:
         if self._session is None:
             self.load()
 
-        result = self._session.transcribe(
-            audio_path,
-            return_timestamps=self.with_timestamps,
-            forced_aligner=self._aligner if self.with_timestamps else None,
-            return_chunks=True,
-        )
-        self.last_truncated = bool(getattr(result, "truncated", False))
-        if self.last_truncated:
-            logger.warning("MLX Qwen transcription was truncated: %s", audio_path)
-
-        words = [
-            WordSegment(
-                word=str(segment["text"]),
-                start=float(segment["start"]),
-                end=float(segment["end"]),
+        self.last_truncated = False
+        self.last_chunk_diagnostics = []
+        audio = load_local_audio(audio_path)
+        texts, languages, words = [], [], []
+        for chunk, offset in split_audio(audio):
+            result = self._session.transcribe(
+                chunk,
+                return_timestamps=self.with_timestamps,
+                forced_aligner=self._aligner if self.with_timestamps else None,
+                return_chunks=True,
+                max_new_tokens=MAX_NEW_TOKENS,
             )
-            for segment in (getattr(result, "segments", None) or [])
-        ]
-        language = str(result.language or "")
-        if not language:
-            chunk_languages = [
-                str(chunk.get("language", "")).strip()
-                for chunk in (getattr(result, "chunks", None) or [])
-                if str(chunk.get("language", "")).strip()
-                and str(chunk.get("language", "")).strip().lower() != "unknown"
-            ]
-            if chunk_languages:
-                language = Counter(chunk_languages).most_common(1)[0][0]
-
+            chunks = getattr(result, "chunks", None) or []
+            if len(chunks) != 1:
+                raise RuntimeError("MLX generation diagnostics missing for a serial audio chunk")
+            native = chunks[0]
+            if not all(key in native for key in ("generated_tokens", "max_new_tokens", "finish_reason", "truncated")):
+                raise RuntimeError("MLX generation diagnostics incomplete; review pinned runtime")
+            truncated = bool(getattr(result, "truncated", False) or native["truncated"]
+                             or native["finish_reason"] == "length")
+            self.last_truncated |= truncated
+            local_words = [WordSegment(word=str(seg["text"]), start=float(seg["start"]), end=float(seg["end"]))
+                           for seg in (getattr(result, "segments", None) or [])]
+            duration = len(chunk) / SAMPLE_RATE
+            self.last_chunk_diagnostics.append(chunk_diagnostic(
+                offset, duration, local_words, with_timestamps=self.with_timestamps,
+                text_present=bool(result.text.strip()), truncated=truncated,
+                generated_tokens=native.get("generated_tokens"),
+                max_new_tokens=native.get("max_new_tokens"),
+                finish_reason=native.get("finish_reason", "unknown"),
+            ))
+            if truncated:
+                raise RuntimeError("MLX Qwen reached its per-chunk generation limit; transcription rejected")
+            if native["finish_reason"] != "eos":
+                raise RuntimeError("MLX Qwen generation stopped without EOS; transcription rejected")
+            validate_words(local_words, duration)
+            texts.append(str(result.text).strip())
+            languages.append(result.language or merged_language([item.get("language", "") for item in chunks]))
+            words.extend(WordSegment(word=w.word, start=w.start + offset, end=w.end + offset)
+                         for w in local_words)
         return TranscriptResult(
-            text=str(result.text),
-            language=language,
+            text=" ".join(text for text in texts if text),
+            language=merged_language(languages),
             words=words,
         )
 
@@ -116,6 +135,7 @@ class MLXQwenASREngine:
         self._aligner = None
         self._mx = None
         self.last_truncated = False
+        self.last_chunk_diagnostics = []
 
         if session is not None:
             for attribute in ("model", "tokenizer", "config"):

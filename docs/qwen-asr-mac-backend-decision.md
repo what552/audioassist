@@ -472,6 +472,14 @@ and the full human, long-audio, and independently verified signed-app matrix is
 incomplete. QWEN-04 owns that remaining evidence; neither accelerated backend
 is promoted by this batch.
 
+2026-09-07 follow-up: the old 10-minute disagreement is not a ground-truth
+MLX accuracy failure. Correcting the PyTorch precision/masking/budget conditions
+and matching short chunks reduced it to 0.166% normalized text distance.
+Source adapters now implement shared bounded chunks and generation diagnostics;
+MPS uses float32 and PyTorch restores non-FA2 window masks. See
+`docs/qwen-backend-investigation.md` for source acceptance versus remaining
+human-corpus, lifecycle, and packaged-release gates. `auto` still does not change.
+
 - Select MLX automatically on supported Apple Silicon machines only after the
   acceptance gates pass.
 - Retain official PyTorch CPU/CUDA paths.

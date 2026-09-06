@@ -24,7 +24,7 @@ Priority meanings:
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
-| 8 | QWEN-04A | P1 | Complete: no-go | Human-reference short fixtures plus existing 5/10-minute evidence reject MPS and do not yet clear MLX |
+| 8 | QWEN-04A | P1 | Implemented: validating | Shared short chunks, serial budgets, MPS float32 and instance mask/termination shims; 996 tests and real short-suite pass; long-suite/review pending |
 | 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
@@ -39,6 +39,26 @@ Priority meanings:
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Complete | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
+
+### QWEN-04A follow-up — Correct the backend evidence
+
+The 2026-09-07 [investigation](qwen-backend-investigation.md) supersedes any
+interpretation that MPS is intrinsically unusable or that 34.8% distance from
+CPU means a 34.8% MLX transcription error rate. Source runtime corrections are
+under validation; automatic backend policy and the installed app remain unchanged.
+
+- Turn the validated MPS audio-encoder precision workaround into a scoped,
+  tested adapter change; bound chunk size/batch size and measure memory before
+  considering full float32 as a general solution.
+- Correct qwen-asr's missing non-FA2 audio window mask for both ASR and alignment
+  without editing installed dependencies or using a process-global patch.
+- Make generation budgets and cap/early-EOS diagnostics explicit. A final
+  timestamp near the end cannot prove every intermediate chunk was complete.
+- Re-run CPU/MPS/MLX on identical audio chunks and verified references; treat
+  cross-backend distance as disagreement requiring review, not ground truth.
+- Keep QWEN-04B and signed-app/long-form release gates separate. Do not promote
+  `auto`, rebuild the DMG, or declare all quality gates passed from this
+  diagnostic sample set alone.
 
 ### REALTIME-DIAG-01 — Intermittent packaged microphone startup
 

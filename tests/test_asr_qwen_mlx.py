@@ -9,8 +9,15 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+import numpy as np
 
 from src.asr_qwen_mlx import MLXQwenASREngine
+
+
+@pytest.fixture(autouse=True)
+def local_test_audio():
+    with patch("src.asr_qwen_mlx.load_local_audio", return_value=np.zeros(16000, dtype=np.float32)):
+        yield
 
 
 def _mlx_modules():
@@ -95,7 +102,9 @@ def test_transcribe_maps_language_and_word_segments(caplog):
             {"text": "hello", "start": 0.1, "end": 0.5},
             {"text": " world", "start": 0.5, "end": 1.0},
         ],
-        truncated=True,
+        truncated=False,
+        chunks=[{"language": "English", "finish_reason": "eos", "truncated": False,
+                 "generated_tokens": 5, "max_new_tokens": 1024}],
     )
     session = MagicMock()
     session.transcribe.return_value = result
@@ -112,18 +121,18 @@ def test_transcribe_maps_language_and_word_segments(caplog):
 
     assert converted.text == "hello world"
     assert converted.language == "English"
-    assert engine.last_truncated is True
+    assert engine.last_truncated is False
     assert [(word.word, word.start, word.end) for word in converted.words] == [
         ("hello", 0.1, 0.5),
         (" world", 0.5, 1.0),
     ]
-    session.transcribe.assert_called_once_with(
-        "/audio/sample.wav",
-        return_timestamps=True,
-        forced_aligner=aligner,
-        return_chunks=True,
-    )
-    assert "truncated" in caplog.text
+    assert session.transcribe.call_count == 1
+    np.testing.assert_array_equal(session.transcribe.call_args.args[0], np.zeros(16000))
+    assert session.transcribe.call_args.kwargs == {
+        "return_timestamps": True, "forced_aligner": aligner,
+        "return_chunks": True, "max_new_tokens": 1024,
+    }
+    assert engine.last_chunk_diagnostics[0]["generated_tokens"] == 5
 
 
 def test_transcribe_recovers_empty_aggregate_language_from_chunks():
@@ -131,12 +140,8 @@ def test_transcribe_recovers_empty_aggregate_language_from_chunks():
         text="hello",
         language="",
         segments=[],
-        chunks=[
-            {"language": ""},
-            {"language": "Chinese"},
-            {"language": "Chinese"},
-            {"language": "English"},
-        ],
+        chunks=[{"language": "Chinese", "generated_tokens": 5, "max_new_tokens": 1024,
+                 "finish_reason": "eos", "truncated": False}],
         truncated=False,
     )
     session = MagicMock()
