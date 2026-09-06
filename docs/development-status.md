@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The QWEN-03 baseline is 742 automated tests: 739 Python/backend tests and
+The REL-01 baseline is 750 automated tests: 747 Python/backend tests and
 3 browser tests. It includes the pinned `mlx-qwen3-asr` 0.3.5 adapter,
 native Forced Aligner conversion, deterministic holder/cache cleanup, and focused
 PyInstaller resources. Forced-offline 30-second Qwen CPU, diagnostic MPS, and MLX CLI
@@ -30,6 +30,15 @@ human/long/signed-app evidence is incomplete. The decision is therefore to
 keep `auto` unchanged and track the remaining evidence as QWEN-04. Real
 audio-device and permission behavior remains
 release-level manual validation rather than CI coverage.
+
+REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
+builds from the locked repository environment, signs nested code before the
+outer app, creates the DMG without Finder automation, and emits a JSON
+verification record. A real 0.1.0 ad-hoc candidate passed strict signatures,
+focused asset/entitlement checks, 491 Mach-O load-path checks, 582 symlink
+checks, and DMG image verification. The implementation is complete, while a
+distributable build remains externally gated by the unavailable Developer ID
+identity/notary credentials and clean-machine release checks.
 
 ## Historical gate record
 
@@ -56,7 +65,9 @@ The c02 gate verified the 512-sample mix-buffer drain behavior, Screen Recording
 
 Use [the authoritative development backlog](development-backlog.md). The realtime
 local-model-only gate, repository environment, Qwen backend lifecycle, explicit
-full-precision MLX adapter, and conservative benchmark decision are complete; next build
-and verify the release candidate. HTTP/MCP
-work remains a separate milestone and must not imply durable background work until
-lifecycle, locking, recovery, and cancellation are designed.
+full-precision MLX adapter, conservative benchmark decision, and reproducible
+release implementation are complete. QWEN-04 retains the deferred promotion
+matrix, and the distribution release gate is recorded in
+`docs/release-candidate-results.md`. HTTP/MCP work remains a separate milestone
+and must not imply durable background work until lifecycle, locking, recovery,
+and cancellation are designed.
