@@ -36,7 +36,7 @@ Priority meanings:
 | 17 | REALTIME-START-01 | P1 | Complete | Request microphone access before PortAudio/model/session startup, with cancel and timeout recovery; installed 2.0.1 gate passed |
 | 18 | PLAYER-02 | P2 | Complete | Prevent playback position and active playback from leaking across session switches |
 | 19 | UI-SESSION-REFRESH-01 | P2 | Complete | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
-| 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
+| 20 | LOCAL-API-CLEANUP-01 | P3 | Complete | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
 
@@ -316,6 +316,12 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 | OBSIDIAN-01 | Deeper Obsidian integration | Define concrete bidirectional or workflow value beyond the existing sync before scheduling |
 
 ## P3 maintenance backlog
+
+LOCAL-API-CLEANUP-01 is complete: a dead PID, a reused live PID with an
+unreachable listener, or an identity mismatch triggers ownership-checked cleanup.
+Cleanup first acquires the same process lock as server startup, so it cannot unlink
+a record while a replacement instance owns the service. Tests cover crash residue,
+PID reuse, and lock contention.
 
 | ID | Task |
 |---|---|

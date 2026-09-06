@@ -22,6 +22,7 @@ from src.local_api import (
     DesktopRecordingController,
     SingleInstanceLock,
     _remove_owned_discovery,
+    _remove_stale_discovery,
     failure,
     read_discovery,
     request_desktop,
@@ -341,6 +342,73 @@ def test_discovery_cleanup_requires_matching_instance(tmp_path):
     assert path.exists()
     _remove_owned_discovery(str(path), "new")
     assert not path.exists()
+
+
+def _write_discovery_record(app_data, *, instance_id, pid, port):
+    app_data.mkdir(parents=True, exist_ok=True)
+    path = app_data / DISCOVERY_FILENAME
+    path.write_text(json.dumps({
+        "schema": "audioassist-local-api/v1",
+        "instance_id": instance_id,
+        "pid": pid,
+        "mode": "desktop",
+        "host": HOST,
+        "port": port,
+        "token": "x" * 43,
+        "started_at": "2026-09-06T23:00:00+00:00",
+    }), encoding="utf-8")
+    return path
+
+
+def test_request_desktop_removes_dead_process_discovery(tmp_path):
+    app_data = tmp_path / "app-data"
+    path = _write_discovery_record(
+        app_data,
+        instance_id="4af42da2-7c27-4cdb-b61b-cc54c0df58cb",
+        pid=2_147_483_647,
+        port=1,
+    )
+
+    with pytest.raises(LocalAPIError) as raised:
+        request_desktop("GET", "/v1/health", app_data_dir=str(app_data))
+
+    assert raised.value.code == "app_unavailable"
+    assert not path.exists()
+
+
+def test_request_desktop_removes_unreachable_reused_pid_discovery(tmp_path):
+    app_data = tmp_path / "app-data"
+    listener = socket.socket()
+    listener.bind((HOST, 0))
+    unused_port = listener.getsockname()[1]
+    listener.close()
+    path = _write_discovery_record(
+        app_data,
+        instance_id="3beef26d-d0ba-45b0-94ae-b7504fb0b64c",
+        pid=os.getpid(),
+        port=unused_port,
+    )
+
+    with pytest.raises(LocalAPIError) as raised:
+        request_desktop("GET", "/v1/health", app_data_dir=str(app_data))
+
+    assert raised.value.code == "app_unavailable"
+    assert not path.exists()
+
+
+def test_stale_cleanup_does_not_unlink_while_server_lock_is_owned(tmp_path):
+    app_data = tmp_path / "app-data"
+    instance_id = "2a8d36c7-1c94-4096-9dc5-f547949c6481"
+    path = _write_discovery_record(
+        app_data, instance_id=instance_id, pid=2_147_483_647, port=1
+    )
+    lock = SingleInstanceLock(str(app_data / "local-api.lock"))
+    lock.acquire()
+    try:
+        assert _remove_stale_discovery(str(app_data), instance_id) is False
+        assert path.exists()
+    finally:
+        lock.release()
 
 
 def test_request_desktop_requires_desktop_mode(tmp_path):
