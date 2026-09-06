@@ -67,6 +67,9 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
 - For an ad-hoc local candidate, expect every changed build to have a new CDHash and
   re-authorize microphone/screen capture before judging device initialization. A
   Developer ID signed upgrade must retain the stable designated requirement instead.
+- On a fresh microphone decision, confirm the system prompt appears before model loading
+  and Session/WAV creation; cancel and timeout must restore idle controls without a
+  header-only recording.
 - Verify microphone, system, and mix modes independently.
 - Verify pause, playback while paused, resume, finish, and short-recording discard.
 - Confirm Screen Recording permission guidance and missing-helper errors are actionable.

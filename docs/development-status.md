@@ -87,9 +87,13 @@ one formal 2.0.0 attempt remained in `starting` and left a 44-byte WAV, while a 
 attempt recorded valid frames. REALTIME-DIAG-01 reproduced and explained it: replacing
 an ad-hoc signed build changed its CDHash, so macOS rejected the prior TCC code
 requirement and waited for a new microphone prompt inside PortAudio's AUHAL device-open
-call. REALTIME-START-01 adds microphone permission preflight and accurate pending/denied
-UX; a stable Developer ID signature is still required to preserve permissions across
-real upgrades. PLAYER-02 and UI-SESSION-REFRESH-01 retain the other confirmed findings.
+call. REALTIME-START-01 now requests first-use permission through AVFoundation before
+model loading, Session/WAV creation, or PortAudio; its UI can cancel the wait and the
+native request times out after 60 seconds. Diagnostic persistence is marker-only,
+cross-process rotation-safe, and performs no file I/O in the realtime callback. A
+packaged-app acceptance run is still required, and a stable Developer ID signature is
+still required to preserve permissions across real upgrades. PLAYER-02 and
+UI-SESSION-REFRESH-01 retain the other confirmed findings.
 
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the

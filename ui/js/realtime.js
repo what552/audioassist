@@ -16,6 +16,8 @@ const Realtime = (() => {
   let _captureMode = 'mic';      // 'mic' | 'system' | 'mix'
   let _onStateChange = null;
   let _canStart = null;
+  let _awaitingPermission = false;
+  let _permissionRequestGeneration = 0;
   let _permissionSettingsTarget = 'screen';
   let dom = {};
 
@@ -68,6 +70,14 @@ const Realtime = (() => {
   // ── Toggle ────────────────────────────────────────────────────────────────
 
   async function _onToggle() {
+    if (_awaitingPermission) {
+      _permissionRequestGeneration += 1;
+      _awaitingPermission = false;
+      _setLoading(false);
+      _disableModeButtons(false);
+      _setStatus('Permission request canceled');
+      return;
+    }
     if (_recording) {
       _setLoading(true, 'Stopping…');
       try {
@@ -81,6 +91,7 @@ const Realtime = (() => {
 
     if (_canStart && !_canStart()) return;
     _setLoading(true, 'Loading…');
+    _disableModeButtons(true);
 
     _setStatus('Checking…');
     let pre;
@@ -89,11 +100,13 @@ const Realtime = (() => {
     } catch (e) {
       console.error('[Realtime] preflight error:', e);
       _setLoading(false);
+      _disableModeButtons(false);
       _setStatus('Error');
       return;
     }
     if (pre && pre.supported === false) {
       _setLoading(false);
+      _disableModeButtons(false);
       _setStatus('Unavailable');
       _showPermNotice(pre);
       return;
@@ -102,15 +115,36 @@ const Realtime = (() => {
       _captureMode === 'mic' && pre && pre.microphone_permission === 'not_determined'
     );
     if (awaitingMicPermission) {
-      _setLoading(true, 'Allow Microphone…');
+      const requestGeneration = ++_permissionRequestGeneration;
+      _awaitingPermission = true;
+      _setLoading(true, 'Cancel Permission Wait');
+      dom.btnToggle.disabled = false;
       _setStatus('Waiting for microphone permission…');
+      let permission;
+      try {
+        permission = await window.pywebview.api.request_microphone_permission();
+      } catch (e) {
+        console.error('[Realtime] microphone permission request error:', e);
+        permission = { status: 'unknown', authorized: false };
+      }
+      if (requestGeneration !== _permissionRequestGeneration) return;
+      _awaitingPermission = false;
+      if (!permission || !permission.authorized) {
+        const status = permission && permission.status ? permission.status : 'unknown';
+        _setLoading(false);
+        _disableModeButtons(false);
+        _setStatus(status === 'timeout' ? 'Permission timed out' : 'Microphone unavailable');
+        _showPermNotice({ reason: 'microphone_permission_' + status });
+        return;
+      }
+      _setLoading(true, 'Loading…');
+      _setStatus('Loading…');
     } else {
       _setStatus('Loading…');
     }
     _hidePermNotice();
 
     const model_id = document.getElementById('sel-engine').value;
-    if (!awaitingMicPermission) _setStatus('Loading…');
     try {
       await window.pywebview.api.start_realtime({
         model_id,
@@ -119,6 +153,7 @@ const Realtime = (() => {
     } catch (e) {
       console.error('[Realtime] start error:', e);
       _setLoading(false);
+      _disableModeButtons(false);
       _setStatus('Error');
     }
   }

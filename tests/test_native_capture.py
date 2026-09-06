@@ -640,6 +640,67 @@ class TestPreflightCapture:
         assert result["os_version"] == "14.2.1"
 
 
+class TestMicrophonePermissionRequest:
+    @pytest.mark.parametrize("status", [
+        "authorized", "denied", "restricted", "unknown", "not_applicable",
+    ])
+    def test_existing_status_returns_without_prompt(self, status):
+        import app as app_module
+
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value=status
+        ), patch.dict(sys.modules, {"objc": MagicMock()}) as modules:
+            assert app_module._request_macos_microphone_permission() == status
+            modules["objc"].lookUpClass.assert_not_called()
+
+    @pytest.mark.parametrize("granted, expected", [
+        (True, "authorized"),
+        (False, "denied"),
+    ])
+    def test_not_determined_requests_avfoundation_permission(self, granted, expected):
+        import app as app_module
+
+        capture_device = MagicMock()
+        capture_device.requestAccessForMediaType_completionHandler_.side_effect = (
+            lambda media_type, callback: callback(granted)
+        )
+        objc = types.ModuleType("objc")
+        objc.loadBundle = MagicMock()
+        objc.lookUpClass = MagicMock(return_value=capture_device)
+
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value="not_determined"
+        ), patch.dict(sys.modules, {"objc": objc}):
+            status = app_module._request_macos_microphone_permission(timeout_seconds=0.1)
+
+        assert status == expected
+        capture_device.requestAccessForMediaType_completionHandler_.assert_called_once()
+        assert capture_device.requestAccessForMediaType_completionHandler_.call_args.args[0] == "soun"
+
+    def test_not_determined_permission_request_is_bounded(self):
+        import app as app_module
+
+        capture_device = MagicMock()
+        objc = types.ModuleType("objc")
+        objc.loadBundle = MagicMock()
+        objc.lookUpClass = MagicMock(return_value=capture_device)
+
+        with patch.object(
+            app_module, "_macos_microphone_permission_status", return_value="not_determined"
+        ), patch.dict(sys.modules, {"objc": objc}):
+            status = app_module._request_macos_microphone_permission(timeout_seconds=0)
+
+        assert status == "timeout"
+
+    def test_api_returns_json_serializable_permission_result(self):
+        from app import API
+
+        with patch("app._request_macos_microphone_permission", return_value="authorized"):
+            result = API().request_microphone_permission()
+
+        assert result == {"status": "authorized", "authorized": True}
+
+
 # ── mix 模式路由（P1 修复验证）────────────────────────────────────────────────
 
 class TestMixModeRouting:

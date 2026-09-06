@@ -91,21 +91,19 @@ def _set_vad_prob(rt, prob):
 
 
 class TestAudioCallback:
-    def test_first_audio_frame_is_logged_once(self, caplog):
+    def test_first_audio_frame_is_forwarded_once_outside_audio_callback(self):
         rt, _ = _make_rt(diagnostic_id="session-123")
         _set_vad_prob(rt, 0.1)
-        with caplog.at_level(logging.INFO, logger="src.realtime"), \
+        with patch.object(rt, "_log_start_stage") as log_stage, \
              patch.dict(sys.modules, {"torch": _fake_torch()}):
             rt._audio_callback(_chunk(), 512, None, None)
             rt._audio_callback(_chunk(), 512, None, None)
+            log_stage.assert_not_called()
+            rt._wait_for_first_audio_frame()
 
-        markers = [
-            record.message for record in caplog.records
-            if "stage=first_audio_frame" in record.message
-        ]
-        assert len(markers) == 1
-        assert "attempt=session-123" in markers[0]
-        assert "frames=512" in markers[0]
+        log_stage.assert_called_once_with(
+            "first_audio_frame", frames=512, status="ok"
+        )
 
     def test_speech_accumulated(self):
         rt, m = _make_rt()

@@ -80,7 +80,9 @@ class RealtimeTranscriber:
         # Serial transcription worker — prevents concurrent Metal GPU usage
         self._transcribe_queue: queue.Queue = queue.Queue()
         self._worker_thread: Optional[threading.Thread] = None
-        self._first_audio_frame_logged = False
+        self._first_audio_frame_event = threading.Event()
+        self._first_audio_frame_info: Optional[tuple[int, str]] = None
+        self._diagnostic_thread: Optional[threading.Thread] = None
 
     def _log_start_stage(self, stage: str, started: Optional[float] = None, **fields) -> None:
         """Emit a correlation-friendly marker for packaged-app diagnostics."""
@@ -95,7 +97,28 @@ class RealtimeTranscriber:
             stage,
             elapsed,
             suffix,
+            extra={"audioassist_diagnostic": True},
         )
+
+    def _wait_for_first_audio_frame(self) -> None:
+        """Move first-frame file logging off the realtime audio callback."""
+        if not self._first_audio_frame_event.wait(timeout=10.0):
+            return
+        info = self._first_audio_frame_info
+        if info is not None:
+            frames, status = info
+            self._log_start_stage(
+                "first_audio_frame",
+                frames=frames,
+                status=status,
+            )
+
+    def _stop_diagnostic_waiter(self) -> None:
+        self._first_audio_frame_event.set()
+        thread = self._diagnostic_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.2)
+        self._diagnostic_thread = None
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -160,6 +183,14 @@ class RealtimeTranscriber:
             self._log_start_stage("stream_open.done", stream_started)
             activate_started = time.monotonic()
             self._log_start_stage("stream_start.begin")
+            self._first_audio_frame_info = None
+            self._first_audio_frame_event.clear()
+            self._diagnostic_thread = threading.Thread(
+                target=self._wait_for_first_audio_frame,
+                daemon=True,
+                name="realtime-first-frame-diagnostic",
+            )
+            self._diagnostic_thread.start()
             self._stream.start()
             self._log_start_stage("stream_start.done", activate_started)
         except Exception:
@@ -180,6 +211,7 @@ class RealtimeTranscriber:
                 self._transcribe_queue.put(None)
                 self._worker_thread.join()
             self._worker_thread = None
+            self._stop_diagnostic_waiter()
             self._close_asr()
             raise
         logger.info("Realtime transcription started (engine=%s)", self._engine)
@@ -222,6 +254,7 @@ class RealtimeTranscriber:
         if self._worker_thread is None or not self._worker_thread.is_alive():
             self._worker_thread = None
             self._close_asr()
+        self._stop_diagnostic_waiter()
         logger.info("Realtime transcription stopped")
         if errors:
             raise errors[0]
@@ -299,13 +332,9 @@ class RealtimeTranscriber:
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         if not self._running:
             return
-        if not self._first_audio_frame_logged:
-            self._first_audio_frame_logged = True
-            self._log_start_stage(
-                "first_audio_frame",
-                frames=frames,
-                status=status or "ok",
-            )
+        if not self._first_audio_frame_event.is_set():
+            self._first_audio_frame_info = (frames, str(status or "ok"))
+            self._first_audio_frame_event.set()
         import torch
 
         chunk = indata[:, 0].copy()  # mono, shape (CHUNK_SIZE,)

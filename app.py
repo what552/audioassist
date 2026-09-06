@@ -66,6 +66,36 @@ def _macos_microphone_permission_status() -> str:
     }.get(status, "unknown")
 
 
+def _request_macos_microphone_permission(timeout_seconds: float = 60.0) -> str:
+    """Request microphone access before PortAudio can block inside CoreAudio."""
+    status = _macos_microphone_permission_status()
+    if status != "not_determined":
+        return status
+    try:
+        import objc
+
+        objc.loadBundle(
+            "AVFoundation",
+            globals(),
+            bundle_path="/System/Library/Frameworks/AVFoundation.framework",
+        )
+        capture_device = objc.lookUpClass("AVCaptureDevice")
+        completed = threading.Event()
+        result = {"status": "denied"}
+
+        def _on_permission(granted: bool) -> None:
+            result["status"] = "authorized" if granted else "denied"
+            completed.set()
+
+        capture_device.requestAccessForMediaType_completionHandler_("soun", _on_permission)
+        if not completed.wait(timeout_seconds):
+            return "timeout"
+        return result["status"]
+    except Exception:
+        logger.warning("Unable to request macOS microphone permission", exc_info=True)
+        return "unknown"
+
+
 def _resolve_output_dir() -> str:
     """Return OUTPUT_DIR: persisted path from config if valid, else default."""
     try:
@@ -672,6 +702,11 @@ class API:
 
         return result
 
+    def request_microphone_permission(self) -> dict:
+        """Prompt for microphone access with a bounded wait before model loading."""
+        status = _request_macos_microphone_permission()
+        return {"status": status, "authorized": status == "authorized"}
+
     def open_privacy_settings(self, permission: str = "screen") -> dict:
         """Open the requested bounded macOS Privacy & Security pane."""
         pane = "Privacy_Microphone" if permission == "microphone" else "Privacy_ScreenCapture"
@@ -763,6 +798,7 @@ class API:
                     capture_mode,
                     engine,
                     model_id or "default",
+                    extra={"audioassist_diagnostic": True},
                 )
 
                 if capture_mode in ("system", "mix"):
@@ -790,6 +826,7 @@ class API:
                     "Realtime start attempt=%s stage=backend_create.done backend=%s",
                     session_id,
                     type(rt).__name__,
+                    extra={"audioassist_diagnostic": True},
                 )
                 rt.start()
                 # Race: stop_realtime() may have cleared self._realtime while
@@ -814,13 +851,17 @@ class API:
                 logger.info(
                     "Realtime start attempt=%s stage=recording.confirmed",
                     session_id,
+                    extra={"audioassist_diagnostic": True},
                 )
                 _push(f"onRealtimeStarted({json.dumps(session_id)}, {json.dumps(output_path)})")
             except Exception as e:
-                logger.exception(
-                    "Realtime start attempt=%s stage=failed",
+                logger.info(
+                    "Realtime start attempt=%s stage=failed error_type=%s",
                     locals().get("session_id", "unassigned"),
+                    type(e).__name__,
+                    extra={"audioassist_diagnostic": True},
                 )
+                logger.exception("Realtime start failed")
                 with self._recording_lock:
                     if generation != self._recording_generation:
                         return

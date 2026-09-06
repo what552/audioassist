@@ -260,7 +260,9 @@ Alternatively, click **Open System Settings →** in the permission notice that 
 
 Mic mode checks the macOS microphone authorization state before loading the realtime
 model. A denied or restricted state shows a direct link to the Microphone privacy pane;
-a first request is labelled **Allow Microphone…** while macOS presents its prompt.
+a first request is made through AVFoundation before model loading or Session creation.
+While macOS presents its prompt, **Cancel Permission Wait** keeps the app usable; the
+request also times out after 60 seconds without starting PortAudio or leaving a WAV.
 Locally rebuilt ad-hoc candidates have a different CDHash after their executable
 changes, so macOS can require authorization again even when an older AudioAssist entry
 is enabled. Developer ID signed release upgrades use a stable designated requirement.

@@ -81,7 +81,10 @@ def _start_desktop_local_api(api: API) -> LocalAPIServer | None:
 
 def main():
     log_path = configure_runtime_file_logging(_app_module.APP_DATA_DIR)
-    logging.getLogger(__name__).info("Desktop runtime log: %s", log_path)
+    logging.getLogger(__name__).info(
+        "Desktop runtime log initialized",
+        extra={"audioassist_diagnostic": True},
+    )
     api = API()
     # Resolve UI path for both development and PyInstaller frozen builds.
     # In frozen mode, bundled resources land in sys._MEIPASS (onefile) or

@@ -33,7 +33,7 @@ Priority meanings:
 | 14 | R03-B1 | P2 | Complete: go | Foreground/read-only and visible-app server modes have explicit lifecycle, locking, recovery, cancellation, schema, and security boundaries |
 | 15 | R03-B2 | P2 | Complete | Authenticated desktop/read-only HTTP service and eight-tool stdio MCP adapter, without a daemon |
 | 16 | REALTIME-DIAG-01 | P1 | Complete | Prove the 44-byte WAV failure is a TCC code-requirement mismatch after replacing an ad-hoc signed build |
-| 17 | REALTIME-START-01 | P1 | In progress | Preflight microphone TCC state and provide accurate pending/denied permission UX; Developer ID remains the release identity fix |
+| 17 | REALTIME-START-01 | P1 | Implemented: packaged gate pending | Request microphone access before PortAudio/model/session startup, with cancel and timeout recovery; Developer ID remains the release identity fix |
 | 18 | PLAYER-02 | P2 | Ready | Prevent playback position and active playback from leaking across session switches |
 | 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
@@ -71,6 +71,23 @@ ad-hoc build CDHash and remained in `AUTHREQ_PROMPTING`. The default device was
 the 48 kHz built-in MacBook Pro microphone, but the block occurred while assigning
 the AUHAL device/IOProc, before stream activation; sample rate is not the proven
 cause. See `docs/realtime-start-diagnosis.md`.
+
+### REALTIME-START-01 — Bounded microphone authorization
+
+- Query TCC before recording and request first-use access through AVFoundation,
+  before loading a model, creating a Session/WAV, or opening PortAudio.
+- Keep the permission wait cancelable in the UI and bound the native request to
+  60 seconds. Denial, timeout, cancellation, or bridge failure restores the idle
+  controls and never calls the realtime backend.
+- Persist only explicitly marked startup diagnostics. Rotation is serialized
+  across overlapping app processes, and the audio callback only signals an
+  event; ordinary logs, transcript text, paths, and file I/O stay out of it.
+- Treat stable Developer ID signing/notarization as the production upgrade fix;
+  an edited ad-hoc build still has to be authorized as a new code identity.
+
+Acceptance remaining: install the rebuilt candidate, confirm the system prompt
+appears before model/session creation, authorize it, and pass cold start, warm
+restart, stop, and non-empty WAV checks.
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent

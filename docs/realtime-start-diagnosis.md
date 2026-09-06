@@ -41,9 +41,11 @@ why a previously authorized build could record normally.
 ## Product and release actions
 
 - Keep bounded file logging and per-attempt stage markers for packaged-only failures;
-  they contain no transcript or audio content.
+  only explicit diagnostic records are persisted, rotation is cross-process safe, and
+  the realtime callback performs no file I/O.
 - Preflight microphone authorization. Block denied/restricted states with the correct
-  settings link, and label a not-yet-determined request as waiting for macOS permission.
+  settings link, and use a cancelable, 60-second-bounded AVFoundation request before
+  model loading, Session/WAV creation, or PortAudio.
 - Do not add a sample-rate workaround for this incident.
 - Treat stable Developer ID signing/notarization as the mechanism that preserves the
   designated requirement across production upgrades. Ad-hoc QA builds must be

@@ -38,6 +38,8 @@
     agentTurns: [],
     summaries: {},
     preflight: { supported: true },
+    microphonePermission: { status: 'authorized', authorized: true },
+    microphonePermissionDelayMs: 0,
   };
 
   var supplied = window.__AUDIOASSIST_TEST_CONFIG || {};
@@ -51,6 +53,12 @@
   state.transcribeIds = (supplied.transcribeIds || defaults.transcribeIds).slice();
   state.agentTurns = (supplied.agentTurns || defaults.agentTurns).slice();
   state.preflight = Object.assign({}, defaults.preflight, supplied.preflight || {});
+  state.microphonePermission = Object.assign(
+    {}, defaults.microphonePermission, supplied.microphonePermission || {}
+  );
+  state.microphonePermissionDelayMs = (
+    supplied.microphonePermissionDelayMs || defaults.microphonePermissionDelayMs
+  );
   state.calls = [];
 
   function record(name, args) {
@@ -113,6 +121,13 @@
     rename_speaker: async function () { record('rename_speaker', arguments); return { ok: true, segments: [] }; },
     rename_segment_speaker: async function () { record('rename_segment_speaker', arguments); return { ok: true }; },
     preflight_capture: async function () { record('preflight_capture', arguments); return Object.assign({}, state.preflight); },
+    request_microphone_permission: async function () {
+      record('request_microphone_permission', arguments);
+      if (state.microphonePermissionDelayMs) {
+        await new Promise(resolve => setTimeout(resolve, state.microphonePermissionDelayMs));
+      }
+      return Object.assign({}, state.microphonePermission);
+    },
     start_realtime: async function () { record('start_realtime', arguments); return { status: 'started' }; },
     stop_realtime: async function () { record('stop_realtime', arguments); return { status: 'stopped' }; },
     pause_realtime: async function () { record('pause_realtime', arguments); return { status: 'pausing' }; },
