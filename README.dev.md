@@ -51,9 +51,9 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 ## Development status
 
 - R01 and R02 are integrated into `main`; the current application is a functional MVP.
-- R03-a local CLI is complete; the HTTP resource/agent API has not started.
+- R03-a local CLI is complete; the bounded R03-b HTTP/MCP design is approved in [docs/http-mcp-contract.md](docs/http-mcp-contract.md), while implementation remains R03-B2.
 - Before the next feature milestone, keep the unit suite green and run the manual real-audio smoke checklist against the packaged app.
-- Maintainer references: [development status](docs/development-status.md), [development backlog](docs/development-backlog.md), [system audio architecture](docs/system-audio-architecture.md), and [release checklist](docs/release-checklist.md).
+- Maintainer references: [development status](docs/development-status.md), [development backlog](docs/development-backlog.md), [local HTTP/MCP contract](docs/http-mcp-contract.md), [system audio architecture](docs/system-audio-architecture.md), and [release checklist](docs/release-checklist.md).
 
 ## Requirements
 
