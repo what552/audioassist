@@ -2,7 +2,7 @@
 
 Local audio/video transcription with speaker diarization, powered by Qwen3-ASR or Whisper.
 
-## Features (through R03-a local CLI)
+## Features (through R03-b local HTTP/MCP)
 
 - **Session-per-directory storage (F6)** — each job lives in `meetings/{job_id}/` inside the output directory (`transcript.json`, `summary.json`, `agent_chat.json`, `source_audio.*`); legacy flat-file sessions are read transparently for backward compatibility; session delete uses `shutil.rmtree` for new layout
 - **Local-only model inference (F1)** — `pipeline.run()` and `run_realtime_segments()` never auto-download models; if a required model is not present, `ModelNotReadyError` is raised immediately with a clear message pointing to the Model Library; no silent network calls during transcription
@@ -46,12 +46,13 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
 - **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
 - **Agent-callable local CLI (R03-a)** — session listing/detail/status, synchronous file transcription, and summary generation are available through `python -m src.cli` or the installed `audioassist` command; `--json` provides a stable response envelope while progress stays on stderr
+- **Bounded local HTTP/MCP (R03-b)** — the visible app owns an authenticated loopback recording API; `audioassist serve --read-only` provides foreground session reads while the app is closed; `audioassist-mcp` exposes eight stdio tools without adding a daemon or background inference queue
 - **Local-only realtime inference** — microphone, system, and mix capture resolve the selected Qwen or Whisper model through `ModelManager` and pass its validated local directory to the backend; recording never downloads model weights
 
 ## Development status
 
 - R01 and R02 are integrated into `main`; the current application is a functional MVP.
-- R03-a local CLI is complete; the bounded R03-b HTTP/MCP design is approved in [docs/http-mcp-contract.md](docs/http-mcp-contract.md), while implementation remains R03-B2.
+- R03-a local CLI and R03-b bounded HTTP/MCP adapters are complete; see [docs/http-mcp-contract.md](docs/http-mcp-contract.md).
 - Before the next feature milestone, keep the unit suite green and run the manual real-audio smoke checklist against the packaged app.
 - Maintainer references: [development status](docs/development-status.md), [development backlog](docs/development-backlog.md), [local HTTP/MCP contract](docs/http-mcp-contract.md), [system audio architecture](docs/system-audio-architecture.md), and [release checklist](docs/release-checklist.md).
 
@@ -145,10 +146,12 @@ Some macOS versions require a full app restart after granting the permission.
 .venv/bin/audioassist --json status JOB_ID
 .venv/bin/audioassist --json transcribe /path/to/audio.m4a
 .venv/bin/audioassist --json summarize JOB_ID
+.venv/bin/audioassist --json serve --read-only
+.venv/bin/audioassist-mcp
 ```
 
-See [the R03-a CLI contract](docs/cli-contract.md) for installation, stdout, error, and
-exit-code guarantees.
+See [the CLI contract](docs/cli-contract.md) and [local HTTP/MCP contract](docs/http-mcp-contract.md)
+for installation, stdout, lifecycle, security, error, and exit-code guarantees.
 
 ## Platform notes
 
@@ -168,6 +171,8 @@ Files written inside the data directory:
 |------|----------|
 | `config.json` | API configuration — `base_url`, `api_key`, `model` for the LLM summary endpoint |
 | `templates.json` | Summary templates — list of `{name, prompt}` objects managed in the ⚙ settings panel |
+| `local-api.json` | Active local server discovery and bearer token; mode `0600`, removed on clean shutdown |
+| `local-api.lock` | Advisory single-instance lock held only while a local server is active |
 | `output/meetings/<job_id>/transcript.json` | Full transcript with word-level timing and speaker labels (new layout) |
 | `output/meetings/<job_id>/transcript.md` | Human-readable transcript sidecar (regenerated on each save) |
 | `output/meetings/<job_id>/summary.json` | Saved summary versions (up to 3) |

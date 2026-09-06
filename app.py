@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import datetime as dt
 from typing import Optional
 
 from platformdirs import user_data_dir
@@ -195,11 +196,30 @@ def _transcript_to_md(segments: list) -> str:
 class API:
     def __init__(self):
         self._realtime = None  # RealtimeTranscriber instance when active
+        self._recording_lock = threading.RLock()
+        self._recording_generation = 0
+        self._recording_status = {
+            "state": "idle",
+            "session_id": None,
+            "capture_mode": None,
+            "started_at": None,
+            "error": None,
+        }
         # Pre-collected realtime segments keyed by wav_path — consumed by transcribe()
         self._rt_segments: dict[str, list] = {}
         # Options stored after Phase 1 (realtime), consumed by manual refine()
         self._refine_options: dict = {}
         self._caffeinate_proc = None  # caffeinate subprocess (macOS only)
+
+    def _set_recording_status(self, state: str, **changes) -> None:
+        with self._recording_lock:
+            self._recording_status.update(changes)
+            self._recording_status["state"] = state
+
+    def get_recording_status(self) -> dict:
+        """Return a stable snapshot for the local HTTP and MCP adapters."""
+        with self._recording_lock:
+            return dict(self._recording_status)
 
     # ── File selection ─────────────────────────────────────────────────────────
 
@@ -661,11 +681,13 @@ class API:
 
         Returns: {"status": "started"} or {"status": "already_running"}
         """
-        if self._realtime is not None:
-            return {"status": "already_running"}
-
-        # Sentinel prevents a second call racing before _run() sets self._realtime
-        self._realtime = object()
+        with self._recording_lock:
+            if self._realtime is not None:
+                return {"status": "already_running"}
+            # Sentinel prevents a second call racing before _run() installs the backend.
+            self._realtime = object()
+            self._recording_generation += 1
+            generation = self._recording_generation
         self._caffeinate_start()
 
         options = options or {}
@@ -678,6 +700,13 @@ class API:
                 engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
         capture_mode = options.get("capture_mode", "mic")
+        self._set_recording_status(
+            "starting",
+            session_id=None,
+            capture_mode=capture_mode,
+            started_at=None,
+            error=None,
+        )
 
         def _run():
             try:
@@ -711,14 +740,31 @@ class API:
                 rt.start()
                 # Race: stop_realtime() may have cleared self._realtime while
                 # models were loading. If so, shut down immediately and return.
-                if self._realtime is None:
+                with self._recording_lock:
+                    cancelled = (
+                        self._realtime is None
+                        or generation != self._recording_generation
+                    )
+                    if not cancelled:
+                        self._realtime = rt
+                if cancelled:
                     rt.stop()
                     return
-                self._realtime = rt
+                self._set_recording_status(
+                    "recording",
+                    session_id=session_id,
+                    capture_mode=capture_mode,
+                    started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+                    error=None,
+                )
                 _push(f"onRealtimeStarted({json.dumps(session_id)}, {json.dumps(output_path)})")
             except Exception as e:
                 logger.exception("Realtime start failed")
-                self._realtime = None
+                with self._recording_lock:
+                    if generation != self._recording_generation:
+                        return
+                    self._realtime = None
+                self._set_recording_status("error", error=str(e))
                 self._caffeinate_stop()
                 _push(f"onRealtimeError({json.dumps(str(e))})")
 
@@ -735,13 +781,18 @@ class API:
         rt = self._realtime
         if rt is None or not hasattr(rt, 'pause'):
             return {"status": "not_running"}
+        self._set_recording_status("pausing", error=None)
 
         def _run():
             try:
                 rt.pause()
-            except Exception:
+            except Exception as error:
                 logger.exception("Realtime pause failed")
-            _push("onRealtimePaused()")
+                self._set_recording_status("error", error=str(error))
+                _push(f"onRealtimeError({json.dumps(str(error))})")
+            else:
+                self._set_recording_status("paused", error=None)
+                _push("onRealtimePaused()")
 
         threading.Thread(target=_run, daemon=True).start()
         return {"status": "pausing"}
@@ -756,13 +807,18 @@ class API:
         rt = self._realtime
         if rt is None or not hasattr(rt, 'resume'):
             return {"status": "not_running"}
+        self._set_recording_status("resuming", error=None)
 
         def _run():
             try:
                 rt.resume()
-            except Exception:
+            except Exception as error:
                 logger.exception("Realtime resume failed")
-            _push("onRealtimeResumed()")
+                self._set_recording_status("error", error=str(error))
+                _push(f"onRealtimeError({json.dumps(str(error))})")
+            else:
+                self._set_recording_status("recording", error=None)
+                _push("onRealtimeResumed()")
 
         threading.Thread(target=_run, daemon=True).start()
         return {"status": "resuming"}
@@ -778,11 +834,14 @@ class API:
 
         Returns: {"status": "stopped"} or {"status": "not_running"}
         """
-        rt = self._realtime
-        self._realtime = None
+        with self._recording_lock:
+            rt = self._realtime
+            self._realtime = None
+            self._recording_generation += 1
         self._caffeinate_stop()
         if rt is None:
             return {"status": "not_running"}
+        self._set_recording_status("stopping", error=None)
 
         def _run():
             try:
@@ -794,12 +853,42 @@ class API:
                     segs = rt.get_segments()
                     if segs:
                         self._rt_segments[wav_path] = segs
-            except Exception:
+            except Exception as error:
                 logger.exception("Realtime stop failed")
-            _push("onRealtimeStopped()")
+                self._set_recording_status("error", error=str(error))
+                _push(f"onRealtimeError({json.dumps(str(error))})")
+            else:
+                self._set_recording_status(
+                    "idle",
+                    session_id=None,
+                    capture_mode=None,
+                    started_at=None,
+                    error=None,
+                )
+                _push("onRealtimeStopped()")
 
         threading.Thread(target=_run, daemon=True).start()
         return {"status": "stopped"}
+
+    def shutdown(self) -> None:
+        """Synchronously release capture and sleep-prevention resources on app exit."""
+        with self._recording_lock:
+            rt = self._realtime
+            self._realtime = None
+            self._recording_generation += 1
+        self._caffeinate_stop()
+        if rt is not None and hasattr(rt, "stop"):
+            try:
+                rt.stop()
+            except Exception:
+                logger.exception("Realtime shutdown failed")
+        self._set_recording_status(
+            "idle",
+            session_id=None,
+            capture_mode=None,
+            started_at=None,
+            error=None,
+        )
 
     # ── Summary ────────────────────────────────────────────────────────────────
 

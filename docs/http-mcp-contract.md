@@ -1,6 +1,6 @@
 # R03-b Local HTTP and MCP Contract
 
-Status: R03-B1 design gate approved for the bounded R03-B2 implementation.
+Status: R03-B1 design approved; bounded R03-B2 implementation completed on 2026-09-06.
 
 This document is the versioned contract for local HTTP resources, desktop recording
 control, and the separate MCP adapter. It deliberately does **not** introduce a
@@ -166,10 +166,12 @@ idle -> starting -> recording -> pausing -> paused -> resuming -> recording
                                          v
                                         idle
 
-starting/recording/pausing/paused/resuming/stopping -> error -> idle (next start)
+starting/recording/pausing/paused/resuming/stopping -> error -> stop or next start
 ```
 
-Only one recording mutation may be accepted at a time. Invalid transitions return
+Only one recording mutation may be accepted at a time. An error with a still-owned
+capture backend may be stopped; a start error that already released its backend may be
+retried. Invalid transitions return
 HTTP `409` with `recording_state_conflict`; a second mutation still executing returns
 `operation_in_progress`. A start request performs the same system/mix preflight as the
 UI. The state response contains only stable fields:
@@ -267,3 +269,9 @@ tools do not require a running HTTP server. Recording tools require discovery mo
   filesystem paths, shell execution, or unrestricted agent prompts.
 - No promise that a live recording survives app/process/device failure.
 
+## Protocol references
+
+The stdio framing and tool result/error behavior follow the official MCP specifications:
+
+- https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
+- https://modelcontextprotocol.io/specification/2025-06-18/server/tools

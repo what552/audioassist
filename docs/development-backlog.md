@@ -31,7 +31,7 @@ Priority meanings:
 | 12 | ASR-QUALITY-01 | P2 | Complete | Use confidence-gated overlap and same-speaker gap alignment without hiding uncertainty |
 | 13 | TEXT-01 | P2 | Complete | Add conservative, language-aware punctuation without semantic rewriting |
 | 14 | R03-B1 | P2 | Complete: go | Foreground/read-only and visible-app server modes have explicit lifecycle, locking, recovery, cancellation, schema, and security boundaries |
-| 15 | R03-B2 | P2 | Next | Implement the approved local HTTP resources/recording control and separate MCP adapter |
+| 15 | R03-B2 | P2 | Complete | Authenticated desktop/read-only HTTP service and eight-tool stdio MCP adapter, without a daemon |
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent
@@ -173,7 +173,7 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 | QWEN-04A | Accelerated-backend evidence | Human Mandarin/Cantonese/English/code-switch references plus short and 5/10-minute fixtures compare CPU, MPS, and MLX before longer promotion runs |
 | QWEN-04B | Conditional Mac default promotion | The selected backend must pass lifecycle, offline, checkpoint, packaged-app, and approved long-audio gates before changing `auto` |
 | R03-B1 | Complete: HTTP service lifecycle/security design | Approved bounded v1 contract in `docs/http-mcp-contract.md`; no daemon or background inference queue |
-| R03-B2 | HTTP recording control plus MCP adapter | Reuse `src/service.py`; data reads work with the app closed; recording mutations require the visible app and return stable errors |
+| R03-B2 | Complete: HTTP recording control plus MCP adapter | Shared-service reads work with the app closed; recording mutations require a live authenticated visible app and return stable errors |
 | AGENT-01 | Summary Agent reliability (paused by owner) | Request/tool timeouts, transcript paging instead of a fixed 6000-character truncation, and summary writes through the shared service |
 | TEST-UI-01 | Complete: close frontend coverage gaps | Eight browser scenarios cover startup/history, setup, cancel/retry, model modal, drag/drop queueing, and Summary Agent flows |
 | TRANS-01 | Complete: cancellation and concurrency hardening | Immediate cancel registration, duplicate-job rejection, transactional output/refine, retryable refine cancellation, and serialized rename/rerun mutations |
@@ -192,7 +192,7 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 | UI-ERROR-01 | Replace remaining blocking `alert()` paths with the app error/toast pattern |
 | PLAYER-01 | Surface actionable `seekTo()` media failures instead of only logging them |
 | UI-STATE-01 | Recheck the historical player/empty-hint state transitions with browser regression tests |
-| REALTIME-01 | Harden pause/resume when the worker has already failed, and avoid reporting a UI transition before backend confirmation |
+| REALTIME-01 | Complete through R03-B2: pause/resume failures produce an error state and never emit false confirmed UI events |
 | LOG-01 | Preserve stack traces on remaining aligner fallback/error paths |
 | AUDIO-UTIL-01 | Convert nonnumeric ffprobe duration output such as `N/A` into an actionable application error |
 | TEST-ASR-01 | Add direct mocked timestamp/result-conversion tests for Qwen and both Whisper adapters |

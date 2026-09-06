@@ -1,6 +1,7 @@
 # R03-a CLI Contract
 
-Status: initial local CLI implemented on 2026-09-05.
+Status: synchronous CLI implemented on 2026-09-05; bounded read-only server added by
+R03-B2 on 2026-09-06.
 
 ## Installation and invocation
 
@@ -36,6 +37,7 @@ audioassist sessions show JOB_ID
 audioassist status JOB_ID
 audioassist transcribe FILE [--engine qwen|whisper] [--model-id ID]
 audioassist summarize JOB_ID [--prompt TEXT]
+audioassist serve --read-only [--port PORT]
 ```
 
 `transcribe` is synchronous: the process remains alive until the transcript is complete or
@@ -45,6 +47,16 @@ R03-a.
 
 `summarize` uses the existing OpenAI-compatible settings in `config.json` and saves the
 result as a new summary version.
+
+`serve --read-only` is an explicit foreground loopback HTTP process. It exposes the
+session read routes in [the local HTTP/MCP contract](http-mcp-contract.md), writes its
+authenticated discovery record beside `config.json`, and cleans it up on SIGINT or
+SIGTERM. It does not daemonize, transcribe, summarize, or control recording. The visible
+desktop app owns the recording-capable server.
+
+The separate `audioassist-mcp` executable speaks newline-delimited MCP JSON-RPC over
+stdin/stdout. Its session tools read the same service directly; recording tools require
+the visible desktop app.
 
 ## JSON response
 

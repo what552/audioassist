@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +52,30 @@ _maybe_reexec_with_pythonw()
 import webview
 import app as _app_module
 from app import API
+from src.local_api import (
+    DesktopRecordingController,
+    LocalAPIError,
+    LocalAPIServer,
+)
+
+
+def _start_desktop_local_api(api: API) -> LocalAPIServer | None:
+    """Start the app-owned loopback adapter without preventing GUI startup."""
+    server = LocalAPIServer(
+        _app_module._service(),
+        mode="desktop",
+        app_data_dir=_app_module.APP_DATA_DIR,
+        recording=DesktopRecordingController(api),
+    )
+    try:
+        server.start()
+    except LocalAPIError:
+        logging.getLogger(__name__).warning(
+            "Local API unavailable; another service may already be active",
+            exc_info=True,
+        )
+        return None
+    return server
 
 
 def main():
@@ -74,7 +99,25 @@ def main():
         text_select=True,
     )
     _app_module._window = window
-    webview.start(debug="--debug" in sys.argv)
+    local_api = _start_desktop_local_api(api)
+    cleanup_lock = threading.Lock()
+    cleaned_up = False
+
+    def cleanup(*_args):
+        nonlocal cleaned_up
+        with cleanup_lock:
+            if cleaned_up:
+                return
+            cleaned_up = True
+        if local_api is not None:
+            local_api.stop()
+        api.shutdown()
+
+    window.events.closed += cleanup
+    try:
+        webview.start(debug="--debug" in sys.argv)
+    finally:
+        cleanup()
 
 
 if __name__ == "__main__":

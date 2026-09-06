@@ -257,7 +257,7 @@ class TestPauseResumeAPI:
         mock_rt.resume.assert_called_once()
         assert any("onRealtimeResumed" in c for c in js_calls)
 
-    def test_pause_exception_still_pushes_onRealtimePaused(self):
+    def test_pause_exception_reports_error_without_false_paused_event(self):
         api = API()
         mock_rt = MagicMock(spec=["pause", "resume"])
         mock_rt.pause.side_effect = RuntimeError("pause failed")
@@ -266,9 +266,11 @@ class TestPauseResumeAPI:
         with patch.object(app_module, "_push", side_effect=js_calls.append):
             api.pause_realtime()
             _wait(0.3)
-        assert any("onRealtimePaused" in c for c in js_calls)
+        assert not any("onRealtimePaused" in c for c in js_calls)
+        assert any("onRealtimeError" in c and "pause failed" in c for c in js_calls)
+        assert api.get_recording_status()["state"] == "error"
 
-    def test_resume_exception_still_pushes_onRealtimeResumed(self):
+    def test_resume_exception_reports_error_without_false_resumed_event(self):
         api = API()
         mock_rt = MagicMock(spec=["pause", "resume"])
         mock_rt.resume.side_effect = RuntimeError("resume failed")
@@ -277,13 +279,54 @@ class TestPauseResumeAPI:
         with patch.object(app_module, "_push", side_effect=js_calls.append):
             api.resume_realtime()
             _wait(0.3)
-        assert any("onRealtimeResumed" in c for c in js_calls)
+        assert not any("onRealtimeResumed" in c for c in js_calls)
+        assert any("onRealtimeError" in c and "resume failed" in c for c in js_calls)
+        assert api.get_recording_status()["state"] == "error"
 
     def test_pause_returns_not_running_when_rt_has_no_pause_method(self):
         api = API()
         api._realtime = object()  # no pause/resume methods
         result = api.pause_realtime()
         assert result["status"] == "not_running"
+
+    def test_status_tracks_record_pause_resume_stop_lifecycle(self):
+        api = API()
+        with patch("src.realtime.RealtimeTranscriber") as MockRT, \
+             patch.object(app_module, "_push"):
+            api.start_realtime({"capture_mode": "mic"})
+            _wait(0.3)
+            running = api.get_recording_status()
+            assert running["state"] == "recording"
+            assert running["capture_mode"] == "mic"
+            assert running["session_id"]
+            assert running["started_at"]
+
+            api.pause_realtime()
+            _wait(0.3)
+            assert api.get_recording_status()["state"] == "paused"
+
+            api.resume_realtime()
+            _wait(0.3)
+            assert api.get_recording_status()["state"] == "recording"
+
+            api.stop_realtime()
+            _wait(0.3)
+            assert api.get_recording_status() == {
+                "state": "idle",
+                "session_id": None,
+                "capture_mode": None,
+                "started_at": None,
+                "error": None,
+            }
+
+    def test_shutdown_stops_backend_and_resets_status(self):
+        api = API()
+        backend = MagicMock()
+        api._realtime = backend
+        api._set_recording_status("recording", session_id="s", capture_mode="mic")
+        api.shutdown()
+        backend.stop.assert_called_once()
+        assert api.get_recording_status()["state"] == "idle"
 
 
 # ── Engine option passed through ──────────────────────────────────────────────
