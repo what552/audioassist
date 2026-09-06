@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Not started | Planned HTTP resource/agent APIs after an explicit lifecycle and security design gate |
 
-The current baseline is 776 automated tests, including 3 browser tests. It
+The current baseline is 783 automated tests, including 3 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -33,6 +33,15 @@ human/long/signed-app evidence is incomplete. The decision is therefore to
 keep `auto` unchanged and track the remaining evidence as QWEN-04. Real
 audio-device and permission behavior remains
 release-level manual validation rather than CI coverage.
+
+QWEN-04A added three synthetic voice-clone fixtures with exact source text. CPU
+and MLX completed Chinese, English, and 104-second code-switching audio; MLX was
+about 29% faster than CPU on the warm code-switching pass with equal 0.65% CER.
+PyTorch MPS was much faster on the two monolingual clips but repeatedly truncated
+the code-switching clip, with 79-103 seconds missing across repeated runs. Combined
+with the existing 5/5/10-minute evidence, neither accelerated backend is approved
+for automatic selection: MPS fails the short code-switching quality gate and MLX
+still fails the existing 10-minute cross-backend text/timestamp thresholds.
 
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the

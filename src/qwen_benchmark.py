@@ -27,6 +27,7 @@ import wave
 from typing import Any, Sequence
 
 from .asr_factory import create_qwen_engine
+from .language import canonical_language_code, canonical_transcript_language
 from .model_manager import ModelManager
 
 
@@ -135,8 +136,19 @@ def load_manifest(path: str) -> list[BenchmarkSample]:
 
 def _audio_duration(path: str) -> float:
     if Path(path).suffix.lower() == ".wav":
-        with wave.open(path, "rb") as audio:
-            return audio.getnframes() / audio.getframerate()
+        try:
+            with wave.open(path, "rb") as audio:
+                frames = audio.getnframes()
+                sample_rate = audio.getframerate()
+                declared_pcm_bytes = (
+                    frames * audio.getnchannels() * audio.getsampwidth()
+                )
+            # Streaming WAV writers commonly leave a 0xFFFFFFFF data length.
+            # Trust the header only when its declared PCM payload fits the file.
+            if declared_pcm_bytes <= os.path.getsize(path):
+                return frames / sample_rate
+        except (OSError, EOFError, wave.Error, ZeroDivisionError):
+            pass
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
         check=True,
@@ -279,14 +291,22 @@ def _result_payload(
         for word in result.words
     ]
     final_boundary = max((word["end"] for word in words), default=0.0)
+    timestamp_tail_gap = max(0.0, duration - final_boundary) if words else None
+    timestamp_indicates_truncation = (
+        timestamp_tail_gap is not None
+        and timestamp_tail_gap > max(5.0, duration * 0.20)
+    )
     return {
         "seconds": elapsed,
         "rtf": elapsed / duration if duration else None,
         "text": result.text,
         "language": result.language,
+        "canonical_language": canonical_transcript_language(
+            result.language, result.text
+        ),
         "words": words,
-        "possible_truncation": truncated,
-        "timestamp_tail_gap_seconds": max(0.0, duration - final_boundary) if words else None,
+        "possible_truncation": truncated or timestamp_indicates_truncation,
+        "timestamp_tail_gap_seconds": timestamp_tail_gap,
     }
 
 
@@ -333,7 +353,8 @@ def run_worker(
                         truncated=bool(getattr(engine, "last_truncated", False)),
                     )
                     pass_result["expected_language_agrees"] = (
-                        result.language == sample.expected_language
+                        pass_result["canonical_language"]
+                        == canonical_language_code(sample.expected_language)
                         if sample.expected_language is not None
                         else None
                     )
@@ -454,7 +475,12 @@ def compare_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             sample_comparisons.append(
                 {
                     "id": sample["id"],
-                    "language_agrees": candidate_pass["language"] == baseline_pass["language"],
+                    "language_agrees": candidate_pass.get(
+                        "canonical_language", candidate_pass["language"]
+                    )
+                    == baseline_pass.get(
+                        "canonical_language", baseline_pass["language"]
+                    ),
                     "text_vs_cpu_cer": cross_error["cer"],
                     "timestamp_matched_words": matched_words,
                     "timestamp_alignment_ratio": alignment_ratio,
@@ -466,6 +492,39 @@ def compare_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             )
         comparisons[backend] = sample_comparisons
     return comparisons
+
+
+def assess_backend_quality(report: dict[str, Any]) -> dict[str, Any]:
+    """Report absolute per-backend smoke failures independently of promotion."""
+    findings: dict[str, Any] = {}
+    for run in report.get("runs", []):
+        backend = run.get("backend", "unknown")
+        if not run.get("ok"):
+            findings[backend] = {
+                "status": "error",
+                "failures": [run.get("error", "backend run failed")],
+            }
+            continue
+
+        failures: list[str] = []
+        for cycle in run["result"].get("cycles", []):
+            for sample in cycle.get("samples", []):
+                sample_id = sample["id"]
+                if (
+                    sample.get("reference_kind") == "human"
+                    and (sample.get("metrics", {}).get("cer") or 0) > 0.05
+                ):
+                    failures.append(f"human-reference CER exceeds 5%: {sample_id}")
+                for item in sample.get("passes", []):
+                    if item.get("possible_truncation"):
+                        failures.append(f"possible truncation: {sample_id}")
+                    if item.get("expected_language_agrees") is False:
+                        failures.append(f"detected language differs from expected: {sample_id}")
+        findings[backend] = {
+            "status": "fail" if failures else "pass",
+            "failures": sorted(set(failures)),
+        }
+    return findings
 
 
 def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
@@ -529,6 +588,8 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
             for item in human
             if cpu_samples[item]["metrics"].get("wer") is not None
             and mlx_samples[item]["metrics"].get("wer") is not None
+            and "english" in cpu_samples[item].get("tags", [])
+            and "code-switching" not in cpu_samples[item].get("tags", [])
         ]
         if human_with_wer:
             cpu_wer = statistics.mean(
@@ -551,7 +612,8 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
             cpu_wer = cpu_samples[item]["metrics"].get("wer")
             mlx_wer = mlx_samples[item]["metrics"].get("wer")
             if (
-                cpu_wer is not None
+                item in human_with_wer
+                and cpu_wer is not None
                 and mlx_wer is not None
                 and mlx_wer - cpu_wer > 0.05
             ):
@@ -656,7 +718,8 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
             if item.get("expected_language_agrees") is False:
                 failures.append(f"detected language differs from expected: {sample['id']}")
 
-    for backend, result in successful.items():
+    for backend in ("pytorch-cpu", "mlx"):
+        result = successful.get(backend, {})
         for cycle in result.get("cycles", []):
             for sample in cycle.get("samples", []):
                 if any(item.get("possible_truncation") for item in sample.get("passes", [])):
@@ -780,6 +843,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "runs": runs,
         "comparisons_against_pytorch_cpu": compare_runs(runs),
     }
+    report["backend_quality"] = assess_backend_quality(report)
     report["mlx_promotion_gate"] = assess_mlx_gate(report)
     for run in runs:
         _redact(run, args.include_transcripts)

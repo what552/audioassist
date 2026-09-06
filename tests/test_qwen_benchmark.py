@@ -12,8 +12,11 @@ import pytest
 
 from src.qwen_benchmark import (
     BenchmarkSample,
+    _audio_duration,
     _redact,
+    _result_payload,
     _validated_duration,
+    assess_backend_quality,
     assess_mlx_gate,
     compare_runs,
     edit_distance,
@@ -148,6 +151,20 @@ def test_measured_duration_rejects_false_declaration_and_duration_tag(tmp_path):
         _validated_duration(tagged)
 
 
+def test_wav_with_unbounded_stream_header_uses_ffprobe_duration(tmp_path):
+    audio = tmp_path / "streaming.wav"
+    _wav(audio)
+    payload = bytearray(audio.read_bytes())
+    payload[40:44] = (0xFFFFFFFF).to_bytes(4, "little")
+    audio.write_bytes(payload)
+    ffprobe = SimpleNamespace(stdout="1.000000\n")
+
+    with patch("src.qwen_benchmark.subprocess.run", return_value=ffprobe) as run:
+        assert _audio_duration(str(audio)) == 1.0
+
+    assert run.call_args.args[0][0] == "ffprobe"
+
+
 def test_worker_rejects_mixed_realtime_and_offline_manifest(tmp_path):
     _wav(tmp_path / "realtime.wav")
     _wav(tmp_path / "offline.wav")
@@ -220,6 +237,69 @@ def test_edit_distance_and_language_aware_error_rates():
     assert rates["wer"] == 0
 
 
+def test_result_flags_large_timestamp_tail_as_possible_truncation():
+    result = SimpleNamespace(
+        text="only the beginning",
+        language="English",
+        words=[SimpleNamespace(word="only", start=0.0, end=2.0)],
+    )
+
+    payload = _result_payload(result, 100.0, 1.0, truncated=False)
+
+    assert payload["timestamp_tail_gap_seconds"] == 98.0
+    assert payload["possible_truncation"] is True
+
+
+def test_worker_compares_expected_language_at_product_boundary(tmp_path):
+    audio = tmp_path / "sample.wav"
+    _wav(audio, seconds=1)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {
+                        "id": "chinese",
+                        "path": "sample.wav",
+                        "expected_language": "zh",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    engine = SimpleNamespace(
+        load=lambda: None,
+        close=lambda: None,
+        transcribe=lambda _path: SimpleNamespace(
+            text="这是一段明确的中文转写内容",
+            language="English",
+            words=[],
+        ),
+        last_truncated=False,
+    )
+
+    with (
+        patch("src.qwen_benchmark.create_qwen_engine", return_value=engine),
+        patch("src.qwen_benchmark._rss_mb", return_value=100.0),
+        patch("src.qwen_benchmark._peak_rss_mb", return_value=200.0),
+        patch("src.qwen_benchmark._physical_memory_mb", return_value=1024.0),
+    ):
+        result = run_worker(
+            backend="pytorch-cpu",
+            manifest_path=str(manifest),
+            model_path="/model",
+            aligner_path="/aligner",
+            warm_runs=0,
+            lifecycle_cycles=1,
+        )
+
+    sample = result["cycles"][0]["samples"][0]
+    assert sample["passes"][0]["language"] == "English"
+    assert sample["passes"][0]["canonical_language"] == "zh"
+    assert sample["passes"][0]["expected_language_agrees"] is True
+
+
 def _run(backend: str, text: str, start: float) -> dict:
     sample = {
         "id": "sample",
@@ -248,6 +328,17 @@ def test_compare_runs_reports_text_language_and_timestamp_differences():
     assert comparison["text_vs_cpu_cer"] == 0.5
     assert comparison["timestamp_median_abs_seconds"] == pytest.approx(0.1)
     assert comparison["timestamp_alignment_ratio"] == 1.0
+
+
+def test_compare_runs_uses_canonical_language_when_available():
+    cpu = _run("pytorch-cpu", "你好", 0.0)
+    mlx = _run("mlx", "你好", 0.0)
+    cpu_pass = cpu["result"]["cycles"][0]["samples"][0]["passes"][0]
+    mlx_pass = mlx["result"]["cycles"][0]["samples"][0]["passes"][0]
+    cpu_pass.update({"language": "Chinese", "canonical_language": "zh"})
+    mlx_pass.update({"language": "zh", "canonical_language": "zh"})
+
+    assert compare_runs([cpu, mlx])["mlx"][0]["language_agrees"] is True
 
 
 def test_timestamp_comparison_aligns_matching_tokens_not_array_indexes():
@@ -402,6 +493,7 @@ def test_gate_detects_per_file_wer_regression_hidden_by_aggregate():
     cpu_first.update(
         {
             "id": "regressed",
+            "tags": ["english"],
             "reference_kind": "human",
             "metrics": {"cer": 0.0, "wer": 0.0},
         }
@@ -409,6 +501,7 @@ def test_gate_detects_per_file_wer_regression_hidden_by_aggregate():
     mlx_first.update(
         {
             "id": "regressed",
+            "tags": ["english"],
             "reference_kind": "human",
             "metrics": {"cer": 0.0, "wer": 0.1},
         }
@@ -438,6 +531,64 @@ def test_gate_detects_per_file_wer_regression_hidden_by_aggregate():
         "failures"
     ]
     assert "severe per-file WER regression: regressed" in gate["failures"]
+
+
+def test_gate_does_not_use_whitespace_wer_for_code_switching_text():
+    cpu = _run("pytorch-cpu", "你好 hello", 0.0)
+    mlx = _run("mlx", "你好hello", 0.0)
+    for run, wer in ((cpu, 0.0), (mlx, 1.0)):
+        sample = run["result"]["cycles"][0]["samples"][0]
+        sample.update(
+            {
+                "tags": ["english", "code-switching"],
+                "reference_kind": "human",
+                "metrics": {"cer": 0.0, "wer": wer},
+            }
+        )
+
+    gate = assess_mlx_gate(
+        {
+            "runs": [cpu, mlx],
+            "comparisons_against_pytorch_cpu": compare_runs([cpu, mlx]),
+            "warm_runs": 1,
+        }
+    )
+
+    assert not any("WER" in failure for failure in gate["failures"])
+
+
+def test_backend_quality_reports_candidate_truncation_and_severe_cer():
+    mps = _run("pytorch-mps", "short", 0.0)
+    sample = mps["result"]["cycles"][0]["samples"][0]
+    sample.update({"reference_kind": "human", "metrics": {"cer": 0.9, "wer": 1.0}})
+    sample["passes"][0].update(
+        {"possible_truncation": True, "expected_language_agrees": False}
+    )
+
+    quality = assess_backend_quality({"runs": [mps]})
+
+    assert quality["pytorch-mps"]["status"] == "fail"
+    assert any("possible truncation" in item for item in quality["pytorch-mps"]["failures"])
+    assert any("CER exceeds 5%" in item for item in quality["pytorch-mps"]["failures"])
+
+
+def test_mlx_gate_does_not_attribute_mps_truncation_to_mlx():
+    cpu = _run("pytorch-cpu", "hello", 0.0)
+    mps = _run("pytorch-mps", "hello", 0.0)
+    mlx = _run("mlx", "hello", 0.0)
+    mps["result"]["cycles"][0]["samples"][0]["passes"][0][
+        "possible_truncation"
+    ] = True
+
+    gate = assess_mlx_gate(
+        {
+            "runs": [cpu, mps, mlx],
+            "comparisons_against_pytorch_cpu": compare_runs([cpu, mlx]),
+            "warm_runs": 0,
+        }
+    )
+
+    assert not any("pytorch-mps" in failure for failure in gate["failures"])
 
 
 def test_gate_fails_low_alignment_language_and_severe_text_difference():
