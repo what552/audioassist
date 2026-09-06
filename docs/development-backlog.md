@@ -24,7 +24,7 @@ Priority meanings:
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
-| 8 | QWEN-04A | P1 | Implemented: validating | Shared short chunks, serial budgets, MPS float32 and instance mask/termination shims; 996 tests and real short-suite pass; long-suite/review pending |
+| 8 | QWEN-04A | P1 | Runtime fixes complete; corpus expansion open | Shared short chunks, serial budgets, MPS float32 and instance shims; 1006 tests, short/10m/realtime smoke and independent review pass; broader human-reference corpus remains |
 | 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
@@ -45,16 +45,17 @@ Priority meanings:
 The 2026-09-07 [investigation](qwen-backend-investigation.md) supersedes any
 interpretation that MPS is intrinsically unusable or that 34.8% distance from
 CPU means a 34.8% MLX transcription error rate. Source runtime corrections are
-under validation; automatic backend policy and the installed app remain unchanged.
+implemented and reviewed; automatic backend policy and the installed app remain unchanged.
 
-- Turn the validated MPS audio-encoder precision workaround into a scoped,
-  tested adapter change; bound chunk size/batch size and measure memory before
-  considering full float32 as a general solution.
-- Correct qwen-asr's missing non-FA2 audio window mask for both ASR and alignment
-  without editing installed dependencies or using a process-global patch.
-- Make generation budgets and cap/early-EOS diagnostics explicit. A final
-  timestamp near the end cannot prove every intermediate chunk was complete.
-- Re-run CPU/MPS/MLX on identical audio chunks and verified references; treat
+- Done: scoped MPS float32 ASR/alignment, at most 30-second chunks, serial
+  inference and 1024-token budgets. Ten-minute peak process RSS: CPU 13.49 GiB,
+  MPS 5.85 GiB, MLX 4.62 GiB (not total unified-memory usage).
+- Done: removable instance-only non-FA2 audio window mask hooks for both ASR
+  and alignment; no installed dependency or global patch.
+- Done: generation termination diagnostics and rejection of capped/non-EOS,
+  out-of-bounds or missing requested alignment; packaging metadata validation.
+- Done: matched short/10-minute comparisons and two-cycle realtime smoke.
+  Still open: broader human-reference corpus and manual listening; treat
   cross-backend distance as disagreement requiring review, not ground truth.
 - Keep QWEN-04B and signed-app/long-form release gates separate. Do not promote
   `auto`, rebuild the DMG, or declare all quality gates passed from this

@@ -8,11 +8,11 @@ Do not promote MLX or PyTorch MPS to the automatic Apple Silicon backend in
 this release. Keep `auto` on the official PyTorch CPU policy and retain both
 accelerated paths as explicit developer overrides.
 
-This is a hold, not a rejection of MLX. MLX passed the measured performance,
-short-sample timestamp, and realtime lifecycle checks, but one 10-minute sample
-failed the cross-backend text/timestamp thresholds and the promotion-level
-corpus and signed-app evidence are incomplete. The remaining evidence is
-tracked as QWEN-04 rather than silently disappearing.
+This is a hold, not a rejection of MLX. The corrected source adapters now pass
+the measured short/10-minute cross-backend quality checks. The broader
+human-reference corpus, promotion-level lifecycle/performance runs on this
+corrected configuration, and packaged release evidence remain incomplete.
+The remaining evidence is tracked as QWEN-04 rather than silently disappearing.
 
 **Investigation update (2026-09-07):** the historical results below used
 unequal chunking/generation conditions and the installed PyTorch dependency's
@@ -23,8 +23,17 @@ old CPU comparison as a ground-truth accuracy ranking; QWEN-04A is reopened.
 The completed 10-minute matched-chunk experiment reduces MLX/CPU text distance
 to **0.166%**, with **99.83%** timestamp token agreement and **0 ms** matched
 boundary p95. Corrected CPU and MPS outputs are identical. These are diagnostic
-configurations, not changes already applied to the application or a default
-promotion decision.
+configurations. The corrections have now been implemented and independently
+reviewed in the source adapters; the formal 10-minute runner reproduces those
+quality results. This is not an installed-app update or default promotion.
+
+The corrected source-tree 10-minute cold pass took CPU 237.47 s, MPS 162.05 s,
+and MLX 182.16 s, each using the same 31 chunks without a generation cap hit.
+Peak process RSS was 13.49 / 5.85 / 4.62 GiB respectively; it is not total GPU
+or unified-memory consumption. These single cold passes are not a production
+performance ranking. See the investigation's implementation acceptance record
+for current tests and remaining gates. The sections below retain historical
+results and must not be read as current failure status.
 
 ## QWEN-04A human-reference follow-up
 

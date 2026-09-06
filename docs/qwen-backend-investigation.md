@@ -9,10 +9,59 @@ in the source adapters on the QWEN-04A branch. Shared decoding/chunking, serial
 generation observers, explicit cap/non-EOS/timestamp failures, and redacted
 per-chunk benchmark diagnostics are covered by tests. Short-suite real inference
 passes on CPU/MPS/MLX with equal normalized text and timestamps. Full regression
-on the host: **996 passed** (53 added tests); the execution sandbox cannot run
-browser/local-socket tests, so the host run is the acceptance result. Full
-10-minute adapter verification and independent commit review are pending below.
+on the host: **1006 passed** (63 added tests); the execution sandbox cannot run
+browser/local-socket tests, so the host run is the acceptance result. Formal
+10-minute adapter verification, two-cycle realtime smoke and independent
+review passed. Broader corpus and promotion gates remain open.
 No `.app`/DMG has been built and version 2.0.1 is unchanged.
+
+## Implementation acceptance (2026-09-07)
+
+Implementation commits: `96a77c7`, `38c2183`. Independent exact-commit review
+found and fixed a missing-alignment edge case: a non-empty chunk without word
+timestamps could otherwise lose its text downstream when another chunk had
+timestamps. Both adapters now reject it when alignment was requested; silent
+chunks and no-timestamp inference remain valid. The packaged Qwen metadata is
+also checked for uniqueness, name and pinned version before signature checks.
+
+Commands and results:
+
+```sh
+.venv/bin/python -m pytest tests/test_qwen_audio.py tests/test_qwen_compat.py tests/test_qwen_chunk_adapters.py tests/test_asr_factory.py tests/test_asr_qwen_mlx.py tests/test_qwen_benchmark.py tests/test_release_packaging.py -q
+# 130 passed (also independently rerun by reviewer)
+.venv/bin/python -m pytest -q
+# 1006 passed, 956 dependency deprecation warnings, 48.44 s (host environment)
+.venv/bin/python -m src.qwen_benchmark run --manifest /private/tmp/audioassist-qwen04a/manifest-short.json --output /private/tmp/qwen-fixed-short-final-report.json --warm-runs 0 --timeout 600
+.venv/bin/python -m src.qwen_benchmark run --manifest /private/tmp/audioassist-qwen03-corpus/manifest-10m.json --output /private/tmp/qwen-fixed-10m-report.json --warm-runs 0 --timeout 900
+.venv/bin/python -m src.qwen_benchmark run --manifest /private/tmp/audioassist-qwen03-corpus/manifest-realtime.json --output /private/tmp/qwen-fixed-realtime-report.json --warm-runs 1 --lifecycle-cycles 2 --timeout 600
+```
+
+The 600-second source-adapter run used 31 identical chunks on each backend.
+CPU/MPS normalized text and timestamps were equal; MLX text distance was
+0.165782% with 2997/3002 timestamp token agreement (99.8334%), median/p95
+matched-boundary difference 0 ms. All backend quality checks passed, no chunks
+hit the generation cap, and every returned timestamp stayed within its chunk.
+This run preceded the final missing-alignment guard; short and realtime
+verification were repeated on the reviewed code. No model or inference setting
+changed in that guard fix.
+
+| Backend | 10-minute cold inference | Peak process RSS | Words |
+| --- | ---: | ---: | ---: |
+| CPU | 237.47 s | 13.49 GiB | 3000 |
+| MPS | 162.05 s | 5.85 GiB | 3000 |
+| MLX | 182.16 s | 4.62 GiB | 3002 |
+
+RSS is not total GPU/unified-memory usage, and single cold passes are not a
+general performance ranking. The realtime smoke performed two load/close
+cycles with a cold and a warm five-second utterance in each: 12/12 successful
+transcriptions, stable hashes within each backend, no truncations. Warm
+latencies were CPU 2.33–2.37 s, MPS 1.13 s, MLX 1.90 s. This is not the
+50-cycle/100-warm-utterance promotion gate. Reports are redacted and retained
+under ignored `build/qwen-validation-20260907/`; no session data was modified.
+
+Remaining work: broader real human-reference listening/corpus review (including
+Cantonese, noise and longer meetings), full lifecycle/performance gates and
+packaged-app/offline/checkpoint release verification before any `auto` change.
 
 ## Scope and environment
 

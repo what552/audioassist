@@ -9,7 +9,12 @@ Tracked implementation batches: `QWEN-01` through `QWEN-03` in
 before changing the inference backend so dependency and package measurements
 come from one reproducible environment.
 
-## Executive decision
+## Proposed target architecture (not current automatic policy)
+
+Current `auto` remains PyTorch CPU on Apple Silicon. The table below is the
+original target proposal, conditional on promotion gates, not the shipped
+selection policy. The 2026-09-07 adapter fixes pass short/10-minute comparison
+and realtime smoke; broader human-reference and release gates remain open.
 
 Use platform-specific Qwen3-ASR backends instead of choosing one backend for
 every operating system:
