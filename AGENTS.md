@@ -53,6 +53,15 @@ permanent builder/researcher/reviewer worktree workflow.
   and update the packaged baseline in this file when that release is produced.
 - Do not increment the version merely for source or UI development runs that do not
   generate an installable/testable `.app` or DMG.
+- Treat privacy-permission continuity as a release gate. An ad-hoc local candidate may
+  reset and re-authorize Microphone and Screen & System Audio Recording because each
+  changed build has a new code identity, but never present that as a production upgrade
+  workflow.
+- A distributable signed upgrade must be installed over the previous release and retain
+  its existing recording permissions without a TCC reset. Test fresh-install prompting
+  separately after a reset. If an upgrade requires users to reset or toggle privacy
+  permissions again, block the release and fix its signing/designated-requirement
+  continuity.
 
 ## R03 CLI
 

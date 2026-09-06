@@ -38,6 +38,7 @@ Priority meanings:
 | 19 | UI-SESSION-REFRESH-01 | P2 | Ready | Keep renamed/interrupted/resumed session labels and visibility current without an app restart |
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Ready | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Implemented: packaged gate pending | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup |
+| 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
 
 ### REALTIME-DIAG-01 — Intermittent packaged microphone startup
 
@@ -106,6 +107,21 @@ restart, stop, and non-empty WAV checks.
   `NSAudioCaptureUsageDescription`, in addition to the microphone description.
 - Preserve runtime Mix degradation for device/converter failure only after both
   required permissions have passed preflight.
+
+### REL-TCC-01 — Recording permission continuity across upgrades
+
+- Ad-hoc candidates must be labeled local-only. Reset and re-authorize their Microphone
+  and Screen & System Audio Recording decisions before fresh-build capture testing, since
+  a rebuilt ad-hoc binary has a different code identity.
+- A distributable release must use a stable signing identity and pass an upgrade test from
+  the previous released DMG without resetting TCC. Mic, System, and Mix must all keep
+  working under the existing grants.
+- Run the clean-install permission flow independently after an intentional reset or in a
+  clean macOS account. Do not use that reset flow as evidence of upgrade compatibility.
+- Capture both releases' signing authority, TeamIdentifier, bundle ID, designated
+  requirement, permission state, and successful non-empty recordings in release evidence.
+- If an ordinary upgrade needs `tccutil`, permission-row deletion, or repeated Settings
+  toggles, it is release-blocking rather than a user workaround.
 
 R03-a, the synchronous local CLI and shared service layer, is complete. R03-b
 is no longer ahead of Mac inference work: the CLI already supplies local agent

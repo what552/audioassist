@@ -79,6 +79,27 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
   device/converter failure after both permissions pass degrades Mix to system-only.
 - Confirm the final WAV and diarized transcript stay aligned.
 
+## Privacy permission installation and upgrade gates
+
+- Before testing an ad-hoc local candidate, quit every AudioAssist process, ensure the
+  intended packaged app is the only copy being exercised, reset AudioAssist's Microphone
+  and Screen & System Audio Recording decisions, and authorize the candidate again. This
+  validates a fresh local build only; it is not evidence that upgrades preserve access.
+- Test a distributable upgrade without resetting TCC: install the previous released app,
+  grant both recording permissions, successfully record in Mic/System/Mix, install the
+  new signed DMG over it, and confirm all three modes still record without another prompt,
+  Settings toggle, or permission reset.
+- Test first installation independently on a clean macOS account or after an intentional
+  TCC reset. Confirm Mic asks only for Microphone, System asks only for Screen & System
+  Audio Recording, and Mix requests whichever of the two is still missing.
+- Record the old and new signing authorities, TeamIdentifier, bundle identifier, and
+  designated requirements in the release evidence. CDHash may change across a properly
+  signed upgrade, but the new app must satisfy the previously recorded designated
+  requirement.
+- Block distribution if an upgrade loses recording permission or if recovery instructions
+  would require ordinary users to run `tccutil`, remove privacy rows, or repeatedly toggle
+  permissions in System Settings.
+
 ## Session outputs
 
 - Rename and delete sessions, then restart and verify persistence.
