@@ -1404,26 +1404,29 @@ class API:
 
     def delete_session(self, job_id: str) -> bool:
         """Delete a transcript session and all associated files."""
-        # F6: new layout — rmtree the session directory
-        s_dir = _session_dir(job_id)
-        if os.path.isdir(s_dir):
-            shutil.rmtree(s_dir)
-            return True
-        # Legacy: per-file deletion
-        candidates = [
-            os.path.join(OUTPUT_DIR, f"{job_id}.json"),
-            os.path.join(OUTPUT_DIR, f"{job_id}.wav"),
-            os.path.join(OUTPUT_DIR, f"{job_id}.md"),
-            os.path.join(OUTPUT_DIR, f"{job_id}_summary.json"),
-            os.path.join(OUTPUT_DIR, f"{job_id}_meta.json"),
-            os.path.join(OUTPUT_DIR, f"{job_id}_agent_chat.json"),
-        ] + [os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}") for ext in _AUDIO_EXTS]
-        deleted = False
-        for p in candidates:
-            if os.path.exists(p):
-                os.remove(p)
-                deleted = True
-        return deleted
+        lock = _get_transcript_lock(job_id)
+        with lock:
+            # Resolve targets only after any active transcribe/refine/save/rename
+            # finishes so deletion cannot race a transactional commit.
+            s_dir = _session_dir(job_id)
+            if os.path.isdir(s_dir):
+                shutil.rmtree(s_dir)
+                return True
+            # Legacy: per-file deletion
+            candidates = [
+                os.path.join(OUTPUT_DIR, f"{job_id}.json"),
+                os.path.join(OUTPUT_DIR, f"{job_id}.wav"),
+                os.path.join(OUTPUT_DIR, f"{job_id}.md"),
+                os.path.join(OUTPUT_DIR, f"{job_id}_summary.json"),
+                os.path.join(OUTPUT_DIR, f"{job_id}_meta.json"),
+                os.path.join(OUTPUT_DIR, f"{job_id}_agent_chat.json"),
+            ] + [os.path.join(OUTPUT_DIR, f"{job_id}_audio{ext}") for ext in _AUDIO_EXTS]
+            deleted = False
+            for p in candidates:
+                if os.path.exists(p):
+                    os.remove(p)
+                    deleted = True
+            return deleted
 
     # ── Model management ───────────────────────────────────────────────────────
 

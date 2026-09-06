@@ -5,8 +5,10 @@ import gc
 import threading
 
 import pytest
+from unittest.mock import patch
 
 import app as app_module
+from app import API
 
 
 @pytest.fixture(autouse=True)
@@ -62,3 +64,31 @@ def test_waiter_keeps_shared_lock_alive_until_contention_finishes() -> None:
     del owner_lock
     gc.collect()
     assert "contended-job" not in app_module._transcript_locks
+
+
+def test_delete_waits_for_active_session_mutation(tmp_path) -> None:
+    job_id = "delete-contended-job"
+    session_dir = tmp_path / "meetings" / job_id
+    session_dir.mkdir(parents=True)
+    transcript = session_dir / "transcript.json"
+    transcript.write_text("{}", encoding="utf-8")
+    owner_lock = app_module._get_transcript_lock(job_id)
+    owner_lock.acquire()
+    delete_finished = threading.Event()
+    result = []
+
+    def delete_session() -> None:
+        result.append(API().delete_session(job_id))
+        delete_finished.set()
+
+    with patch.object(app_module, "OUTPUT_DIR", str(tmp_path)):
+        worker = threading.Thread(target=delete_session)
+        worker.start()
+        assert not delete_finished.wait(0.05)
+        assert transcript.exists()
+        owner_lock.release()
+        assert delete_finished.wait(1)
+        worker.join(timeout=1)
+
+    assert result == [True]
+    assert not session_dir.exists()
