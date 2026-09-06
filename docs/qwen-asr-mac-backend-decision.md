@@ -1,6 +1,6 @@
 # Qwen3-ASR on macOS: PyTorch MPS vs MLX
 
-Status: QWEN-01 backend seam complete; MLX not yet approved as the production default
+Status: QWEN-02 MLX adapter complete; MLX not yet approved as the production default
 Research date: 2026-09-05; upstream rechecked 2026-09-06  
 Scope: AudioAssist Qwen3-ASR inference on Apple Silicon macOS
 
@@ -441,6 +441,19 @@ the first failure only after later lifecycle cleanup has run.
 - Establish CPU and MPS benchmark baselines.
 
 ### Phase 2: MLX full-precision adapter
+
+Completed in QWEN-02 with `mlx-qwen3-asr[aligner]` pinned to 0.3.5 on Apple
+Silicon. The adapter consumes the existing application-managed official 1.7B
+and Forced Aligner directories directly, maps native result segments into the
+existing transcript types, and explicitly clears dependency holders and Metal
+cache on close. `AUDIOASSIST_QWEN_BACKEND=mlx` is available for diagnosis and
+benchmarking; `auto` deliberately remains on the QWEN-01 PyTorch policy.
+
+The source-tree forced-offline 30-second smoke completed successfully. A
+PyInstaller build contains the MLX adapter, distribution metadata, mel filters,
+and Korean aligner dictionary without a second physical copy of the MLX binary
+tree; strict ad-hoc signature verification passes. Performance, long-audio,
+realtime stability, and signed-app comparison remain QWEN-03/REL-01 gates.
 
 - Add and pin one focused MLX Qwen dependency.
 - Reuse existing local full-precision weights if validation succeeds.

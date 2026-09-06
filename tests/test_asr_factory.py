@@ -41,6 +41,24 @@ def test_auto_preserves_cuda_then_cpu_selection():
     assert select_qwen_backend(torch_module=_torch(cuda=False)).name == "pytorch-cpu"
 
 
+def test_mlx_override_is_apple_silicon_only_and_does_not_touch_torch():
+    selected = select_qwen_backend(
+        "mlx",
+        torch_module=object(),
+        sys_platform="darwin",
+        machine="arm64",
+    )
+    assert selected == QwenBackendConfig("mlx", "metal", "float16")
+
+    with pytest.raises(RuntimeError, match="Apple Silicon"):
+        select_qwen_backend(
+            "mlx",
+            torch_module=object(),
+            sys_platform="linux",
+            machine="arm64",
+        )
+
+
 def test_mps_is_explicit_diagnostic_override():
     selected = select_qwen_backend(
         "pytorch-mps",
@@ -112,6 +130,34 @@ def test_factory_lazy_constructs_selected_adapter(tmp_path):
         model_path=str(model),
         aligner_path=str(aligner),
         backend=QwenBackendConfig("pytorch-cpu", "cpu", "float32"),
+    )
+
+
+def test_factory_lazy_constructs_mlx_adapter(tmp_path):
+    model = tmp_path / "qwen"
+    aligner = tmp_path / "aligner"
+    model.mkdir()
+    aligner.mkdir()
+    adapter = MagicMock()
+
+    with patch(
+        "src.asr_factory.select_qwen_backend",
+        return_value=QwenBackendConfig("mlx", "metal", "float16"),
+    ), patch(
+        "src.asr_qwen_mlx.MLXQwenASREngine", return_value=adapter
+    ) as adapter_class:
+        result = create_qwen_engine(
+            model_path=str(model),
+            aligner_path=str(aligner),
+            with_timestamps=True,
+            backend_override="mlx",
+        )
+
+    assert result is adapter
+    adapter_class.assert_called_once_with(
+        with_timestamps=True,
+        model_path=str(model),
+        aligner_path=str(aligner),
     )
 
 

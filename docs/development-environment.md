@@ -61,18 +61,20 @@ audioassist --json sessions list
 
 ## Qwen backend diagnostics
 
-The public engine name remains `qwen`. QWEN-01 keeps automatic selection on
-the official PyTorch CUDA/CPU paths. On Apple Silicon, developers may exercise
-the unpromoted MPS path explicitly:
+The public engine name remains `qwen`. Automatic selection stays on the
+official PyTorch CUDA/CPU paths until the QWEN-03 promotion gate. On Apple
+Silicon, developers may exercise either candidate explicitly:
 
 ```bash
 AUDIOASSIST_QWEN_BACKEND=pytorch-mps .venv/bin/audioassist --json transcribe /path/to/audio.wav
+AUDIOASSIST_QWEN_BACKEND=mlx .venv/bin/audioassist --json transcribe /path/to/audio.wav
 ```
 
-Supported diagnostic values are `auto`, `pytorch-cpu`, `pytorch-cuda`, and
-`pytorch-mps`. An unavailable explicit device is an error; a job never silently
-switches backend after it starts. MLX selection is introduced separately by
-QWEN-02 and is not implied by this override.
+Supported diagnostic values are `auto`, `mlx`, `pytorch-cpu`, `pytorch-cuda`,
+and `pytorch-mps`. `mlx` requires Apple Silicon macOS. An unavailable explicit
+device is an error; a job never silently switches backend after it starts.
+Both MLX and MPS remain developer overrides until benchmark evidence supports a
+default change.
 
 ## Existing global command cleanup
 

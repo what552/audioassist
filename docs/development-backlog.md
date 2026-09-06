@@ -20,8 +20,8 @@ Priority meanings:
 | 1 | RUNTIME-01 | P0 | Complete | Enforce local-model-only loading in both realtime capture implementations |
 | 2 | ENV-01 | P1 | Complete | Unify development, CLI, test, and package builds on the repository `.venv` |
 | 3 | QWEN-01 | P1 | Complete | Add the internal Qwen backend protocol/factory and deterministic model cleanup |
-| 4 | QWEN-02 | P1 | Ready | Implement and package the full-precision MLX Qwen adapter |
-| 5 | QWEN-03 | P1 | Depends on QWEN-02 | Benchmark CPU, diagnostic MPS, and MLX; decide whether MLX becomes the Mac default |
+| 4 | QWEN-02 | P1 | Complete | Implement and package the full-precision MLX Qwen adapter |
+| 5 | QWEN-03 | P1 | Ready | Benchmark CPU, diagnostic MPS, and MLX; decide whether MLX becomes the Mac default |
 | 6 | REL-01 | P1 | Depends on ENV-01/QWEN-03 | Produce and verify a reproducible signed macOS release candidate |
 | 7 | R03-B1 | P2 | Needs design gate | Specify the HTTP process lifecycle, locking, recovery, cancellation, and local security boundary |
 | 8 | R03-B2 | P2 | Depends on R03-B1 | Implement HTTP recording control and the separate MCP adapter |

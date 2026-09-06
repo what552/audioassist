@@ -20,6 +20,10 @@ def test_pyproject_is_the_static_dependency_source():
     assert "qwen-asr==0.0.6" in project["dependencies"]
     assert "torch==2.10.0" in project["dependencies"]
     assert "pyannote.audio==4.0.4" in project["dependencies"]
+    assert any(
+        requirement.startswith("mlx-qwen3-asr[aligner]==0.3.5")
+        for requirement in project["optional-dependencies"]["mac"]
+    )
     assert set(project["optional-dependencies"]) == {"mac", "other", "dev", "build"}
     assert not (ROOT / "requirements.txt").exists()
 

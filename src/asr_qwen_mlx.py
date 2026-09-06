@@ -1,0 +1,149 @@
+"""MLX Qwen3-ASR adapter for Apple Silicon.
+
+This module is imported only when the internal ``mlx`` Qwen backend is
+explicitly selected. Model directories are validated by the application
+factory before construction; the adapter never supplies repository IDs.
+"""
+from __future__ import annotations
+
+import gc
+import logging
+
+from .types import TranscriptResult, WordSegment
+
+logger = logging.getLogger(__name__)
+
+
+class MLXQwenASREngine:
+    """Full-precision MLX adapter backed by mlx-qwen3-asr 0.3.5."""
+
+    backend_name = "mlx"
+
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        aligner_path: str | None,
+        with_timestamps: bool,
+    ) -> None:
+        if not model_path:
+            raise ValueError("MLXQwenASREngine requires an explicit local model_path")
+        if with_timestamps and not aligner_path:
+            raise ValueError(
+                "MLXQwenASREngine timestamps require an explicit aligner_path"
+            )
+        self.model_path = model_path
+        self.aligner_path = aligner_path
+        self.with_timestamps = with_timestamps
+        self._session = None
+        self._aligner = None
+        self._mx = None
+
+    def load(self) -> None:
+        if self._session is not None:
+            return
+
+        import mlx.core as mx
+        from mlx_qwen3_asr import ForcedAligner, Session
+
+        logger.info("Loading Qwen backend mlx from %s", self.model_path)
+        self._mx = mx
+        try:
+            self._session = Session(model=self.model_path, dtype=mx.float16)
+            if self.with_timestamps:
+                self._aligner = ForcedAligner(
+                    self.aligner_path,
+                    dtype=mx.float16,
+                    backend="mlx",
+                )
+        except Exception:
+            self.close()
+            raise
+        logger.info("MLX Qwen backend loaded")
+
+    def transcribe(self, audio_path: str) -> TranscriptResult:
+        if self._session is None:
+            self.load()
+
+        result = self._session.transcribe(
+            audio_path,
+            return_timestamps=self.with_timestamps,
+            forced_aligner=self._aligner if self.with_timestamps else None,
+        )
+        if getattr(result, "truncated", False):
+            logger.warning("MLX Qwen transcription was truncated: %s", audio_path)
+
+        words = [
+            WordSegment(
+                word=str(segment["text"]),
+                start=float(segment["start"]),
+                end=float(segment["end"]),
+            )
+            for segment in (getattr(result, "segments", None) or [])
+        ]
+        return TranscriptResult(
+            text=str(result.text),
+            language=str(result.language or ""),
+            words=words,
+        )
+
+    def close(self) -> None:
+        """Release session, aligner holders, and MLX allocations.
+
+        Version 0.3.5 has no public close API and its forced aligner uses
+        private process-local holders. The dependency is pinned so these
+        explicit cleanup calls are reviewed and covered by tests.
+        """
+        session = self._session
+        aligner = self._aligner
+        mx = self._mx
+        self._session = None
+        self._aligner = None
+        self._mx = None
+
+        if session is not None:
+            for attribute in ("model", "tokenizer", "config"):
+                if hasattr(session, attribute):
+                    try:
+                        setattr(session, attribute, None)
+                    except Exception:
+                        pass
+
+        if aligner is not None and hasattr(aligner, "_backend"):
+            backend = getattr(aligner, "_backend", None)
+            if backend is not None:
+                for attribute in ("model", "tokenizer", "config"):
+                    if hasattr(backend, attribute):
+                        try:
+                            setattr(backend, attribute, None)
+                        except Exception:
+                            pass
+            try:
+                aligner._backend = None
+            except Exception:
+                pass
+
+        try:
+            from mlx_qwen3_asr.load_models import _ModelHolder
+            from mlx_qwen3_asr.tokenizer import _TokenizerHolder
+
+            _ModelHolder.clear()
+            _TokenizerHolder.clear()
+        except Exception:
+            logger.debug("MLX Qwen holder cleanup failed", exc_info=True)
+
+        del session, aligner
+        gc.collect()
+
+        if mx is not None:
+            try:
+                clear_cache = getattr(mx, "clear_cache", None)
+                if callable(clear_cache):
+                    clear_cache()
+                else:
+                    metal = getattr(mx, "metal", None)
+                    metal_clear_cache = getattr(metal, "clear_cache", None)
+                    if callable(metal_clear_cache):
+                        metal_clear_cache()
+            except Exception:
+                logger.debug("MLX cache cleanup failed", exc_info=True)

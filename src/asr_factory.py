@@ -18,6 +18,7 @@ from .types import TranscriptResult
 QWEN_BACKEND_ENV = "AUDIOASSIST_QWEN_BACKEND"
 _VALID_OVERRIDES = {
     "auto",
+    "mlx",
     "pytorch-cpu",
     "pytorch-cuda",
     "pytorch-mps",
@@ -51,10 +52,10 @@ def select_qwen_backend(
     sys_platform: str | None = None,
     machine: str | None = None,
 ) -> QwenBackendConfig:
-    """Select a supported PyTorch backend without importing Qwen itself.
+    """Select a supported Qwen backend without importing an adapter itself.
 
-    QWEN-01 intentionally keeps the existing CUDA/CPU automatic behavior.
-    ``pytorch-mps`` is a diagnostic-only explicit override until QWEN-03.
+    Automatic selection intentionally keeps the existing CUDA/CPU behavior.
+    ``mlx`` and ``pytorch-mps`` remain explicit overrides until QWEN-03.
     """
     choice = (override or os.getenv(QWEN_BACKEND_ENV, "auto")).strip().lower()
     if choice not in _VALID_OVERRIDES:
@@ -62,6 +63,13 @@ def select_qwen_backend(
         raise ValueError(
             f"Invalid {QWEN_BACKEND_ENV} value {choice!r}; expected one of: {valid}"
         )
+
+    if choice == "mlx":
+        current_platform = sys_platform or sys.platform
+        current_machine = machine or platform.machine()
+        if current_platform != "darwin" or current_machine != "arm64":
+            raise RuntimeError("Qwen MLX backend requires Apple Silicon macOS")
+        return QwenBackendConfig("mlx", "metal", "float16")
 
     if torch_module is None:
         import torch as torch_module
@@ -109,6 +117,15 @@ def create_qwen_engine(
         )
 
     config = select_qwen_backend(backend_override)
+
+    if config.name == "mlx":
+        from .asr_qwen_mlx import MLXQwenASREngine
+
+        return MLXQwenASREngine(
+            with_timestamps=with_timestamps,
+            model_path=model_path,
+            aligner_path=aligner_path,
+        )
 
     # Lazy import keeps backend-specific modules out of non-Qwen startup paths.
     from .asr import ASREngine

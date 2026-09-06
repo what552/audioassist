@@ -11,7 +11,7 @@ Outputs:
 
 import os
 import sysconfig
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 block_cipher = None
 
@@ -79,6 +79,11 @@ a = Analysis(
         # qwen_asr loads inference/assets/korean_dict_jieba.dict at runtime
         # via __file__-relative paths.
         (os.path.join(SITE, "qwen_asr"), "qwen_asr"),
+
+        # mlx-qwen3-asr loads mel filters and the Korean aligner dictionary via
+        # package-relative paths. Keep one shared mlx framework tree above.
+        *collect_data_files("mlx_qwen3_asr"),
+        *copy_metadata("mlx-qwen3-asr"),
 
     ],
     hiddenimports=[
