@@ -12,9 +12,9 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R02-a to R02-b5 | Complete | Three-column UI, session lifecycle, model setup and management, Summary Agent, Obsidian sync, checkpoint/resume, batch queue, re-transcription |
 | R02-b6 | Complete | macOS microphone/system/mix capture, ScreenCaptureKit helper, manual high-accuracy refinement, DMG packaging |
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
-| R03-b | Design approved | Bounded local HTTP resources/recording control and separate MCP adapter; implementation remains R03-B2 |
+| R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current baseline is 820 automated tests, including 8 browser tests. It
+The current baseline is 858 automated tests, including 8 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -73,6 +73,15 @@ transcript still receives a conservative terminal when the whole utterance is lo
 enough. Script/language fixtures cover English, Chinese, Japanese, mixed Chinese-English,
 Russian, Arabic, and Korean, and the transformation never changes lexical tokens.
 
+R03-B2 implements the approved bounded local-service design. The visible desktop app
+owns an authenticated loopback server and a queryable recording state machine; its close
+path stops capture, releases the server, and removes instance-owned discovery. The
+foreground `audioassist serve --read-only` command exposes only shared-service session
+reads and handles SIGINT/SIGTERM cleanup. The separate `audioassist-mcp` stdio adapter
+offers three durable session reads plus five live-recording tools; reads work with the
+app closed, while recording calls validate a live authenticated desktop instance. There
+is still no daemon, remote listener, background inference queue, or automatic app launch.
+
 REL-01 now derives the app and versioned DMG version from `pyproject.toml`,
 builds from the locked repository environment, signs nested code before the
 outer app, creates the DMG without Finder automation, and emits a JSON
@@ -111,11 +120,9 @@ The c02 gate verified the 512-sample mix-buffer drain behavior, Screen Recording
 Use [the authoritative development backlog](development-backlog.md). The realtime
 local-model-only gate, repository environment, Qwen backend lifecycle, explicit
 full-precision MLX adapter, conservative benchmark decision, and reproducible
-release implementation are complete. QWEN-04 retains the deferred promotion
+release implementation and bounded R03 HTTP/MCP adapters are complete. QWEN-04 retains the deferred promotion
 matrix, and the distribution release gate is recorded in
-`docs/release-candidate-results.md`. HTTP/MCP work remains a separate milestone
-and does not imply durable background work. R03-B1 passed its lifecycle/security gate
-with foreground read-only and visible-desktop server modes, a loopback bearer-token
-boundary, OS-held single-instance locking, explicit recording transitions, and no
-daemon or background inference queue. With AGENT-01 paused by the owner, R03-B2 is now
-next; its contract is `docs/http-mcp-contract.md`.
+`docs/release-candidate-results.md`. R03-B1/B2 retain the foreground read-only and
+visible-desktop lifecycle boundary and do not imply durable background work. With
+AGENT-01 paused by the owner, no item from the owner's ordered 1-3/5-7 batch remains
+eligible to implement: QWEN-04B is correctly held by its measured quality gate.

@@ -273,6 +273,53 @@ def test_sessions_show_success_shape(tmp_path, capsys):
     assert payload["data"]["state"]["status"] == "completed"
 
 
+def test_serve_read_only_emits_startup_and_stops(tmp_path, capsys, monkeypatch):
+    calls = []
+
+    class FakeServer:
+        discovery_path = str(tmp_path / "local-api.json")
+
+        def __init__(self, service, **kwargs):
+            calls.append(("init", kwargs))
+
+        def start(self):
+            return type("Record", (), {
+                "schema": "audioassist-local-api/v1",
+                "instance_id": "instance",
+                "mode": "read-only",
+                "host": "127.0.0.1",
+                "port": 43123,
+            })()
+
+        def wait(self):
+            calls.append(("wait", None))
+
+        def stop(self):
+            calls.append(("stop", None))
+
+    monkeypatch.setattr(cli, "LocalAPIServer", FakeServer)
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path), "--config", str(tmp_path / "config.json"),
+        "serve", "--read-only", "--port", "43123",
+    ])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_OK
+    assert payload["data"]["port"] == 43123
+    assert calls == [
+        ("init", {"mode": "read-only", "app_data_dir": str(tmp_path), "port": 43123}),
+        ("wait", None),
+        ("stop", None),
+    ]
+
+
+def test_serve_requires_explicit_read_only_flag(capsys):
+    exit_code = cli.main(["--json", "serve"])
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_USAGE
+    assert payload["error"]["code"] == "invalid_arguments"
+
+
 def test_transcribe_forwards_all_options_and_env_token(
     tmp_path, capsys, monkeypatch
 ):
@@ -379,3 +426,4 @@ def test_console_entrypoint_metadata_targets_cli_main():
     with pyproject.open("rb") as file:
         metadata = tomllib.load(file)
     assert metadata["project"]["scripts"]["audioassist"] == "src.cli:main"
+    assert metadata["project"]["scripts"]["audioassist-mcp"] == "src.mcp_server:main"
