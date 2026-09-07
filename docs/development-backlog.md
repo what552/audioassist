@@ -39,7 +39,7 @@ Priority meanings:
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Complete | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
-| 23 | QWEN-UI-01 | P1 | Implemented: reviewing | Persist a personal Qwen backend default in Settings; shared CLI/file/realtime routing, job snapshots, no automatic fallback; regression and independent review gates |
+| 23 | QWEN-UI-01 | P1 | Complete: source verified | Persist a personal Qwen backend default in Settings; shared CLI/file/realtime routing, job snapshots, no automatic fallback; 1042 tests and independent review pass |
 
 ### QWEN-UI-01 acceptance
 
@@ -58,6 +58,9 @@ Priority meanings:
   (95 focused tests passed). Host-only temporary-config smoke selected CPU/MPS/MLX
   successfully; source UI screenshot checked. No capture or model download was
   triggered; real recording and packaged acceptance remain release gates.
+- Final host regression: **1042 passed**, 957 dependency warnings, 48.78 s;
+  **37 browser tests** passed. Independent review of `acd21b4` found the model
+  configuration race; exact corrective commit `aee7ba8` passed re-review.
 
 ### QWEN-04A follow-up — Correct the backend evidence
 
