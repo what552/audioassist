@@ -110,6 +110,11 @@
       return { downloaded: false };
     },
     get_api_config: async function () { return { base_url: '', api_key: '', model: '' }; },
+    get_runtime_identity: async function () {
+      return {version: '2.0.2', mode: 'packaged-app', app_path: '/mock/AudioAssist.app',
+        source_root: null, entrypoint: '/mock/AudioAssist.app/Contents/MacOS/AudioAssist',
+        python_executable: '/mock/AudioAssist.app/Contents/MacOS/AudioAssist'};
+    },
     get_qwen_backend_settings: async function () {
       return {saved: localStorage.getItem('testQwenBackend') || 'auto', effective: 'auto', environment_override: false,
         options: ['auto', 'pytorch-cpu', 'pytorch-mps', 'mlx'].map(value => ({value, label: value, available: true, reason: ''}))};

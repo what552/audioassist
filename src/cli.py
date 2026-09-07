@@ -20,6 +20,7 @@ from .service import (
 from .local_api import LocalAPIError, LocalAPIServer
 from .preferences import BACKENDS
 from .runtime_paths import resolve_runtime_paths
+from .runtime_identity import format_runtime_identity, get_runtime_identity
 
 
 EXIT_OK = 0
@@ -76,8 +77,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="json_output",
         help="Write one stable JSON response envelope to stdout.",
     )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Show the source/package version and actual runtime location.",
+    )
 
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(dest="command")
     sessions = commands.add_parser("sessions", help="Read stored sessions.")
     session_commands = sessions.add_subparsers(dest="session_command", required=True)
     session_commands.add_parser("list", help="List sessions newest first.")
@@ -257,6 +263,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     json_requested = "--json" in raw_argv
     try:
         args = parser.parse_args(raw_argv)
+        if args.version and args.command is not None:
+            raise CLIUsageError("--version cannot be combined with a command")
+        if not args.version and args.command is None:
+            raise CLIUsageError("the following arguments are required: command")
         if (
             args.command == "transcribe"
             and args.qwen_backend is not None
@@ -270,6 +280,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             human_text=f"Error: {error}",
         )
         return EXIT_USAGE
+    if args.version:
+        identity = get_runtime_identity()
+        _emit(
+            _success(identity),
+            json_output=args.json_output,
+            human_text=format_runtime_identity(identity),
+        )
+        return EXIT_OK
     output_dir, config_path = _resolve_paths(args)
     service = AudioAssistService(output_dir, config_path)
     try:

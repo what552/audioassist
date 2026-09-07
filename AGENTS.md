@@ -51,6 +51,13 @@ permanent builder/researcher/reviewer worktree workflow.
 - Keep the application bundle version, DMG filename, and
   `dist/release-verification-<version>.json` aligned with the `pyproject.toml` version,
   and update the packaged baseline in this file when that release is produced.
+- Before every `.app` or DMG build, refresh the repository editable installation and
+  fail the build unless its `audioassist-local` package metadata matches
+  `pyproject.toml`. Package that metadata and verify it against the Info.plist, DMG,
+  and release-verification version; never rely on stale `.venv` or global-shim metadata.
+- Keep `audioassist --version` and the Settings runtime identity visible and derived
+  from the same release version. They must report the actual source root or `.app`
+  path so `/Applications`, `dist`, and source runs cannot be confused during testing.
 - Do not increment the version merely for source or UI development runs that do not
   generate an installable/testable `.app` or DMG.
 - Treat privacy-permission continuity as a release gate. An ad-hoc local candidate may

@@ -1512,6 +1512,10 @@ class API:
     def get_api_config(self) -> dict:
         return self._load_config().get("api", {})
 
+    def get_runtime_identity(self) -> dict:
+        from src.runtime_identity import get_runtime_identity
+        return get_runtime_identity()
+
     def get_qwen_backend_settings(self) -> dict:
         from src.preferences import get_backend_settings
         return get_backend_settings(CONFIG_PATH)

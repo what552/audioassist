@@ -32,7 +32,8 @@ fi
 uv sync --frozen \
   --extra "$PLATFORM_EXTRA" \
   --extra dev \
-  --extra build
+  --extra build \
+  --reinstall-package audioassist-local
 
 if [ "$SKIP_BROWSER" = false ]; then
   "$PROJECT_ROOT/.venv/bin/python" -m playwright install chromium

@@ -45,6 +45,11 @@ def _release_app(tmp_path: Path, version: str = "0.1.0") -> Path:
     qwen_metadata = resources / "qwen_asr-0.0.6.dist-info/METADATA"
     qwen_metadata.parent.mkdir()
     qwen_metadata.write_text("Name: qwen-asr\nVersion: 0.0.6\n", encoding="utf-8")
+    app_metadata = resources / f"audioassist_local-{version}.dist-info/METADATA"
+    app_metadata.parent.mkdir()
+    app_metadata.write_text(
+        f"Name: audioassist-local\nVersion: {version}\n", encoding="utf-8"
+    )
     return app
 
 
@@ -65,6 +70,34 @@ def test_release_verifier_rejects_invalid_qwen_metadata(tmp_path, monkeypatch, d
     with pytest.raises(verify_release.VerificationError, match="qwen_asr|Qwen metadata"):
         verify_release.verify_release(app, dmg=None, expected_version="0.1.0",
                                       require_developer_id=False, require_notarized=False)
+
+
+@pytest.mark.parametrize("defect", ["missing", "duplicate", "wrong_version", "wrong_name"])
+def test_release_verifier_rejects_invalid_audioassist_metadata(tmp_path, monkeypatch, defect):
+    app = _release_app(tmp_path)
+    metadata = app / "Contents/Resources/audioassist_local-0.1.0.dist-info/METADATA"
+    if defect == "missing":
+        metadata.unlink()
+    elif defect == "duplicate":
+        duplicate = metadata.parent.with_name("audioassist_local-9.9.9.dist-info") / "METADATA"
+        duplicate.parent.mkdir()
+        duplicate.write_bytes(metadata.read_bytes())
+    else:
+        metadata.write_text(
+            "Name: " + ("other" if defect == "wrong_name" else "audioassist-local")
+            + "\nVersion: " + ("9.9.9" if defect == "wrong_version" else "0.1.0") + "\n"
+        )
+    monkeypatch.setattr(
+        verify_release, "_run", lambda _: pytest.fail("must reject before signing checks")
+    )
+    with pytest.raises(verify_release.VerificationError, match="audioassist_local|package metadata"):
+        verify_release.verify_release(
+            app,
+            dmg=None,
+            expected_version="0.1.0",
+            require_developer_id=False,
+            require_notarized=False,
+        )
 
 
 def _completed(
@@ -410,6 +443,8 @@ def test_build_contract_versions_signs_and_packages_in_order():
     spec = (ROOT / "AudioAssist.spec").read_text(encoding="utf-8")
 
     assert 'APP_VERSION="$(cd "$ROOT"' in script
+    assert "--reinstall-package audioassist-local" in script
+    assert 'INSTALLED_VERSION="$(cd /tmp' in script
     assert 'DMG_NAME="${APP_NAME}-${APP_VERSION}.dmg"' in script
     helper_sign = script.index('"$HELPER_IN_BUNDLE"')
     app_sign = script.index('"$APP_PATH"', helper_sign)
@@ -424,6 +459,7 @@ def test_build_contract_versions_signs_and_packages_in_order():
     assert "Developer ID builds cannot reuse an ad-hoc PyInstaller bundle" in script
 
     assert 'APP_VERSION = tomllib.load(project_file)["project"]["version"]' in spec
+    assert '*copy_metadata("audioassist-local")' in spec
     assert "version=APP_VERSION" in spec
     assert '"CFBundleVersion":             APP_VERSION' in spec
     assert '"CFBundleShortVersionString":  "1.0.0"' not in spec

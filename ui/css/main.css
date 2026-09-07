@@ -757,6 +757,11 @@ select { font-family: inherit; }
   margin: 6px 0;
   overflow-wrap: anywhere;
 }
+
+#cfg-runtime-identity {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .config-actions {
   display: flex;
   justify-content: flex-end;

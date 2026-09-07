@@ -36,6 +36,25 @@ def _write_transcript(output_dir, job_id: str = "job-1") -> None:
     )
 
 
+def test_version_reports_current_source_and_supports_json(capsys):
+    exit_code = cli.main(["--json", "--version"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_OK
+    assert payload["ok"] is True
+    assert payload["data"]["version"] == "2.0.2"
+    assert payload["data"]["mode"] == "source"
+    assert payload["data"]["source_root"] == str(Path(__file__).parents[1])
+
+
+def test_version_rejects_command_combination(capsys):
+    exit_code = cli.main(["--json", "--version", "sessions", "list"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_USAGE
+    assert payload["error"]["code"] == "invalid_arguments"
+
+
 def test_sessions_list_json_envelope(tmp_path, capsys):
     _write_transcript(tmp_path)
 
