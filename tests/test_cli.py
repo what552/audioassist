@@ -42,7 +42,7 @@ def test_version_reports_current_source_and_supports_json(capsys):
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == cli.EXIT_OK
     assert payload["ok"] is True
-    assert payload["data"]["version"] == "2.0.2"
+    assert payload["data"]["version"] == "2.0.3"
     assert payload["data"]["mode"] == "source"
     assert payload["data"]["source_root"] == str(Path(__file__).parents[1])
 
