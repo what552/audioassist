@@ -41,6 +41,7 @@ Priority meanings:
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
 | 23 | QWEN-UI-01 | P1 | Complete: source verified | Persist a personal Qwen backend default in Settings; shared CLI/file/realtime routing, job snapshots, no automatic fallback; 1042 tests and independent review pass |
 | 24 | QWEN-CLI-01 | P1 | Complete: source verified | Explicit per-job `--qwen-backend`, Whisper rejection, checkpoint precedence and JSON reporting; 1061 tests pass |
+| 25 | RUNTIME-ID-01 | P1 | Complete: 2.0.3 packaged verification passed | Report the actual source/App path and version in CLI/Settings; refresh and package Python metadata, then fail release verification on any version mismatch |
 
 ### QWEN-UI-01 acceptance
 
