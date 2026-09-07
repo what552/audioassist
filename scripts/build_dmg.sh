@@ -42,6 +42,10 @@ if [ ! -x "$PYTHON_BIN" ]; then
   echo "       Run 'bash scripts/bootstrap.sh' first." >&2
   exit 1
 fi
+if ! command -v uv >/dev/null 2>&1; then
+  echo "ERROR: uv is required to refresh and verify release metadata." >&2
+  exit 1
+fi
 for required in "$APP_ENTITLEMENTS" "$HELPER_ENTITLEMENTS"; do
   if [ ! -f "$required" ]; then
     echo "ERROR: Required release file missing: $required" >&2
@@ -50,6 +54,15 @@ for required in "$APP_ENTITLEMENTS" "$HELPER_ENTITLEMENTS"; do
 done
 
 APP_VERSION="$(cd "$ROOT" && "$PYTHON_BIN" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+
+echo "==> [0/5] Refreshing repository package metadata"
+(cd "$ROOT" && uv sync --frozen --extra mac --extra dev --extra build \
+  --reinstall-package audioassist-local)
+INSTALLED_VERSION="$(cd /tmp && "$PYTHON_BIN" -c 'import importlib.metadata; print(importlib.metadata.version("audioassist-local"))')"
+if [ "$INSTALLED_VERSION" != "$APP_VERSION" ]; then
+  echo "ERROR: Repository package metadata version $INSTALLED_VERSION does not match $APP_VERSION." >&2
+  exit 1
+fi
 DMG_NAME="${APP_NAME}-${APP_VERSION}.dmg"
 DMG_PATH="${DIST_DIR}/${DMG_NAME}"
 VERIFY_PATH="${DIST_DIR}/release-verification-${APP_VERSION}.json"

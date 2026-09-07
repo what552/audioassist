@@ -54,6 +54,8 @@ a = Analysis(
         # dict directly to pyannote, so none of these dylibs are needed at runtime.
     ],
     datas=[
+        # Keep runtime package identity aligned with pyproject/App/DMG versions.
+        *copy_metadata("audioassist-local"),
         # UI assets (HTML / JS / CSS / images)
         (os.path.join(ROOT, "ui"), "ui"),
 

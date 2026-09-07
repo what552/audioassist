@@ -24,7 +24,13 @@ Global options must precede the command:
 
 ```text
 audioassist [--output-dir PATH] [--config PATH] [--json] COMMAND
+audioassist [--json] --version
 ```
+
+`--version` reports the release version, runtime mode, and actual source or `.app`
+path. Use it before CLI tests to distinguish repository, global-shim, `dist`, and
+installed `/Applications` runs. Its JSON data includes `version`, `mode`, `app_path`,
+`source_root`, `entrypoint`, and `python_executable`.
 
 If `--output-dir` is omitted, the CLI uses `storage.output_dir` from the AudioAssist
 configuration when it points to an existing directory, otherwise the platform default.

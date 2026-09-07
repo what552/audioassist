@@ -106,6 +106,16 @@ def test_qwen_default_persists_across_page_reload(page: Page, ui_base_url: str) 
     expect(page.locator('#cfg-qwen-help')).to_contain_text('不自动回退')
 
 
+def test_settings_show_runtime_version_and_app_path(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.locator('#btn-summary-config').click()
+
+    identity = page.locator('#cfg-runtime-identity')
+    expect(identity).to_contain_text('Version 2.0.2')
+    expect(identity).to_contain_text('packaged-app')
+    expect(identity).to_contain_text('/mock/AudioAssist.app')
+
+
 def test_qwen_save_failure_visible_and_retry_possible(page: Page, ui_base_url: str) -> None:
     _inject_and_navigate(page, ui_base_url)
     page.evaluate("window.pywebview.api.save_qwen_backend_settings = async () => ({ok:false,error:'disk full'})")

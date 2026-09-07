@@ -347,11 +347,26 @@ def verify_release(
     qwen_metadata = list(app.glob("Contents/Resources/qwen_asr-*.dist-info/METADATA"))
     if len(qwen_metadata) != 1:
         missing.append("Contents/Resources/qwen_asr-*.dist-info/METADATA (exactly one required)")
+    app_metadata = list(
+        app.glob("Contents/Resources/audioassist_local-*.dist-info/METADATA")
+    )
+    if len(app_metadata) != 1:
+        missing.append(
+            "Contents/Resources/audioassist_local-*.dist-info/METADATA (exactly one required)"
+        )
     if missing:
         raise VerificationError(f"required packaged files missing: {', '.join(missing)}")
     qwen_info = Parser().parsestr(qwen_metadata[0].read_text(encoding="utf-8"))
     if qwen_info.get_all("Name") != ["qwen-asr"] or qwen_info.get_all("Version") != ["0.0.6"]:
         raise VerificationError("Qwen metadata must identify qwen-asr version 0.0.6; review compatibility shims before upgrading")
+    app_info = Parser().parsestr(app_metadata[0].read_text(encoding="utf-8"))
+    if (
+        app_info.get_all("Name") != ["audioassist-local"]
+        or app_info.get_all("Version") != [expected_version]
+    ):
+        raise VerificationError(
+            "AudioAssist package metadata must match the release version"
+        )
 
     _require_success(
         ["codesign", "--verify", "--all-architectures", "--deep", "--strict", str(app)],
@@ -406,6 +421,7 @@ def verify_release(
         "required_files": list(REQUIRED_FILES),
         "mlx_qwen_metadata": str(metadata[0].relative_to(app)),
         "qwen_asr_metadata": str(qwen_metadata[0].relative_to(app)),
+        "audioassist_metadata": str(app_metadata[0].relative_to(app)),
     }
 
     if dmg is not None:

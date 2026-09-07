@@ -71,6 +71,7 @@ const Summary = (() => {
       cfgModel:       document.getElementById('cfg-model'),
       cfgQwenBackend: document.getElementById('cfg-qwen-backend'),
       qwenStatus: document.getElementById('cfg-qwen-status'),
+      runtimeIdentity: document.getElementById('cfg-runtime-identity'),
       btnSaveQwen: document.getElementById('btn-save-qwen-backend'),
       btnSaveConfig:      document.getElementById('btn-save-config'),
       btnAddTemplate:     document.getElementById('btn-add-template'),
@@ -189,6 +190,13 @@ const Summary = (() => {
 
   async function _loadConfig() {
     await _loadQwenBackend();
+    try {
+      const runtime = await window.pywebview.api.get_runtime_identity();
+      const location = runtime.app_path || runtime.source_root || runtime.entrypoint || 'unknown';
+      dom.runtimeIdentity.textContent = `Version ${runtime.version} · ${runtime.mode}\n${location}`;
+    } catch (e) {
+      dom.runtimeIdentity.textContent = `无法读取运行版本：${String(e)}`;
+    }
     try {
       const cfg = await window.pywebview.api.get_api_config();
       dom.cfgBaseUrl.value = cfg.base_url || '';
