@@ -14,6 +14,13 @@ human-reference corpus, promotion-level lifecycle/performance runs on this
 corrected configuration, and packaged release evidence remain incomplete.
 The remaining evidence is tracked as QWEN-04 rather than silently disappearing.
 
+**Public-corpus update (2026-09-07):** a 36-file, 358.32-second FLEURS-derived
+clean/noise/G.711 diagnostic produced identical text and timestamps across CPU,
+MPS and MLX. MPS RTF was 0.168, MLX 0.256 and CPU 0.376. See the
+[fixed-corpus report](qwen-fleurs-backend-benchmark.md). This expands parity
+evidence but does not close the broader corpus, meeting, lifecycle or packaged
+release gates.
+
 **Investigation update (2026-09-07):** the historical results below used
 unequal chunking/generation conditions and the installed PyTorch dependency's
 unmasked audio attention path. MPS early-EOS can be avoided in the short

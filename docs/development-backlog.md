@@ -24,7 +24,7 @@ Priority meanings:
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
-| 8 | QWEN-04A | P1 | Runtime fixes complete; corpus expansion open | Shared short chunks, serial budgets, MPS float32 and instance shims; 1006 tests, short/10m/realtime smoke and independent review pass; broader human-reference corpus remains |
+| 8 | QWEN-04A | P1 | Runtime fixes complete; corpus expansion active | Shared short chunks, serial budgets, MPS float32 and instance shims; short/10m/realtime plus 36-file FLEURS clean/noise/G.711 parity pass; broader human/meeting corpus remains |
 | 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
@@ -82,6 +82,11 @@ implemented and reviewed; automatic backend policy and the installed app remain 
 - Keep QWEN-04B and signed-app/long-form release gates separate. Do not promote
   `auto`, rebuild the DMG, or declare all quality gates passed from this
   diagnostic sample set alone.
+- Added: [36-file FLEURS-derived public-corpus diagnostic](qwen-fleurs-backend-benchmark.md)
+  across Mandarin/English/French clean, 10 dB noise and G.711 audio. CPU/MPS/MLX
+  text and timestamps were identical; MPS was fastest on this M5 Pro run. The
+  small four-utterance-per-language sample is parity evidence, not a full
+  accuracy benchmark or an automatic-backend promotion gate.
 
 ### REALTIME-DIAG-01 — Intermittent packaged microphone startup
 
