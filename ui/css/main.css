@@ -1108,7 +1108,13 @@ select { font-family: inherit; }
 }
 .error-icon   { font-size: 36px; color: var(--warn); }
 .error-filename { font-size: 13px; font-weight: 500; color: var(--text); }
-.error-msg    { font-size: 13px; color: var(--text-muted); max-width: 380px; line-height: 1.6; }
+.error-msg    {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 380px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
 
 /* ── Cancel button (progress panel) ─────────────────────────────────────────── */
 #btn-cancel-transcribe {

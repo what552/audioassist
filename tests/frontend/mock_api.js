@@ -35,6 +35,7 @@
     ],
     selectedFiles: [],
     transcribeIds: ['upload-job-1', 'upload-job-2', 'upload-job-3'],
+    qwenBackend: 'mlx',
     agentTurns: [],
     summaries: {},
     preflight: { supported: true },
@@ -95,7 +96,10 @@
     select_files: async function () { record('select_files', arguments); return state.selectedFiles.slice(); },
     transcribe: async function () {
       record('transcribe', arguments);
-      return { job_id: state.transcribeIds.shift() || ('upload-job-' + state.calls.length) };
+      return {
+        job_id: state.transcribeIds.shift() || ('upload-job-' + state.calls.length),
+        qwen_backend: state.qwenBackend,
+      };
     },
     cancel_transcription: async function () { record('cancel_transcription', arguments); return true; },
     resume_transcription: async function (jobId) { record('resume_transcription', arguments); return { job_id: jobId }; },

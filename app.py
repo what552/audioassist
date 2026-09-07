@@ -426,6 +426,7 @@ class API:
         opts = {
             "engine": ckpt.get("engine", "qwen"),
             "model_id": ckpt.get("model_id"),
+            "qwen_backend": ckpt.get("qwen_backend"),
         }
         return self.transcribe(ckpt["source_audio"], opts, job_id=job_id)
 
@@ -466,7 +467,11 @@ class API:
         # Register before starting the thread so an immediate cancel cannot
         # miss the job. A job id owns at most one transcription/refine worker.
         from src.preferences import default_backend
-        qwen_backend = default_backend(CONFIG_PATH) if engine == "qwen" else None
+        qwen_backend = (
+            options.get("qwen_backend") or default_backend(CONFIG_PATH)
+            if engine == "qwen"
+            else None
+        )
         cancel_ev = _register_transcription(job_id)
         if cancel_ev is None:
             return {"error": "job_in_progress", "job_id": job_id}
@@ -528,7 +533,11 @@ class API:
                 logger.info("Transcription cancelled: %s", job_id)
                 _push(f"onTranscribeCancel({json.dumps(job_id)})")
             except Exception as e:
-                logger.exception("Transcription failed")
+                logger.exception(
+                    "Transcription failed (engine=%s, qwen_backend=%s)",
+                    engine,
+                    qwen_backend,
+                )
                 # Import here to avoid circular import issues at module load
                 try:
                     from src.pipeline import ModelNotReadyError as _MNR
@@ -536,13 +545,28 @@ class API:
                         pass  # fall through to generic error push below
                 except ImportError:
                     pass
-                js = f"onTranscribeError({json.dumps(job_id)}, {json.dumps(str(e))})"
+                actual_backend = qwen_backend
+                if qwen_backend:
+                    try:
+                        from src.checkpoint import read as _read_checkpoint
+
+                        failed_checkpoint = _read_checkpoint(_session_dir(job_id)) or {}
+                        actual_backend = failed_checkpoint.get("qwen_backend") or qwen_backend
+                    except Exception:
+                        logger.warning(
+                            "Failed to read backend from interrupted checkpoint",
+                            exc_info=True,
+                        )
+                js = (
+                    f"onTranscribeError({json.dumps(job_id)}, {json.dumps(str(e))}, "
+                    f"{json.dumps(actual_backend)})"
+                )
                 _push(js)
             finally:
                 _unregister_transcription(job_id, cancel_ev)
 
         threading.Thread(target=_run, daemon=True).start()
-        return {"job_id": job_id}
+        return {"job_id": job_id, "qwen_backend": qwen_backend}
 
     def refine(self, job_id: str) -> dict:
         """

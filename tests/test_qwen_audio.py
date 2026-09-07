@@ -106,6 +106,22 @@ def test_aligner_end_rounding_within_50ms_is_clamped_to_chunk():
     assert word.end == 1.0
 
 
+def test_aligner_zero_duration_word_just_past_chunk_is_clamped_to_boundary():
+    word = WordSegment("last", 1.004, 1.004)
+
+    validate_words([word], 1.0)
+
+    assert word.start == 1.0
+    assert word.end == 1.0
+
+
+def test_aligner_word_start_beyond_50ms_is_rejected():
+    word = WordSegment("last", 1.051, 1.051)
+
+    with pytest.raises(RuntimeError, match=r"word_index=0.*chunk_duration=1\.000000"):
+        validate_words([word], 1.0)
+
+
 def test_failed_chunk_bisection_preserves_samples_offsets_and_minimum():
     audio = np.arange(16000 * 12, dtype=np.float32)
 

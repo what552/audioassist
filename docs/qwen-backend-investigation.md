@@ -199,6 +199,22 @@ reference. Different text also changes which timestamp tokens can be matched.
 The old cross-backend failure should remain a reason to investigate, not proof
 that CPU is correct or that MLX transcription quality is worse.
 
+## QWEN-BOUNDARY-01 follow-up
+
+An installed 2.0.3 upload of a separate 593.195-second Mandarin file exposed an
+incomplete part of the shared boundary tolerance. The persisted GUI task recorded
+`pytorch-mps`, despite the test being described as MLX; an explicit MLX CLI run then
+reproduced the same shared-validator error. Numeric instrumentation identified a
+zero-duration final word at `start=end=29.920s` for a 29.916-second internal chunk.
+
+The existing 50 ms tolerance handled only an end beyond the chunk while requiring
+the start to remain inside. It now clamps both start and end to the exact duration
+when the final word is wholly within the same 50 ms bin, while non-finite, reversed,
+negative, or larger overshoots remain hard failures. Full-file pure-ASR reruns passed
+all 31 internal chunks without retry: MPS produced 1840 timestamped words in 142.376s;
+MLX produced 1838 in 139.638s. GUI start/error responses now carry the snapshotted
+backend, and interrupted history reads it from the checkpoint.
+
 ## Diagnostic artifacts
 
 Private transcripts stay in `/private/tmp`; none are checked into this report.

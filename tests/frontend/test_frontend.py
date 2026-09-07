@@ -890,7 +890,7 @@ def test_upload_error_retry_and_cancel(page: Page, ui_base_url: str) -> None:
 
     page.evaluate("onTranscribeError('attempt-1', 'decoder failed')")
     page.locator("#error-panel").wait_for(state="visible")
-    assert page.locator("#error-msg").inner_text() == "decoder failed"
+    assert page.locator("#error-msg").inner_text() == "Qwen backend mlx\ndecoder failed"
 
     page.locator("#btn-retry").click()
     page.wait_for_function("_mockApi.calls('transcribe').length === 2")
