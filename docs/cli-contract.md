@@ -36,6 +36,7 @@ audioassist sessions list
 audioassist sessions show JOB_ID
 audioassist status JOB_ID
 audioassist transcribe FILE [--engine qwen|whisper] [--model-id ID]
+                          [--qwen-backend auto|pytorch-cpu|pytorch-mps|mlx|pytorch-cuda]
 audioassist summarize JOB_ID [--prompt TEXT]
 audioassist serve --read-only [--port PORT]
 ```
@@ -44,6 +45,14 @@ audioassist serve --read-only [--port PORT]
 fails. Progress is written to stderr, so stdout remains safe for automation. Checkpoint data
 continues to support recovery after an interruption; background submission is not part of
 R03-a.
+
+`--qwen-backend` selects the inference backend for one Qwen job without changing the
+saved desktop preference. An explicit command-line value takes precedence over the
+`AUDIOASSIST_QWEN_BACKEND` environment variable and the saved preference. Without the
+flag, the environment variable takes precedence over the saved preference, then `auto`.
+The option is rejected for Whisper models. The successful JSON response includes the
+selected `qwen_backend`; progress on stderr reports the resolved backend when `auto` is
+used. Jobs resumed from a checkpoint retain the backend recorded by that checkpoint.
 
 `summarize` uses the existing OpenAI-compatible settings in `config.json` and saves the
 result as a new summary version.

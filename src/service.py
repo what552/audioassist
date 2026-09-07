@@ -428,6 +428,7 @@ class AudioAssistService:
                 "audio_copy": audio_copy,
                 "engine": engine,
                 "model_id": model_id,
+                "qwen_backend": data.get("qwen_backend") if engine == "qwen" else None,
             }
         finally:
             shutil.rmtree(staging_dir, ignore_errors=True)

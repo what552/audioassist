@@ -287,7 +287,13 @@ def run(
         blocks = merge(merged_asr, speaker_segments)
 
         # 5. Output
-        to_json(blocks, audio_path, merged_asr.language, json_path)
+        to_json(
+            blocks,
+            audio_path,
+            merged_asr.language,
+            json_path,
+            qwen_backend=backend_name if engine == "qwen" else None,
+        )
         to_markdown(blocks, audio_path, merged_asr.language, md_path)
 
         # Delete checkpoint on success

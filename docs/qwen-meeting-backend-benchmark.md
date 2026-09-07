@@ -117,13 +117,14 @@ accelerated backend. It also makes MPS the performance leader on the tested M5
 Pro meeting corpus. It does **not** change the product-wide `auto` default:
 
 - high-overlap accuracy is a model/pipeline limitation shared by all backends;
-- Cantonese and manual listening review remain open;
 - packaged-app and signed-upgrade gates remain separate;
-- the current run is one cold pass and does not replace lifecycle testing.
+- the meeting run is one cold pass; the subsequent corrected-adapter lifecycle
+  result is recorded separately.
 
-The personal Settings choice for CPU/MPS/MLX remains appropriate. The next
-QWEN-04A evidence task is the bounded 50-cycle realtime lifecycle gate for MPS
-and MLX, followed by packaged 2.0.2 acceptance if that gate passes.
+The personal Settings choice for CPU/MPS/MLX remains appropriate. The bounded
+50-cycle MPS/MLX lifecycle gate subsequently passed; see
+[the lifecycle result](qwen-lifecycle-results.md). Packaged 2.0.2 acceptance is
+the remaining QWEN-04A gate.
 
 ## Reproduction and local evidence
 

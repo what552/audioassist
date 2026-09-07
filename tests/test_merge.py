@@ -458,6 +458,23 @@ class TestToJson:
         assert "created_at" in data
         assert len(data["created_at"]) > 0
 
+    def test_optional_qwen_backend_metadata(self, tmp_path, asr_result, two_speakers):
+        blocks = merge(asr_result, two_speakers)
+        out = str(tmp_path / "result.json")
+
+        to_json(
+            blocks,
+            "/audio/test.mp3",
+            "zh",
+            out,
+            qwen_backend="pytorch-mps",
+        )
+
+        with open(out) as file:
+            data = json.load(file)
+
+        assert data["qwen_backend"] == "pytorch-mps"
+
 
 # ── to_markdown ───────────────────────────────────────────────────────────────
 

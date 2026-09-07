@@ -18,6 +18,7 @@ from .service import (
     SessionNotFoundError,
 )
 from .local_api import LocalAPIError, LocalAPIServer
+from .preferences import BACKENDS
 from .runtime_paths import resolve_runtime_paths
 
 
@@ -90,6 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe.add_argument("file")
     transcribe.add_argument("--engine", choices=("qwen", "whisper"), default="qwen")
     transcribe.add_argument("--model-id")
+    transcribe.add_argument(
+        "--qwen-backend",
+        choices=BACKENDS,
+        help=(
+            "Override the saved Qwen backend for this job: auto, pytorch-cpu, "
+            "pytorch-mps, mlx or pytorch-cuda."
+        ),
+    )
     transcribe.add_argument("--num-speakers", type=_positive_int)
     transcribe.add_argument("--job-id")
     transcribe.add_argument(
@@ -183,6 +192,7 @@ def _run(args: argparse.Namespace, service: AudioAssistService) -> tuple[dict, s
             job_id=args.job_id,
             hf_token=os.environ.get("HF_TOKEN"),
             progress_callback=progress,
+            qwen_backend=args.qwen_backend,
         )
         text = f"Completed {data['job_id']}\n{data['json_path']}"
         return _success(data), text
@@ -247,6 +257,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     json_requested = "--json" in raw_argv
     try:
         args = parser.parse_args(raw_argv)
+        if (
+            args.command == "transcribe"
+            and args.qwen_backend is not None
+            and AudioAssistService._engine_for_model(args.model_id, args.engine) != "qwen"
+        ):
+            raise CLIUsageError("--qwen-backend can only be used with a Qwen ASR model")
     except CLIUsageError as error:
         _emit_error(
             _failure("invalid_arguments", str(error)),
