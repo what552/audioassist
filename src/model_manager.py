@@ -319,14 +319,12 @@ class ModelManager:
         if os.path.isdir(local):
             shutil.rmtree(local)
             logger.info(f"Deleted: {model_id}")
-        cfg = self._load_config()
-        changed = False
-        for key in ("asr_model", "aligner_model", "diarizer_model"):
-            if cfg.get(key) == model_id:
-                del cfg[key]
-                changed = True
-        if changed:
-            self._save_config(cfg)
+        from .preferences import update_config
+        def clear_selection(cfg):
+            for key in ("asr_model", "aligner_model", "diarizer_model"):
+                if cfg.get(key) == model_id:
+                    del cfg[key]
+        update_config(CONFIG_PATH, clear_selection)
 
     # ── Selection ─────────────────────────────────────────────────────────────
 
@@ -336,9 +334,8 @@ class ModelManager:
             raise ValueError(f"Not an ASR model: {model_id}")
         if not self.is_downloaded(model_id):
             raise RuntimeError(f"Model not downloaded: {model_id}")
-        cfg = self._load_config()
-        cfg["asr_model"] = model_id
-        self._save_config(cfg)
+        from .preferences import update_config
+        update_config(CONFIG_PATH, lambda cfg: cfg.update(asr_model=model_id))
 
     def select_aligner_model(self, model_id: str):
         info = self.get_model(model_id)
@@ -346,9 +343,8 @@ class ModelManager:
             raise ValueError(f"Not an aligner model: {model_id}")
         if not self.is_downloaded(model_id):
             raise RuntimeError(f"Model not downloaded: {model_id}")
-        cfg = self._load_config()
-        cfg["aligner_model"] = model_id
-        self._save_config(cfg)
+        from .preferences import update_config
+        update_config(CONFIG_PATH, lambda cfg: cfg.update(aligner_model=model_id))
 
     def get_selected_asr(self) -> Optional[str]:
         """Return selected ASR model ID, or first downloaded recommended one."""
@@ -378,9 +374,8 @@ class ModelManager:
             raise ValueError(f"Not a diarizer model: {model_id}")
         if not self.is_downloaded(model_id):
             raise RuntimeError(f"Model not downloaded: {model_id}")
-        cfg = self._load_config()
-        cfg["diarizer_model"] = model_id
-        self._save_config(cfg)
+        from .preferences import update_config
+        update_config(CONFIG_PATH, lambda cfg: cfg.update(diarizer_model=model_id))
 
     def get_selected_diarizer(self) -> Optional[str]:
         """Return selected diarizer model ID, or first downloaded recommended one."""
@@ -404,6 +399,9 @@ class ModelManager:
         return {}
 
     def _save_config(self, cfg: dict):
-        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-        with open(CONFIG_PATH, "w") as f:
-            json.dump(cfg, f, indent=2)
+        """Legacy private whole-document writer; production RMW uses update_config."""
+        from .preferences import update_config
+        def replace(data):
+            data.clear()
+            data.update(cfg)
+        update_config(CONFIG_PATH, replace)

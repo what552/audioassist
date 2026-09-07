@@ -39,7 +39,25 @@ Priority meanings:
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Complete | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
-| 23 | QWEN-UI-01 | P1 | Implemented: reviewing | Persist a personal Qwen backend default in Settings; shared CLI/file/realtime routing, job snapshots, no automatic fallback; 1038 regression tests pass |
+| 23 | QWEN-UI-01 | P1 | Implemented: reviewing | Persist a personal Qwen backend default in Settings; shared CLI/file/realtime routing, job snapshots, no automatic fallback; regression and independent review gates |
+
+### QWEN-UI-01 acceptance
+
+- Save once in Settings; persist across process restarts. Source UI only in this
+  batch: installed 2.0.1 and the product-wide Auto policy are unchanged.
+- File/re-transcription/refinement and all three capture modes snapshot the
+  setting before worker submission. Checkpoint resumes retain their backend.
+  The CLI service reads the same selected config file; Whisper is unaffected.
+- No automatic fallback. Hardware-unavailable choices are disabled, environment
+  overrides are visible, and failed saves remain visible and retryable.
+- Settings and ModelManager selection/deletion use the same atomic in-process
+  config-update mechanism, preserving unrelated fields during concurrent writes.
+- Verification commands: `.venv/bin/python -m pytest -q`,
+  `.venv/bin/python -m pytest tests/frontend -q`, and
+  `.venv/bin/python -m pytest tests/test_qwen_preferences.py tests/test_model_manager.py -q`
+  (95 focused tests passed). Host-only temporary-config smoke selected CPU/MPS/MLX
+  successfully; source UI screenshot checked. No capture or model download was
+  triggered; real recording and packaged acceptance remain release gates.
 
 ### QWEN-04A follow-up — Correct the backend evidence
 

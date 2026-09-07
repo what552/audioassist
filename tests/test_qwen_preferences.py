@@ -2,6 +2,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+import threading
 
 import pytest
 
@@ -101,6 +102,49 @@ def test_concurrent_preference_updates_preserve_all_sections(tmp_path):
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda i: prefs.update_config(path, lambda data: data.update({str(i): i})), range(32)))
     assert len(prefs.read_config(path)) == 32
+
+
+@pytest.mark.parametrize("operation,role,key", [
+    ("select_asr_model", "asr", "asr_model"),
+    ("select_aligner_model", "aligner", "aligner_model"),
+    ("select_diarizer_model", "diarizer", "diarizer_model"),
+    ("delete", "asr", "asr_model"),
+])
+def test_model_update_interleaved_with_backend_save(tmp_path, monkeypatch, available, operation, role, key):
+    from src import model_manager as mm
+    path = str(tmp_path / "config.json")
+    model_id = next(item.id for item in mm.CATALOG if item.role == role)
+    prefs.update_config(path, lambda data: data.update(qwen_backend="pytorch-cpu", **{key: model_id}))
+    monkeypatch.setattr(mm, "CONFIG_PATH", path)
+    manager = mm.ModelManager(models_dir=str(tmp_path / "models"))
+    monkeypatch.setattr(manager, "is_downloaded", lambda _: True)
+    read_started, release_read, save_started = threading.Event(), threading.Event(), threading.Event()
+    original_read = prefs.read_config
+
+    def delayed_read(filename):
+        data = original_read(filename)
+        if threading.current_thread().name.startswith("model-edit"):
+            read_started.set()
+            assert release_read.wait(3)
+        return data
+
+    monkeypatch.setattr(prefs, "read_config", delayed_read)
+    def save_backend():
+        save_started.set()
+        prefs.save_backend_settings(path, "mlx")
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="model-edit") as models, \
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="backend-edit") as backends:
+        model_future = models.submit(getattr(manager, operation), model_id)
+        assert read_started.wait(3)
+        save_future = backends.submit(save_backend)
+        assert save_started.wait(3)
+        release_read.set()
+        model_future.result(timeout=3)
+        save_future.result(timeout=3)
+    result = prefs.read_config(path)
+    assert result["qwen_backend"] == "mlx"
+    assert (key not in result) if operation == "delete" else result[key] == model_id
 
 
 def test_api_save_and_reopen_and_other_settings_preserve_backend(tmp_path, available, monkeypatch):

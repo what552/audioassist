@@ -751,7 +751,7 @@ select { font-family: inherit; }
 
 .config-row select:focus { border-color: var(--border-focus); }
 .config-hint {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.6;
   margin: 6px 0;

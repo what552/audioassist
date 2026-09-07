@@ -27,6 +27,7 @@ const Summary = (() => {
   let dom = {};
   let agentDom = {};
   let qwenLoadGeneration = 0;
+  let qwenSaving = false;
 
   function _showError(message) {
     console.error('[Summary]', message);
@@ -239,6 +240,8 @@ const Summary = (() => {
   }
 
   async function _saveQwenBackend() {
+    if (qwenSaving) return;
+    qwenSaving = true;
     ++qwenLoadGeneration;
     const value = dom.cfgQwenBackend.value;
     dom.btnSaveQwen.disabled = true;
@@ -248,9 +251,11 @@ const Summary = (() => {
       if (!result.ok) throw new Error(result.error || '保存失败');
       await _loadQwenBackend();
     } catch (e) {
-      dom.qwenStatus.textContent = `保存失败，原设置未更改：${e.message || e}`;
+      dom.qwenStatus.textContent = `保存失败或未确认，请重试或重新打开设置核对：${e.message || e}`;
       dom.cfgQwenBackend.disabled = false;
       dom.btnSaveQwen.disabled = false;
+    } finally {
+      qwenSaving = false;
     }
   }
 
@@ -323,7 +328,7 @@ const Summary = (() => {
     const open = !dom.modal.hidden;
     dom.modal.hidden = open;
     dom.btnSettings.classList.toggle('active', !open);
-    if (!open) _loadQwenBackend();
+    if (!open && !qwenSaving) _loadQwenBackend();
   }
 
   // ── Templates ──────────────────────────────────────────────────────────────

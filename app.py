@@ -1681,7 +1681,3 @@ class API:
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 return json.load(f)
         return {}
-
-    def _save_config(self, cfg: dict):
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
