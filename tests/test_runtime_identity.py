@@ -10,7 +10,7 @@ from src import runtime_identity
 def test_source_identity_reads_pyproject_instead_of_stale_metadata():
     identity = runtime_identity.get_runtime_identity()
 
-    assert identity["version"] == "2.0.3"
+    assert identity["version"] == "2.0.4"
     assert identity["mode"] == "source"
     assert identity["source_root"] == str(Path(__file__).parents[1])
     assert identity["app_path"] is None
