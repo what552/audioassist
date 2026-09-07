@@ -440,6 +440,8 @@ def to_json(
     audio_path: str,
     language: str,
     output_path: str,
+    *,
+    qwen_backend: str | None = None,
 ):
     import time as _time
     data = {
@@ -458,6 +460,8 @@ def to_json(
             for b in blocks
         ],
     }
+    if qwen_backend:
+        data["qwen_backend"] = qwen_backend
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 

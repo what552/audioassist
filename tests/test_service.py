@@ -94,6 +94,7 @@ def test_transcribe_persists_gui_compatible_session(tmp_path):
             json.dump({
                 "audio": audio_path,
                 "language": "zh",
+                "qwen_backend": _kwargs["qwen_backend"],
                 "segments": [],
             }, file)
         with open(markdown_path, "w", encoding="utf-8") as file:
@@ -111,6 +112,7 @@ def test_transcribe_persists_gui_compatible_session(tmp_path):
         )
     )
     assert result["job_id"] == "job-123"
+    assert result["qwen_backend"] == "auto"
     assert transcript["filename"] == "meeting.wav"
     assert transcript["audio"].endswith("source_audio.wav")
     assert os.path.exists(transcript["audio"])
@@ -384,6 +386,7 @@ def test_transcribe_resolves_whisper_engine_from_model_id(tmp_path):
         )
 
     assert result["engine"] == "whisper"
+    assert result["qwen_backend"] is None
     assert captured["engine"] == "whisper"
 
 

@@ -149,6 +149,11 @@ def test_json_redirects_dependency_stdout_to_stderr(tmp_path, capsys, monkeypatc
         ["--json", "status"],
         ["--json", "transcribe", "file.wav", "--num-speakers", "0"],
         ["--json", "transcribe", "file.wav", "--engine", "invalid"],
+        ["--json", "transcribe", "file.wav", "--qwen-backend", "invalid"],
+        [
+            "--json", "transcribe", "file.wav", "--engine", "whisper",
+            "--qwen-backend", "mlx",
+        ],
     ],
 )
 def test_invalid_arguments_use_json_envelope(arguments, capsys):
@@ -355,6 +360,43 @@ def test_transcribe_forwards_all_options_and_env_token(
     assert captured["model_id"] == "whisper-medium"
     assert captured["num_speakers"] == 3
     assert captured["hf_token"] == "test-token"
+    assert captured["qwen_backend"] is None
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ("auto", "pytorch-cpu", "pytorch-mps", "mlx", "pytorch-cuda"),
+)
+def test_transcribe_forwards_explicit_qwen_backend(
+    tmp_path, capsys, monkeypatch, backend
+):
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"audio")
+    captured = {}
+
+    def fake_transcribe(_self, path, **kwargs):
+        captured.update(kwargs)
+        return {
+            "job_id": "backend-job",
+            "json_path": "/tmp/transcript.json",
+            "markdown_path": "/tmp/transcript.md",
+            "audio_path": path,
+            "audio_copy": path,
+            "engine": "qwen",
+            "model_id": "qwen3-asr-1.7b",
+            "qwen_backend": kwargs["qwen_backend"],
+        }
+
+    monkeypatch.setattr(cli.AudioAssistService, "transcribe", fake_transcribe)
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path), "transcribe", str(audio),
+        "--model-id", "qwen3-asr-1.7b", "--qwen-backend", backend,
+    ])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_OK
+    assert captured["qwen_backend"] == backend
+    assert payload["data"]["qwen_backend"] == backend
 
 
 def test_quiet_suppresses_cli_progress(tmp_path, capsys, monkeypatch):

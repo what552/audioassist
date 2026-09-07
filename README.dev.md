@@ -147,6 +147,7 @@ Recording permission.
 .venv/bin/audioassist --json sessions show JOB_ID
 .venv/bin/audioassist --json status JOB_ID
 .venv/bin/audioassist --json transcribe /path/to/audio.m4a
+.venv/bin/audioassist --json transcribe /path/to/audio.m4a --qwen-backend mlx
 .venv/bin/audioassist --json summarize JOB_ID
 .venv/bin/audioassist --json serve --read-only
 .venv/bin/audioassist-mcp
@@ -195,8 +196,9 @@ Mac), or CUDA where available. The preference applies to subsequent Qwen file
 transcription, re-transcription, refinement and Mic/System/Mix sessions; it does
 not affect Whisper or mutate an already submitted job. Resuming a checkpoint
 retains its recorded backend. The shared CLI service reads the same preference
-from its selected config file. Precedence: checkpoint backend, submitted job
-snapshot, explicit `AUDIOASSIST_QWEN_BACKEND`, saved preference, then Auto.
+from its selected config file and supports a per-job `--qwen-backend` override.
+Precedence: checkpoint backend, explicit CLI/submitted-job snapshot,
+`AUDIOASSIST_QWEN_BACKEND`, saved preference, then Auto.
 The UI shows environment overrides and disables unavailable choices. Saving a
 preference never loads/downloads a model or requests capture permission. A failed
 backend reports an error; there is no automatic fallback. This personal default
@@ -214,7 +216,8 @@ instead of returning a successful partial transcript. Diagnostic per-chunk
 metadata is included in Qwen benchmark reports without transcript content;
 `generated_tokens` excludes the EOS sentinel on both runtimes. Large trailing
 gaps remain a *possible* truncation signal, not proof of an error or a reason
-to clamp timestamps. Public CLI/session result schemas are unchanged.
+to clamp timestamps. Successful Qwen CLI/session output records the resolved
+`qwen_backend` used by the transcription pipeline.
 
 > **First run:** On launch, the app checks whether the required ASR model is present. If not, the setup panel is shown (see [First-run model setup](#first-run-model-setup)). Once downloaded, subsequent runs use the cached weights with no network access.
 

@@ -24,7 +24,7 @@ Priority meanings:
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
-| 8 | QWEN-04A | P1 | Meeting corpus complete; lifecycle/listening active | Shared short chunks, adaptive failed-block retry, MPS float32 and instance shims; short/10m/realtime, 36-file FLEURS, and 60-minute public meeting/overlap comparisons pass; 50-cycle lifecycle, Cantonese, and listening remain |
+| 8 | QWEN-04A | P1 | Meeting corpus complete; lifecycle active | Shared short chunks, adaptive failed-block retry, MPS float32 and instance shims; short/10m/realtime, 36-file FLEURS, and 60-minute public meeting/overlap comparisons pass; the corrected-adapter 50-cycle lifecycle and packaged acceptance remain |
 | 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
@@ -40,6 +40,7 @@ Priority meanings:
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
 | 23 | QWEN-UI-01 | P1 | Complete: source verified | Persist a personal Qwen backend default in Settings; shared CLI/file/realtime routing, job snapshots, no automatic fallback; 1042 tests and independent review pass |
+| 24 | QWEN-CLI-01 | P1 | Complete: source verified | Explicit per-job `--qwen-backend`, Whisper rejection, checkpoint precedence and JSON reporting; 1061 tests pass |
 
 ### QWEN-UI-01 acceptance
 
@@ -77,8 +78,8 @@ implemented and reviewed; automatic backend policy and the installed app remain 
 - Done: generation termination diagnostics and rejection of capped/non-EOS,
   out-of-bounds or missing requested alignment; packaging metadata validation.
 - Done: matched short/10-minute comparisons and two-cycle realtime smoke.
-  Still open: broader human-reference corpus and manual listening; treat
-  cross-backend distance as disagreement requiring review, not ground truth.
+  Existing FLEURS, exact-script, code-switching and meeting evidence closes the
+  requested language-quality scope; do not repeat it or add Cantonese as a product gate.
 - Keep QWEN-04B and signed-app/long-form release gates separate. Do not promote
   `auto`, rebuild the DMG, or declare all quality gates passed from this
   diagnostic sample set alone.
@@ -362,7 +363,7 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 
 | ID | Task | Acceptance direction |
 |---|---|---|
-| QWEN-04A | Accelerated-backend evidence | Human Mandarin/Cantonese/English/code-switch references plus short and 5/10-minute fixtures compare CPU, MPS, and MLX before longer promotion runs |
+| QWEN-04A | Accelerated-backend evidence | Existing Mandarin/English/code-switch references are complete; finish corrected-adapter lifecycle and packaged gates without adding Cantonese scope |
 | QWEN-04B | Conditional Mac default promotion | The selected backend must pass lifecycle, offline, checkpoint, packaged-app, and approved long-audio gates before changing `auto` |
 | R03-B1 | Complete: HTTP service lifecycle/security design | Approved bounded v1 contract in `docs/http-mcp-contract.md`; no daemon or background inference queue |
 | R03-B2 | Complete: HTTP recording control plus MCP adapter | Shared-service reads work with the app closed; recording mutations require a live authenticated visible app and return stable errors |
