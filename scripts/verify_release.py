@@ -347,12 +347,14 @@ def verify_release(
     qwen_metadata = list(app.glob("Contents/Resources/qwen_asr-*.dist-info/METADATA"))
     if len(qwen_metadata) != 1:
         missing.append("Contents/Resources/qwen_asr-*.dist-info/METADATA (exactly one required)")
-    app_metadata = list(
-        app.glob("Contents/Resources/audioassist_local-*.dist-info/METADATA")
-    )
+    app_metadata = [
+        *app.glob("Contents/Resources/audioassist_local-*.dist-info/METADATA"),
+        *app.glob("Contents/Resources/audioassist_local*.egg-info/PKG-INFO"),
+    ]
     if len(app_metadata) != 1:
         missing.append(
-            "Contents/Resources/audioassist_local-*.dist-info/METADATA (exactly one required)"
+            "AudioAssist package metadata (METADATA or PKG-INFO) under Contents/Resources "
+            "(exactly one required)"
         )
     if missing:
         raise VerificationError(f"required packaged files missing: {', '.join(missing)}")
