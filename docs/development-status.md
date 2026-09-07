@@ -61,8 +61,12 @@ The subsequent [50-cycle lifecycle gate](qwen-lifecycle-results.md) completed
 100 warm serialized utterances on each corrected accelerated backend with zero
 failures, truncations or language mismatches. MLX cleanup RSS grew 225 MiB.
 MPS retained a larger early PyTorch/Metal cache, then narrowed to a 41 MiB range
-over the final ten cycles. Packaged 2.0.2 acceptance is the remaining QWEN-04A gate.
-Automatic backend policy remains unchanged.
+over the final ten cycles. The 2.0.2 packaged app then completed the same Mandarin
+file through CPU, MPS, and MLX with identical text and persisted the actual backend.
+Packaged Mic start/pause/resume/finish also passed with a valid 40.32-second WAV.
+System/Mix remain pending only because the new ad-hoc CDHash needs a separate local
+Screen & System Audio Recording authorization. Automatic backend policy remains
+unchanged.
 
 QWEN-UI-01 adds a persisted personal backend default in Settings, independently
 of product-wide automatic promotion. New Qwen jobs use the saved CPU/MPS/MLX

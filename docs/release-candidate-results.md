@@ -1,6 +1,37 @@
 # REL-01 Release Candidate Record
 
-Updated: 2026-09-06
+Updated: 2026-09-07
+
+## 2.0.2 Qwen backend-selection candidate
+
+- Source baseline: merge `9e8b87f` plus version bump `60d3a60`; full host suite
+  passed **1061 tests** with 958 dependency warnings.
+- Build: `bash scripts/build_dmg.sh` completed all stages successfully.
+- Version: `2.0.2`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- App: `dist/AudioAssist.app`; DMG: `dist/AudioAssist-2.0.2.dmg`.
+- DMG SHA-256:
+  `99d643b0c9fc3df3a5c0f2a020ca1bda45f2456f6d020cb19a3f63e7ed5aa2a1`.
+- App CDHash: `65e1cd87e763a5b6281a0fcfc11fc8ad9b6f2f75`.
+- `dist/release-verification-2.0.2.json`: PASS, including 491 Mach-O files,
+  583 symlinks, strict signatures, required Qwen/MLX assets, and a matching
+  read-only mounted DMG payload.
+- Existing session directories loaded without migration or rewrite in the 2.0.2
+  app, providing an in-place legacy-read compatibility check against the owner's
+  current data directory.
+- Packaged file-transcription gate: PASS for Auto/CPU, PyTorch MPS and MLX on the
+  same 4.74-second Mandarin FLEURS clip. All three produced one `zh` segment with
+  the same text. Persisted `qwen_backend` values were `pytorch-cpu`,
+  `pytorch-mps`, and `mlx`, respectively. The personal setting was restored to
+  Auto after the test.
+- Packaged microphone gate: PASS for start, valid 16 kHz mono PCM frames, pause,
+  resume, and finish. The resulting WAV was 40.32 seconds / 1,290,284 bytes.
+- Packaged System/Mix gate: pending local re-authorization. The new ad-hoc CDHash
+  correctly reports only the missing Screen & System Audio Recording permission
+  and disables start; it does not incorrectly require Microphone for System mode.
+  No TCC reset or System Settings mutation was performed during this run.
+- This remains a local test candidate. It is neither installed over 2.0.1 nor a
+  distributable signed upgrade, and it cannot prove TCC continuity without a
+  stable Developer ID Application identity.
 
 ## 2.0.1 microphone authorization fix candidate
 
