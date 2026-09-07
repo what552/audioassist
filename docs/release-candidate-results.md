@@ -2,6 +2,29 @@
 
 Updated: 2026-09-07
 
+## 2.0.3 runtime-identity candidate
+
+- Source baseline: runtime identity merge `fa2e5a3`, version merge `777c60c`, and
+  packaged-metadata verifier fix `8fc20a4`; the full host suite passed **1070 tests**.
+- Build: `bash scripts/build_dmg.sh` refreshed `audioassist-local` metadata from
+  2.0.2 to 2.0.3 before PyInstaller. Its first verification correctly stopped on
+  the editable `egg-info` metadata shape; the corrected verifier then passed the
+  unchanged candidate without regenerating a same-version artifact.
+- Version: `2.0.3`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- App: `dist/AudioAssist.app`; DMG: `dist/AudioAssist-2.0.3.dmg`.
+- DMG SHA-256:
+  `84f9f7fa6336ce05c466f6f6089a50c4977ff9fd771a1579211e14fc371f52d6`.
+- App CDHash: `a1e75e32c8b490696ccb21b355bdb1a6d92fb3fa`.
+- `dist/release-verification-2.0.3.json`: PASS, including 491 Mach-O files,
+  584 symlinks, strict signatures, required Qwen/MLX assets, a matching read-only
+  mounted DMG payload, and `audioassist_local.egg-info/PKG-INFO` version 2.0.3.
+- CLI source identity reports version 2.0.3 and the canonical repository path.
+  The packaged Settings identity has automated browser coverage; launch and
+  recording-mode acceptance remain pending and are not claimed here.
+- This candidate has not been installed over `/Applications/AudioAssist.app`.
+  It is local/ad-hoc, not a distributable signed upgrade, and does not satisfy
+  REL-TCC-01 without a stable Developer ID Application identity.
+
 ## 2.0.2 Qwen backend-selection candidate
 
 - Source baseline: merge `9e8b87f` plus version bump `60d3a60`; full host suite

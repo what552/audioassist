@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current source baseline is 1061 automated tests, including 37 browser tests. It
+The current source baseline is 1070 automated tests, including 38 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -150,6 +150,14 @@ for team identity, Hardened Runtime, timestamp, and entitlement drift. The
 implementation is complete, while a
 distributable build remains externally gated by the unavailable Developer ID
 identity/notary credentials and clean-machine release checks.
+
+RUNTIME-ID-01 makes source, global-shim, `dist`, and installed-App runs
+distinguishable. `audioassist --version` and Settings report the authoritative
+version, runtime mode, and actual source or `.app` path. Bootstrap and release builds
+refresh the editable package metadata; the packaged verifier accepts the valid wheel
+or editable metadata format but rejects missing, duplicate, or mismatched identity.
+The 2.0.3 ad-hoc App/DMG passed this mechanical gate, while installed recording and
+Developer ID upgrade-continuity checks remain separate manual/external gates.
 
 ## Historical gate record
 
