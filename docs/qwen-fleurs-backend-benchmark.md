@@ -105,8 +105,9 @@ per-file 5% CER threshold was designed as a release alarm and several hard
 FLEURS files exceed it identically. That status is an absolute-corpus alert, not
 a backend-parity failure. Promotion remains `insufficient-evidence`.
 
-Next meaningful additions are: a larger speaker-balanced FLEURS sample with
-bootstrap confidence intervals; Cantonese; separate AliMeeting/AMI cpWER and
-DER evaluation; 30/60/120-minute jobs; and packaged-app plus 50-cycle lifecycle
-gates. Natural multi-speaker meetings must not be folded into this single-speaker
-CER/WER table.
+The separate [AliMeeting/AMI and controlled-overlap evaluation](qwen-meeting-backend-benchmark.md)
+now covers the meeting cpCER/cpWER and DER item. Remaining meaningful additions
+are a larger speaker-balanced FLEURS sample with bootstrap confidence intervals,
+Cantonese, 30/60/120-minute jobs, manual listening, and packaged-app plus
+50-cycle lifecycle gates. Natural multi-speaker meetings remain separate from
+this single-speaker CER/WER table.

@@ -14,7 +14,8 @@ import multiprocessing
 
 from .asr_factory import QwenBackendConfig
 from .qwen_audio import (SAMPLE_RATE, MAX_CHUNK_SECONDS, MAX_NEW_TOKENS,
-                         load_local_audio, split_audio, merged_language,
+                         MIN_RETRY_CHUNK_SECONDS, load_local_audio, split_audio,
+                         bisect_failed_chunk, merged_language,
                          validate_words, chunk_diagnostic)
 from .qwen_compat import GenerationObserver, install_audio_window_masks
 from .types import WordSegment, TranscriptResult
@@ -51,6 +52,7 @@ class ASREngine:
             "dtype": self.backend.dtype_name, "max_chunk_seconds": MAX_CHUNK_SECONDS,
             "max_new_tokens": MAX_NEW_TOKENS, "batch_size": 1,
             "audio_window_mask": True,
+            "min_retry_chunk_seconds": MIN_RETRY_CHUNK_SECONDS,
         }
 
     def load(self) -> None:
@@ -60,10 +62,11 @@ class ASREngine:
 
         from qwen_asr import Qwen3ASRModel
         from importlib.metadata import version
-        import torch
 
         if version("qwen-asr") != "0.0.6":
             raise RuntimeError("Review Qwen compatibility shims before changing qwen-asr 0.0.6")
+
+        import torch
 
         device = self.backend.device
         dtype = getattr(torch, self.backend.dtype_name)
@@ -105,7 +108,9 @@ class ASREngine:
         audio = load_local_audio(audio_path)
         texts, languages = [], []
         words: list[WordSegment] = []
-        for chunk, offset in split_audio(audio):
+        pending = list(split_audio(audio))
+        while pending:
+            chunk, offset = pending.pop(0)
             self._observer.records.clear()
             result = self._model.transcribe(
                 (chunk, SAMPLE_RATE), return_time_stamps=self.with_timestamps,
@@ -113,17 +118,27 @@ class ASREngine:
             if len(self._observer.records) != 1:
                 raise RuntimeError("Qwen generation diagnostics missing for a serial audio chunk")
             generation = self._observer.records[0]
-            self.last_truncated |= generation["truncated"]
             local_words = []
             if self.with_timestamps and result.time_stamps is not None:
                 local_words = [WordSegment(word=item.text, start=float(item.start_time), end=float(item.end_time))
                                for item in result.time_stamps.items]
             duration = len(chunk) / SAMPLE_RATE
-            self.last_chunk_diagnostics.append(chunk_diagnostic(
+            diagnostic = chunk_diagnostic(
                 offset, duration, local_words, with_timestamps=self.with_timestamps,
                 text_present=bool(result.text.strip()), **generation,
-            ))
-            if self.last_truncated:
+            )
+            self.last_chunk_diagnostics.append(diagnostic)
+            generation_failed = (
+                generation["truncated"] or generation["finish_reason"] != "eos"
+            )
+            if generation_failed:
+                retries = bisect_failed_chunk(chunk, offset)
+                if retries is not None:
+                    diagnostic["recovered_by_split"] = True
+                    pending[0:0] = retries
+                    continue
+            self.last_truncated |= generation["truncated"]
+            if generation["truncated"]:
                 raise RuntimeError("Qwen reached its per-chunk generation limit; transcription rejected")
             if generation["finish_reason"] != "eos":
                 raise RuntimeError("Qwen generation stopped without EOS; transcription rejected")

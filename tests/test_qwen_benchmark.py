@@ -245,7 +245,7 @@ def test_edit_distance_and_language_aware_error_rates():
     assert rates["wer"] == 0
 
 
-def test_result_flags_large_timestamp_tail_as_possible_truncation():
+def test_result_keeps_large_timestamp_tail_as_diagnostic_only():
     result = SimpleNamespace(
         text="only the beginning",
         language="English",
@@ -255,7 +255,7 @@ def test_result_flags_large_timestamp_tail_as_possible_truncation():
     payload = _result_payload(result, 100.0, 1.0, truncated=False)
 
     assert payload["timestamp_tail_gap_seconds"] == 98.0
-    assert payload["possible_truncation"] is True
+    assert payload["possible_truncation"] is False
 
 
 def test_worker_compares_expected_language_at_product_boundary(tmp_path):
@@ -306,6 +306,72 @@ def test_worker_compares_expected_language_at_product_boundary(tmp_path):
     assert sample["passes"][0]["language"] == "English"
     assert sample["passes"][0]["canonical_language"] == "zh"
     assert sample["passes"][0]["expected_language_agrees"] is True
+
+
+def test_worker_isolates_sample_failure_and_continues(tmp_path):
+    first = tmp_path / "first.wav"
+    second = tmp_path / "second.wav"
+    _wav(first)
+    _wav(second)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {"id": "fails", "path": "first.wav"},
+                    {"id": "passes", "path": "second.wav"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = 0
+
+    def transcribe(_path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            engine.last_truncated = True
+            engine.last_chunk_diagnostics = [
+                {"start": 0, "end": 1, "possible_truncation": True}
+            ]
+            raise RuntimeError("generation limit")
+        engine.last_truncated = False
+        engine.last_chunk_diagnostics = []
+        return SimpleNamespace(text="hello", language="English", words=[])
+
+    engine = SimpleNamespace(
+        load=lambda: None,
+        close=lambda: None,
+        transcribe=transcribe,
+        last_truncated=False,
+        last_chunk_diagnostics=[],
+        inference_config={"max_new_tokens": 1024},
+    )
+    with (
+        patch("src.qwen_benchmark.create_qwen_engine", return_value=engine),
+        patch("src.qwen_benchmark._rss_mb", return_value=100.0),
+        patch("src.qwen_benchmark._peak_rss_mb", return_value=200.0),
+        patch("src.qwen_benchmark._physical_memory_mb", return_value=1024.0),
+    ):
+        result = run_worker(
+            backend="pytorch-cpu",
+            manifest_path=str(manifest),
+            model_path="/model",
+            aligner_path="/aligner",
+            warm_runs=0,
+            lifecycle_cycles=1,
+        )
+
+    failed, passed = result["cycles"][0]["samples"]
+    assert failed["ok"] is False
+    assert failed["error"] == "RuntimeError: generation limit"
+    assert failed["failed_pass"]["possible_truncation"] is True
+    assert failed["failed_pass"]["chunks"][0]["possible_truncation"] is True
+    assert failed["passes"] == []
+    assert passed["ok"] is True
+    assert passed["error"] is None
+    assert passed["passes"][0]["text"] == "hello"
 
 
 def _run(backend: str, text: str, start: float) -> dict:
@@ -379,6 +445,17 @@ def test_redaction_removes_meeting_text_and_keeps_hashes():
     assert item["text_length"] == 15
     assert len(item["text_sha256"]) == 64
     assert "text" not in item["words"][0]
+
+
+def test_explicit_transcript_report_keeps_word_text_for_speaker_scoring():
+    run = _run("mlx", "public benchmark", 0.0)
+
+    _redact(run, include_transcripts=True)
+
+    item = run["result"]["cycles"][0]["samples"][0]["passes"][0]
+    assert item["text"] == "public benchmark"
+    assert item["words"][0]["text"] == "public benchmark"
+    assert len(item["text_sha256"]) == 64
 
 
 def test_gate_never_promotes_incomplete_source_tree_evidence():

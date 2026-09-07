@@ -14,6 +14,8 @@ from .types import WordSegment
 SAMPLE_RATE = 16000
 MAX_CHUNK_SECONDS = 30.0
 MAX_NEW_TOKENS = 1024
+MIN_RETRY_CHUNK_SECONDS = 5.0
+MAX_TIMESTAMP_END_OVERSHOOT_SECONDS = 0.05
 
 
 def load_local_audio(path: str) -> np.ndarray:
@@ -84,6 +86,25 @@ def split_audio(audio: np.ndarray, sample_rate: int = SAMPLE_RATE,
     return parts
 
 
+def bisect_failed_chunk(
+    audio: np.ndarray,
+    offset: float,
+    sample_rate: int = SAMPLE_RATE,
+    min_seconds: float = MIN_RETRY_CHUNK_SECONDS,
+) -> list[tuple[np.ndarray, float]] | None:
+    """Bisect a failed generation chunk without creating tiny retry loops."""
+    if sample_rate <= 0 or min_seconds <= 0:
+        raise ValueError("Qwen retry rate and minimum duration must be positive")
+    minimum = max(1, int(min_seconds * sample_rate))
+    if audio.ndim != 1 or len(audio) < minimum * 2:
+        return None
+    midpoint = len(audio) // 2
+    return [
+        (audio[:midpoint], offset),
+        (audio[midpoint:], offset + midpoint / sample_rate),
+    ]
+
+
 def merged_language(languages: list[str]) -> str:
     known = [str(item).strip() for item in languages
              if item and str(item).strip().lower() not in ("", "unknown")]
@@ -94,9 +115,21 @@ def validate_words(words: list[WordSegment], duration: float, *, required: bool 
     if required and not words:
         raise RuntimeError("Qwen returned text without requested word timestamps; transcription rejected")
     for word in words:
-        if not (math.isfinite(word.start) and math.isfinite(word.end)
-                and 0 <= word.start <= word.end <= duration + 1e-6):
+        if not (
+            math.isfinite(word.start)
+            and math.isfinite(word.end)
+            and 0 <= word.start <= word.end
+            and word.start <= duration
+        ):
             raise RuntimeError("Qwen returned a timestamp outside its audio chunk; transcription rejected")
+        if word.end > duration:
+            if word.end - duration > MAX_TIMESTAMP_END_OVERSHOOT_SECONDS:
+                raise RuntimeError(
+                    "Qwen returned a timestamp outside its audio chunk; transcription rejected"
+                )
+            # Forced aligners quantize boundaries. Keep a final boundary that is
+            # within one 50 ms timestamp bin, but never leak it beyond the WAV.
+            word.end = duration
 
 
 def chunk_diagnostic(offset: float, duration: float, words: list[WordSegment],
@@ -105,7 +138,10 @@ def chunk_diagnostic(offset: float, duration: float, words: list[WordSegment],
     return {
         "start": offset, "end": offset + duration, "word_count": len(words),
         "timestamp_tail_gap_seconds": tail if with_timestamps else None,
-        "possible_truncation": bool(generation.get("truncated")) or (
-            with_timestamps and text_present and (not words or tail > max(5.0, duration * 0.2))),
+        # A long tail can be ordinary meeting silence because chunk boundaries
+        # are selected near low-energy regions. Generation termination is the
+        # authoritative truncation signal for the pinned adapters; keep the tail
+        # as diagnostic data without turning silence into a failure.
+        "possible_truncation": bool(generation.get("truncated")),
         **generation,
     }
