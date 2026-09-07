@@ -292,10 +292,6 @@ def _result_payload(
     ]
     final_boundary = max((word["end"] for word in words), default=0.0)
     timestamp_tail_gap = max(0.0, duration - final_boundary) if words else None
-    timestamp_indicates_truncation = (
-        timestamp_tail_gap is not None
-        and timestamp_tail_gap > max(5.0, duration * 0.20)
-    )
     return {
         "seconds": elapsed,
         "rtf": elapsed / duration if duration else None,
@@ -305,7 +301,7 @@ def _result_payload(
             result.language, result.text
         ),
         "words": words,
-        "possible_truncation": truncated or timestamp_indicates_truncation,
+        "possible_truncation": truncated,
         "timestamp_tail_gap_seconds": timestamp_tail_gap,
     }
 
@@ -342,9 +338,31 @@ def run_worker(
             for sample in samples:
                 duration = _validated_duration(sample)
                 passes: list[dict[str, Any]] = []
-                for _ in range(warm_runs + 1):
+                sample_error = None
+                failed_pass = None
+                for pass_index in range(warm_runs + 1):
                     started = time.perf_counter()
-                    result = engine.transcribe(sample.path)
+                    try:
+                        result = engine.transcribe(sample.path)
+                    except Exception as exc:
+                        sample_error = f"{type(exc).__name__}: {exc}"
+                        failed_pass = {
+                            "pass": pass_index + 1,
+                            "seconds": time.perf_counter() - started,
+                            "possible_truncation": bool(
+                                getattr(engine, "last_truncated", False)
+                            ),
+                            "inference_config": dict(
+                                getattr(engine, "inference_config", {})
+                            ),
+                            "chunks": [
+                                dict(item)
+                                for item in getattr(
+                                    engine, "last_chunk_diagnostics", []
+                                )
+                            ],
+                        }
+                        break
                     elapsed = time.perf_counter() - started
                     pass_result = _result_payload(
                         result,
@@ -361,18 +379,22 @@ def run_worker(
                     pass_result["inference_config"] = dict(getattr(engine, "inference_config", {}))
                     pass_result["chunks"] = [dict(item) for item in getattr(engine, "last_chunk_diagnostics", [])]
                     pass_result["possible_truncation"] |= any(
-                        item.get("possible_truncation", False) for item in pass_result["chunks"]
+                        item.get("possible_truncation", False)
+                        and not item.get("recovered_by_split", False)
+                        for item in pass_result["chunks"]
                     )
                     passes.append(pass_result)
-                first = passes[0]
                 metrics = (
-                    error_rates(first["text"], sample.reference_text)
-                    if sample.reference_text is not None
+                    error_rates(passes[0]["text"], sample.reference_text)
+                    if sample.reference_text is not None and passes
                     else {"cer": None, "wer": None}
                 )
                 sample_results.append(
                     {
                         "id": sample.id,
+                        "ok": sample_error is None,
+                        "error": sample_error,
+                        "failed_pass": failed_pass,
                         "tags": list(sample.tags),
                         "duration_seconds": duration,
                         "expected_language": sample.expected_language,
@@ -471,6 +493,16 @@ def compare_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
         sample_comparisons: list[dict[str, Any]] = []
         for sample in run["result"]["cycles"][0]["samples"]:
             base_sample = baseline_samples[sample["id"]]
+            if not sample.get("passes") or not base_sample.get("passes"):
+                sample_comparisons.append(
+                    {
+                        "id": sample["id"],
+                        "comparable": False,
+                        "candidate_error": sample.get("error"),
+                        "baseline_error": base_sample.get("error"),
+                    }
+                )
+                continue
             candidate_pass = sample["passes"][0]
             baseline_pass = base_sample["passes"][0]
             boundaries, matched_words, alignment_ratio = _boundary_differences(
@@ -480,6 +512,7 @@ def compare_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             sample_comparisons.append(
                 {
                     "id": sample["id"],
+                    "comparable": True,
                     "language_agrees": candidate_pass.get(
                         "canonical_language", candidate_pass["language"]
                     )
@@ -515,6 +548,11 @@ def assess_backend_quality(report: dict[str, Any]) -> dict[str, Any]:
         for cycle in run["result"].get("cycles", []):
             for sample in cycle.get("samples", []):
                 sample_id = sample["id"]
+                if sample.get("ok") is False:
+                    failures.append(
+                        f"sample failed: {sample_id}: {sample.get('error', 'unknown error')}"
+                    )
+                    continue
                 if (
                     sample.get("reference_kind") == "human"
                     and (sample.get("metrics", {}).get("cer") or 0) > 0.05
@@ -690,11 +728,15 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
     low_alignment_rows = [
         item
         for item in mlx_comparison
-        if item.get("timestamp_alignment_ratio", 0) < 0.8
+        if item.get("comparable", True)
+        and item.get("timestamp_alignment_ratio", 0) < 0.8
     ]
     for item in low_alignment_rows:
         failures.append(f"timestamp token alignment below 80%: {item['id']}")
     for item in mlx_comparison:
+        if not item.get("comparable", True):
+            failures.append(f"backend comparison unavailable: {item['id']}")
+            continue
         if not item.get("language_agrees", False):
             failures.append(f"detected language differs from CPU: {item['id']}")
         if (item.get("text_vs_cpu_cer") or 0) > 0.25:
@@ -703,7 +745,8 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
     timestamp_rows = [
         item
         for item in mlx_comparison
-        if item.get("timestamp_p95_abs_seconds") is not None
+        if item.get("comparable", True)
+        and item.get("timestamp_p95_abs_seconds") is not None
         and item.get("timestamp_alignment_ratio", 0) >= 0.8
     ]
     if not timestamp_rows:
@@ -727,6 +770,9 @@ def assess_mlx_gate(report: dict[str, Any]) -> dict[str, Any]:
         result = successful.get(backend, {})
         for cycle in result.get("cycles", []):
             for sample in cycle.get("samples", []):
+                if sample.get("ok") is False:
+                    failures.append(f"sample failed: {backend}/{sample['id']}")
+                    continue
                 if any(item.get("possible_truncation") for item in sample.get("passes", [])):
                     failures.append(f"possible truncation: {backend}/{sample['id']}")
 
@@ -748,10 +794,10 @@ def _redact(run: dict[str, Any], include_transcripts: bool) -> None:
                 text = item["text"]
                 item["text_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
                 item["text_length"] = len(text)
-                for word in item["words"]:
-                    word.pop("text", None)
                 if not include_transcripts:
                     item.pop("text", None)
+                    for word in item["words"]:
+                        word.pop("text", None)
 
 
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:

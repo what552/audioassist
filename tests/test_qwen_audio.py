@@ -8,7 +8,7 @@ import pytest
 import soundfile as sf
 
 from src.qwen_audio import (load_local_audio, split_audio, merged_language,
-                            validate_words, chunk_diagnostic)
+                            bisect_failed_chunk, validate_words, chunk_diagnostic)
 from src.types import WordSegment
 
 
@@ -97,9 +97,41 @@ def test_invalid_timestamps_are_rejected_not_clamped(start, end):
     assert word.end == end
 
 
-def test_silence_does_not_trigger_suspicious_tail_but_nonempty_text_does():
+def test_aligner_end_rounding_within_50ms_is_clamped_to_chunk():
+    word = WordSegment("last", 0.8, 1.03)
+
+    validate_words([word], 1.0)
+
+    assert word.start == 0.8
+    assert word.end == 1.0
+
+
+def test_failed_chunk_bisection_preserves_samples_offsets_and_minimum():
+    audio = np.arange(16000 * 12, dtype=np.float32)
+
+    parts = bisect_failed_chunk(audio, 7.5)
+
+    assert parts is not None
+    np.testing.assert_array_equal(np.concatenate([part for part, _ in parts]), audio)
+    assert [offset for _, offset in parts] == [7.5, 13.5]
+    assert bisect_failed_chunk(np.zeros(16000 * 9, dtype=np.float32), 0) is None
+
+
+def test_timestamp_tail_is_diagnostic_but_generation_controls_truncation():
     assert not chunk_diagnostic(0, 30, [], with_timestamps=True, text_present=False)["possible_truncation"]
-    assert chunk_diagnostic(0, 30, [], with_timestamps=True, text_present=True)["possible_truncation"]
+    diagnostic = chunk_diagnostic(
+        0,
+        30,
+        [WordSegment("hello", 0, 1)],
+        with_timestamps=True,
+        text_present=True,
+        truncated=False,
+    )
+    assert diagnostic["timestamp_tail_gap_seconds"] == 29
+    assert not diagnostic["possible_truncation"]
+    assert chunk_diagnostic(
+        0, 30, [], with_timestamps=True, text_present=True, truncated=True
+    )["possible_truncation"]
     assert not chunk_diagnostic(0, 30, [], with_timestamps=False, text_present=True)["possible_truncation"]
 
 

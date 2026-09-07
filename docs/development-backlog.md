@@ -24,7 +24,7 @@ Priority meanings:
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
-| 8 | QWEN-04A | P1 | Runtime fixes complete; corpus expansion active | Shared short chunks, serial budgets, MPS float32 and instance shims; short/10m/realtime plus 36-file FLEURS clean/noise/G.711 parity pass; broader human/meeting corpus remains |
+| 8 | QWEN-04A | P1 | Meeting corpus complete; lifecycle/listening active | Shared short chunks, adaptive failed-block retry, MPS float32 and instance shims; short/10m/realtime, 36-file FLEURS, and 60-minute public meeting/overlap comparisons pass; 50-cycle lifecycle, Cantonese, and listening remain |
 | 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
@@ -87,6 +87,13 @@ implemented and reviewed; automatic backend policy and the installed app remain 
   text and timestamps were identical; MPS was fastest on this M5 Pro run. The
   small four-utterance-per-language sample is parity evidence, not a full
   accuracy benchmark or an automatic-backend promotion gate.
+- Added: [60-minute public meeting and controlled-overlap benchmark](qwen-meeting-backend-benchmark.md)
+  with flat CER/WER, cpCER/cpWER and shared-diarizer DER. All 30 backend/sample
+  combinations completed after bounded failed-block bisection and a 50 ms
+  aligner-boundary clamp. CPU/MPS text and timestamps were identical; MLX stayed
+  within 1.78% normalized character distance. MPS was fastest overall. High
+  overlap remains a shared accuracy limitation, so automatic selection is still
+  unchanged pending lifecycle, listening, packaged and signed-release gates.
 
 ### REALTIME-DIAG-01 — Intermittent packaged microphone startup
 

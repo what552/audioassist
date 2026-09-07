@@ -90,6 +90,26 @@ def test_silence_after_aligned_chunk_is_allowed(adapter):
     assert not engine.last_chunk_diagnostics[-1]["possible_truncation"]
 
 
+def test_generation_limit_retries_a_large_chunk_by_bisection(adapter, monkeypatch):
+    engine, control, infer = adapter
+    module = "src.asr" if isinstance(engine, ASREngine) else "src.asr_qwen_mlx"
+    control["cap_at"] = 1
+
+    def bisect(chunk, offset):
+        midpoint = len(chunk) // 2
+        return [(chunk[:midpoint], offset), (chunk[midpoint:], offset + 0.5)]
+
+    monkeypatch.setattr(module + ".bisect_failed_chunk", bisect)
+    monkeypatch.setattr(module + ".validate_words", lambda *args, **kwargs: None)
+
+    result = engine.transcribe("/audio/local.wav")
+
+    assert result.text == "chunk0 chunk2 chunk3"
+    assert infer.call_count == 4
+    assert engine.last_chunk_diagnostics[1]["recovered_by_split"] is True
+    assert not engine.last_truncated
+
+
 def test_no_timestamp_mode_accepts_text_without_alignment(adapter):
     engine, control, _ = adapter
     engine.with_timestamps = False

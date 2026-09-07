@@ -11,7 +11,8 @@ import logging
 
 from .types import TranscriptResult, WordSegment
 from .qwen_audio import (SAMPLE_RATE, MAX_CHUNK_SECONDS, MAX_NEW_TOKENS,
-                         load_local_audio, split_audio, merged_language,
+                         MIN_RETRY_CHUNK_SECONDS, load_local_audio, split_audio,
+                         bisect_failed_chunk, merged_language,
                          validate_words, chunk_diagnostic)
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class MLXQwenASREngine:
             "dtype": "float16", "max_chunk_seconds": MAX_CHUNK_SECONDS,
             "max_new_tokens": MAX_NEW_TOKENS, "batch_size": 1,
             "audio_window_mask": True,
+            "min_retry_chunk_seconds": MIN_RETRY_CHUNK_SECONDS,
         }
 
     def load(self) -> None:
@@ -79,7 +81,9 @@ class MLXQwenASREngine:
         self.last_chunk_diagnostics = []
         audio = load_local_audio(audio_path)
         texts, languages, words = [], [], []
-        for chunk, offset in split_audio(audio):
+        pending = list(split_audio(audio))
+        while pending:
+            chunk, offset = pending.pop(0)
             result = self._session.transcribe(
                 chunk,
                 return_timestamps=self.with_timestamps,
@@ -95,17 +99,25 @@ class MLXQwenASREngine:
                 raise RuntimeError("MLX generation diagnostics incomplete; review pinned runtime")
             truncated = bool(getattr(result, "truncated", False) or native["truncated"]
                              or native["finish_reason"] == "length")
-            self.last_truncated |= truncated
             local_words = [WordSegment(word=str(seg["text"]), start=float(seg["start"]), end=float(seg["end"]))
                            for seg in (getattr(result, "segments", None) or [])]
             duration = len(chunk) / SAMPLE_RATE
-            self.last_chunk_diagnostics.append(chunk_diagnostic(
+            diagnostic = chunk_diagnostic(
                 offset, duration, local_words, with_timestamps=self.with_timestamps,
                 text_present=bool(result.text.strip()), truncated=truncated,
                 generated_tokens=native.get("generated_tokens"),
                 max_new_tokens=native.get("max_new_tokens"),
                 finish_reason=native.get("finish_reason", "unknown"),
-            ))
+            )
+            self.last_chunk_diagnostics.append(diagnostic)
+            generation_failed = truncated or native["finish_reason"] != "eos"
+            if generation_failed:
+                retries = bisect_failed_chunk(chunk, offset)
+                if retries is not None:
+                    diagnostic["recovered_by_split"] = True
+                    pending[0:0] = retries
+                    continue
+            self.last_truncated |= truncated
             if truncated:
                 raise RuntimeError("MLX Qwen reached its per-chunk generation limit; transcription rejected")
             if native["finish_reason"] != "eos":
