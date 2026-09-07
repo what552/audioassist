@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current source baseline is 1053 automated tests, including 37 browser tests. It
+The current source baseline is 1061 automated tests, including 37 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -42,8 +42,9 @@ the code-switching clip, with 79-103 seconds missing across repeated runs. Combi
 with the existing 5/5/10-minute evidence, neither accelerated backend is approved
 for automatic selection under that historical configuration. The 2026-09-07
 [runtime corrections](qwen-backend-investigation.md) now pass short/10-minute
-comparisons; the earlier failures are no longer the current blockers. Broader
-human-reference, long-duration/lifecycle and packaged release gates remain.
+comparisons; the earlier failures are no longer the current blockers. Existing
+FLEURS, exact-script/code-switching and meeting references close the requested
+quality scope; packaged release gates remain.
 
 The subsequent [public meeting benchmark](qwen-meeting-backend-benchmark.md)
 covered 60 minutes per backend across AliMeeting, AMI and Mandarin/English
@@ -54,7 +55,14 @@ lowest aggregate inference time (RTF 0.185), while MLX had the lowest load time
 and peak process RSS. The run also added bounded failed-chunk bisection for
 length/repetition stops and a 50 ms aligner-boundary clamp. Speaker-aware scores
 show that 30–50% overlap, rather than backend selection, is the dominant quality
-limitation. Automatic backend policy remains unchanged.
+limitation.
+
+The subsequent [50-cycle lifecycle gate](qwen-lifecycle-results.md) completed
+100 warm serialized utterances on each corrected accelerated backend with zero
+failures, truncations or language mismatches. MLX cleanup RSS grew 225 MiB.
+MPS retained a larger early PyTorch/Metal cache, then narrowed to a 41 MiB range
+over the final ten cycles. Packaged 2.0.2 acceptance is the remaining QWEN-04A gate.
+Automatic backend policy remains unchanged.
 
 QWEN-UI-01 adds a persisted personal backend default in Settings, independently
 of product-wide automatic promotion. New Qwen jobs use the saved CPU/MPS/MLX

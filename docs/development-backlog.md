@@ -24,7 +24,7 @@ Priority meanings:
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
-| 8 | QWEN-04A | P1 | Meeting corpus complete; lifecycle active | Shared short chunks, adaptive failed-block retry, MPS float32 and instance shims; short/10m/realtime, 36-file FLEURS, and 60-minute public meeting/overlap comparisons pass; the corrected-adapter 50-cycle lifecycle and packaged acceptance remain |
+| 8 | QWEN-04A | P1 | Source gates complete; packaged acceptance active | Short/10m/realtime, 36-file FLEURS, 60-minute meeting/overlap and corrected-adapter 50-cycle MPS/MLX lifecycle pass; packaged 2.0.2 acceptance remains |
 | 9 | QWEN-04B | P1 | Hold: gate not met | Promote a Mac backend only after the remaining MLX quality and release gates pass |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
@@ -94,7 +94,11 @@ implemented and reviewed; automatic backend policy and the installed app remain 
   aligner-boundary clamp. CPU/MPS text and timestamps were identical; MLX stayed
   within 1.78% normalized character distance. MPS was fastest overall. High
   overlap remains a shared accuracy limitation, so automatic selection is still
-  unchanged pending lifecycle, listening, packaged and signed-release gates.
+  unchanged pending packaged and signed-release gates.
+- Added: [corrected-adapter 50-cycle lifecycle](qwen-lifecycle-results.md) with
+  100 serialized warm utterances per backend. MPS and MLX had zero failures,
+  truncations or language mismatches. MLX cleanup growth was 225 MiB; MPS built
+  a larger early cache but its last ten cycles varied by only 41 MiB.
 
 ### REALTIME-DIAG-01 — Intermittent packaged microphone startup
 
