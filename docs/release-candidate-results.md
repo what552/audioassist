@@ -19,9 +19,13 @@ Updated: 2026-09-07
 - `dist/release-verification-2.0.4.json`: PASS, including 491 Mach-O files,
   584 symlinks, strict signatures, required Qwen/MLX assets, matching version
   metadata, and a matching read-only mounted DMG payload.
-- The packaged App has not yet been launched against the failing file, installed,
-  or exercised through Mic/System/Mix. Those remain owner acceptance gates and
-  are not implied by the source probes or mechanical package verification.
+- Owner-installed file-transcription acceptance: PASS for both MPS and MLX on the
+  original approximately 593.14-second file. Persisted results recorded
+  `pytorch-mps` (233 merged segments) and `mlx` (232 merged segments); both reached
+  593.139 seconds and contained two detected speaker identities plus conservative
+  `UNKNOWN` intervals. The timestamp-boundary failure did not recur.
+- Mic/System/Mix acceptance on 2.0.4 remains separate and is not implied by this
+  file-transcription result.
 - This remains a local ad-hoc test candidate, not a distributable signed upgrade.
 
 ## 2.0.3 runtime-identity candidate

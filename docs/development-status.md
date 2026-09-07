@@ -167,7 +167,8 @@ same 50 ms limit and reports numeric context for larger defects. The original
 593-second Mandarin file completes across all 31 internal chunks on both MPS and MLX;
 failed and interrupted GUI sessions also expose their recorded backend. The 2.0.3
 artifact is superseded. The 2.0.4 App and DMG passed mechanical package verification;
-installed full-workflow and recording-mode acceptance remain pending.
+owner-installed MPS and MLX file transcription passed on the original 593-second
+file through diarization and persistence. Recording-mode acceptance remains pending.
 
 ## Historical gate record
 
