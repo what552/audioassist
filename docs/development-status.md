@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current source baseline is 1070 automated tests, including 38 browser tests. It
+The current source baseline is 1074 automated tests, including 38 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -158,6 +158,15 @@ refresh the editable package metadata; the packaged verifier accepts the valid w
 or editable metadata format but rejects missing, duplicate, or mismatched identity.
 The 2.0.3 ad-hoc App/DMG passed this mechanical gate, while installed recording and
 Developer ID upgrade-continuity checks remain separate manual/external gates.
+
+QWEN-BOUNDARY-01 closes a later real-file regression found in the 2.0.3 candidate.
+The earlier 50 ms Forced Aligner tolerance clamped an end-only overshoot, but rejected
+a zero-duration final word whose start and end were both quantized 4 ms beyond a
+29.916-second chunk. The shared validator now clamps both boundaries only within the
+same 50 ms limit and reports numeric context for larger defects. The original
+593-second Mandarin file completes across all 31 internal chunks on both MPS and MLX;
+failed and interrupted GUI sessions also expose their recorded backend. The 2.0.3
+artifact is superseded and this source fix requires a 2.0.4 package.
 
 ## Historical gate record
 

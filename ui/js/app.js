@@ -136,8 +136,13 @@ const App = (() => {
       } else if (session.status === 'error' || session.status === 'interrupted') {
         _setView('error');
         dom.errorFilename.textContent = session.filename;
-        dom.errorMsg.textContent = session.errorMsg ||
+        let errorMessage = session.errorMsg ||
           (session.status === 'interrupted' ? 'Transcription was interrupted' : 'Unknown error');
+        const backendPrefix = session.qwenBackend ? `Qwen backend ${session.qwenBackend}` : '';
+        if (backendPrefix && !errorMessage.startsWith(backendPrefix)) {
+          errorMessage = `${backendPrefix}\n${errorMessage}`;
+        }
+        dom.errorMsg.textContent = errorMessage;
         Summary.reset();
       } else if (session.status === 'refining') {
         _setView('file-done');
@@ -377,6 +382,7 @@ const App = (() => {
             duration:   item.duration,
             language:   item.language,
             audioPath:  item.audio_path || null,
+            qwenBackend: item.qwen_backend || null,
           });
         }
       }
@@ -439,6 +445,7 @@ const App = (() => {
       _sessions.set(job_id, {
         id: job_id, type: 'file', status: 'transcribing',
         filename, created_at: _now(), audioPath: filePath,
+        qwenBackend: result.qwen_backend || null,
         refineAvailable: opts.refineAvailable || false,
       });
       _selectSession(job_id);
@@ -543,15 +550,17 @@ const App = (() => {
     _updateSession(jobId, { status: 'done', refineAvailable: false });
   }
 
-  function onTranscribeError(jobId, message) {
+  function onTranscribeError(jobId, message, qwenBackend = null) {
     const wasResuming = _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
+    const failure = { errorMsg: message };
+    if (qwenBackend) failure.qwenBackend = qwenBackend;
     if (wasResuming) {
-      _updateSession(jobId, { status: 'interrupted', errorMsg: message });
+      _updateSession(jobId, { status: 'interrupted', ...failure });
       _processQueue();
       return;
     }
-    _updateSession(jobId, { status: 'error', errorMsg: message });
+    _updateSession(jobId, { status: 'error', ...failure });
     _processQueue();
   }
 

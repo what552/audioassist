@@ -25,7 +25,7 @@ The run found and fixed two shared long-form defects before the final pass:
   repetition stop. Both adapters now bisect only that failed chunk, down to a
   five-second minimum, and reject the job only if the smaller retry still fails.
 - The Forced Aligner can quantize a final boundary up to 30 ms beyond the exact
-  decoded WAV boundary. Boundaries within 50 ms are now clamped to the WAV;
+  decoded WAV boundary. A final start and/or end within 50 ms is now clamped to the WAV;
   larger or otherwise invalid timestamps are still rejected.
 
 Normal EOS chunks with quiet tails retain their tail-gap diagnostic but are no

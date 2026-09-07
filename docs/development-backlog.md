@@ -42,6 +42,7 @@ Priority meanings:
 | 23 | QWEN-UI-01 | P1 | Complete: source verified | Persist a personal Qwen backend default in Settings; shared CLI/file/realtime routing, job snapshots, no automatic fallback; 1042 tests and independent review pass |
 | 24 | QWEN-CLI-01 | P1 | Complete: source verified | Explicit per-job `--qwen-backend`, Whisper rejection, checkpoint precedence and JSON reporting; 1061 tests pass |
 | 25 | RUNTIME-ID-01 | P1 | Complete: 2.0.3 packaged verification passed | Report the actual source/App path and version in CLI/Settings; refresh and package Python metadata, then fail release verification on any version mismatch |
+| 26 | QWEN-BOUNDARY-01 | P0 | Complete: 2.0.4 packaging required | Clamp a final zero-duration aligner word when both start/end are within 50 ms beyond the chunk, retain strict rejection beyond that bound, and expose the actual backend in GUI failures |
 
 ### QWEN-UI-01 acceptance
 

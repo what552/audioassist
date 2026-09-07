@@ -178,12 +178,16 @@ class TestCancelTranscription:
             return _fake_pipeline_slow(audio_path, output_dir, job_id, progress_callback, **kw)
 
         with patch("src.pipeline.run", side_effect=_pipeline), \
+             patch("src.preferences.default_backend", return_value="pytorch-cpu"), \
              patch.object(app_module, "_push"):
             first = api.transcribe(str(src), {}, job_id="same-job")
             assert started.wait(2)
             second = api.transcribe(str(src), {}, job_id="same-job")
             assert second == {"error": "job_in_progress", "job_id": "same-job"}
-            assert first == {"job_id": "same-job"}
+            assert first == {
+                "job_id": "same-job",
+                "qwen_backend": "pytorch-cpu",
+            }
             assert api.cancel_transcription("same-job") is True
             release.set()
             deadline = time.monotonic() + 2

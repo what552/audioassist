@@ -4,6 +4,9 @@ Updated: 2026-09-07
 
 ## 2.0.3 runtime-identity candidate
 
+Status: **superseded — do not distribute**. An installed long-file check subsequently
+found QWEN-BOUNDARY-01; the corrected source must be packaged as 2.0.4.
+
 - Source baseline: runtime identity merge `fa2e5a3`, version merge `777c60c`, and
   packaged-metadata verifier fix `8fc20a4`; the full host suite passed **1070 tests**.
 - Build: `bash scripts/build_dmg.sh` refreshed `audioassist-local` metadata from
@@ -21,9 +24,16 @@ Updated: 2026-09-07
 - CLI source identity reports version 2.0.3 and the canonical repository path.
   The packaged Settings identity has automated browser coverage; launch and
   recording-mode acceptance remain pending and are not claimed here.
-- This candidate has not been installed over `/Applications/AudioAssist.app`.
-  It is local/ad-hoc, not a distributable signed upgrade, and does not satisfy
-  REL-TCC-01 without a stable Developer ID Application identity.
+- At the time of initial mechanical verification this candidate had not been installed
+  over `/Applications/AudioAssist.app`. It remains local/ad-hoc rather than a
+  distributable signed upgrade and cannot satisfy REL-TCC-01 without a stable
+  Developer ID Application identity.
+- A subsequent 2.0.3 owner test uploaded a 593.195-second Mandarin file and failed in
+  the first outer chunk. Its persisted
+  task recorded `pytorch-mps` (not MLX), and an explicit MLX run reproduced the shared
+  validator failure. The offending final word had `start=end=29.920s` against a
+  29.916s internal chunk. After the bounded start/end clamp, full-file pure-ASR probes
+  passed on MPS (1840 words, 31 chunks) and MLX (1838 words, 31 chunks), with no retry.
 
 ## 2.0.2 Qwen backend-selection candidate
 

@@ -258,6 +258,7 @@ class AudioAssistService:
                 "audio_path": checkpoint.get("source_audio", ""),
                 "type": "file",
                 "status": "interrupted",
+                "qwen_backend": checkpoint.get("qwen_backend"),
             })
 
         result.sort(key=lambda item: item.get("date", ""), reverse=True)
@@ -289,6 +290,7 @@ class AudioAssistService:
                 "completed_chunks": completed,
                 "total_chunks": total,
                 "updated_at": checkpoint.get("updated_at", ""),
+                "qwen_backend": checkpoint.get("qwen_backend"),
             }
 
         entry = next((item for item in self.list_sessions() if item["job_id"] == job_id), None)

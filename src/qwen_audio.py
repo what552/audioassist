@@ -114,18 +114,37 @@ def merged_language(languages: list[str]) -> str:
 def validate_words(words: list[WordSegment], duration: float, *, required: bool = False) -> None:
     if required and not words:
         raise RuntimeError("Qwen returned text without requested word timestamps; transcription rejected")
-    for word in words:
+    for index, word in enumerate(words):
         if not (
             math.isfinite(word.start)
             and math.isfinite(word.end)
             and 0 <= word.start <= word.end
-            and word.start <= duration
         ):
-            raise RuntimeError("Qwen returned a timestamp outside its audio chunk; transcription rejected")
+            raise RuntimeError(
+                "Qwen returned a timestamp outside its audio chunk; transcription rejected "
+                f"(word_index={index}, start={word.start:.6f}, end={word.end:.6f}, "
+                f"chunk_duration={duration:.6f})"
+            )
+        if word.start > duration:
+            if word.end - duration > MAX_TIMESTAMP_END_OVERSHOOT_SECONDS:
+                raise RuntimeError(
+                    "Qwen returned a timestamp outside its audio chunk; transcription rejected "
+                    f"(word_index={index}, start={word.start:.6f}, end={word.end:.6f}, "
+                    f"chunk_duration={duration:.6f})"
+                )
+            # The aligner can quantize a zero-duration final token so both its
+            # start and end land in the first timestamp bin beyond the WAV.
+            # Preserve the token at the exact boundary when the overshoot is
+            # bounded, just as for an end-only quantization overshoot.
+            word.start = duration
+            word.end = duration
+            continue
         if word.end > duration:
             if word.end - duration > MAX_TIMESTAMP_END_OVERSHOOT_SECONDS:
                 raise RuntimeError(
-                    "Qwen returned a timestamp outside its audio chunk; transcription rejected"
+                    "Qwen returned a timestamp outside its audio chunk; transcription rejected "
+                    f"(word_index={index}, start={word.start:.6f}, end={word.end:.6f}, "
+                    f"chunk_duration={duration:.6f})"
                 )
             # Forced aligners quantize boundaries. Keep a final boundary that is
             # within one 50 ms timestamp bin, but never leak it beyond the WAV.

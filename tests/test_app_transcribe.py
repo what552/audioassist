@@ -216,6 +216,29 @@ class TestCopyResilience:
         )
         assert not any("onTranscribeError" in p for p in pushes)
 
+    def test_qwen_failure_reports_the_snapshotted_backend(self, env, tmp_path):
+        api, _out_dir = env
+        src = tmp_path / "file.wav"
+        src.write_bytes(b"RIFF")
+        pushes = []
+
+        with patch("src.preferences.default_backend", return_value="mlx"), \
+             patch.object(
+                 app_module.AudioAssistService,
+                 "transcribe",
+                 side_effect=RuntimeError("timestamp rejected"),
+             ), \
+             patch.object(app_module, "_push", side_effect=pushes.append):
+            started = api.transcribe(str(src), {"engine": "qwen"})
+            _wait()
+
+        assert started["qwen_backend"] == "mlx"
+        assert any(
+            "timestamp rejected" in call and '"mlx"' in call
+            for call in pushes
+            if "onTranscribeError" in call
+        )
+
 
 class TestConcurrentRerun:
     def test_rename_during_new_transcription_is_applied_after_commit(self, env, tmp_path):
