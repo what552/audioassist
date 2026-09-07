@@ -2,6 +2,28 @@
 
 Updated: 2026-09-07
 
+## 2.0.4 Qwen timestamp-boundary fix candidate
+
+- Source baseline: boundary fix `c885614`, version bump `bdc98c8`, integrated by
+  merges `5620e38` and `80db4d6`; the full host suite passed **1074 tests**.
+- The original 593.195-second Mandarin file completed in source pure-ASR probes on
+  MPS (142.376 seconds, 1840 words, 31 chunks) and MLX (139.638 seconds, 1838
+  words, 31 chunks), with no recovered chunks. A separate first-300-second probe
+  also passed on both backends.
+- Build: `bash scripts/build_dmg.sh` completed successfully.
+- Version: `2.0.4`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- App: `dist/AudioAssist.app`; DMG: `dist/AudioAssist-2.0.4.dmg`.
+- DMG SHA-256:
+  `4b4eb19cb572ac1ecad1a42a82b50cdcd653b4edc22b7678f9f15c600b990de2`.
+- App CDHash: `3034b0146a1a7496bfc627a08c7423e49b572285`.
+- `dist/release-verification-2.0.4.json`: PASS, including 491 Mach-O files,
+  584 symlinks, strict signatures, required Qwen/MLX assets, matching version
+  metadata, and a matching read-only mounted DMG payload.
+- The packaged App has not yet been launched against the failing file, installed,
+  or exercised through Mic/System/Mix. Those remain owner acceptance gates and
+  are not implied by the source probes or mechanical package verification.
+- This remains a local ad-hoc test candidate, not a distributable signed upgrade.
+
 ## 2.0.3 runtime-identity candidate
 
 Status: **superseded — do not distribute**. An installed long-file check subsequently

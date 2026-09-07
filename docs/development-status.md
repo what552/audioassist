@@ -166,7 +166,8 @@ a zero-duration final word whose start and end were both quantized 4 ms beyond a
 same 50 ms limit and reports numeric context for larger defects. The original
 593-second Mandarin file completes across all 31 internal chunks on both MPS and MLX;
 failed and interrupted GUI sessions also expose their recorded backend. The 2.0.3
-artifact is superseded and this source fix requires a 2.0.4 package.
+artifact is superseded. The 2.0.4 App and DMG passed mechanical package verification;
+installed full-workflow and recording-mode acceptance remain pending.
 
 ## Historical gate record
 
