@@ -180,6 +180,31 @@ def test_release_verifier_accepts_complete_ad_hoc_fixture(tmp_path, monkeypatch)
     assert report["dmg"]["payload"]["payload_verified"] is True
 
 
+def test_release_verifier_accepts_editable_egg_info_metadata(tmp_path, monkeypatch):
+    app = _release_app(tmp_path)
+    resources = app / "Contents/Resources"
+    shutil.rmtree(resources / "audioassist_local-0.1.0.dist-info")
+    metadata = resources / "audioassist_local.egg-info/PKG-INFO"
+    metadata.parent.mkdir()
+    metadata.write_text(
+        "Name: audioassist-local\nVersion: 0.1.0\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(verify_release, "_run", _completed)
+
+    report = verify_release.verify_release(
+        app,
+        dmg=None,
+        expected_version="0.1.0",
+        require_developer_id=False,
+        require_notarized=False,
+    )
+
+    assert report["ok"] is True
+    assert report["audioassist_metadata"].endswith(
+        "audioassist_local.egg-info/PKG-INFO"
+    )
+
+
 def test_release_verifier_audits_all_nested_developer_signatures(
     tmp_path, monkeypatch
 ):
