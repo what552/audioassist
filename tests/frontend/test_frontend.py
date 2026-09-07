@@ -17,7 +17,7 @@ import socketserver
 import threading
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import Page, expect
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 _HERE   = os.path.dirname(os.path.abspath(__file__))
@@ -90,6 +90,45 @@ def test_history_loads(page: Page, ui_base_url: str) -> None:
     sidebar_text = page.locator("#history-list").inner_text()
     assert "meeting.mp3" in sidebar_text
     assert "lecture.mp4" in sidebar_text
+
+
+def test_qwen_default_persists_across_page_reload(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.locator('#btn-summary-config').click()
+    expect(page.locator('#cfg-qwen-backend')).to_be_enabled()
+    page.locator('#cfg-qwen-backend').select_option('mlx')
+    page.locator('#btn-save-qwen-backend').click()
+    expect(page.locator('#cfg-qwen-status')).to_contain_text('已保存：mlx')
+    page.reload()
+    page.evaluate('window._mockApi.dispatchReady()')
+    page.locator('#btn-summary-config').click()
+    expect(page.locator('#cfg-qwen-backend')).to_have_value('mlx')
+    expect(page.locator('#cfg-qwen-help')).to_contain_text('不自动回退')
+
+
+def test_qwen_save_failure_visible_and_retry_possible(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.evaluate("window.pywebview.api.save_qwen_backend_settings = async () => ({ok:false,error:'disk full'})")
+    page.locator('#btn-summary-config').click()
+    expect(page.locator('#cfg-qwen-backend')).to_be_enabled()
+    page.locator('#cfg-qwen-backend').select_option('pytorch-mps')
+    page.locator('#btn-save-qwen-backend').click()
+    expect(page.locator('#cfg-qwen-status')).to_contain_text('disk full')
+    expect(page.locator('#btn-save-qwen-backend')).to_be_enabled()
+
+
+def test_qwen_unavailable_option_and_environment_override_visible(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.evaluate("""window.pywebview.api.get_qwen_backend_settings = async () => ({
+      saved:'mlx',effective:'pytorch-cpu',environment_override:true,options:[
+        {value:'mlx',label:'MLX',available:false,reason:'unsupported hardware'},
+        {value:'pytorch-cpu',label:'CPU',available:true,reason:''}]})""")
+    page.locator('#btn-summary-config').click()
+    expect(page.locator('#cfg-qwen-status')).to_contain_text('环境变量覆盖为 pytorch-cpu')
+    expect(page.locator('#cfg-qwen-backend option[value="mlx"]')).to_be_disabled()
+    expect(page.locator('#btn-save-qwen-backend')).to_be_disabled()
+    page.locator('#cfg-qwen-backend').select_option('pytorch-cpu')
+    expect(page.locator('#btn-save-qwen-backend')).to_be_enabled()
 
 
 def test_switch_stops_audio(page: Page, ui_base_url: str) -> None:

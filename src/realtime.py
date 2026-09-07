@@ -50,12 +50,14 @@ class RealtimeTranscriber:
         output_path: Optional[str] = None,
         model_id: Optional[str] = None,
         diagnostic_id: Optional[str] = None,
+        qwen_backend: Optional[str] = None,
     ):
         self._engine      = engine
         self._on_result   = on_result or (lambda text: None)
         self._on_error    = on_error  or (lambda msg: None)
         self._output_path = output_path
         self._model_id    = model_id
+        self._qwen_backend = qwen_backend
         self._diagnostic_id = diagnostic_id or "unassigned"
 
         self._running    = False
@@ -301,6 +303,7 @@ class RealtimeTranscriber:
                 with_timestamps=False,
                 model_path=resolved.local_path,
                 aligner_path=None,
+                backend_override=self._qwen_backend,
             )
         try:
             self._asr.load()

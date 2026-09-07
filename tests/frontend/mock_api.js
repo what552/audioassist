@@ -110,6 +110,15 @@
       return { downloaded: false };
     },
     get_api_config: async function () { return { base_url: '', api_key: '', model: '' }; },
+    get_qwen_backend_settings: async function () {
+      return {saved: localStorage.getItem('testQwenBackend') || 'auto', effective: 'auto', environment_override: false,
+        options: ['auto', 'pytorch-cpu', 'pytorch-mps', 'mlx'].map(value => ({value, label: value, available: true, reason: ''}))};
+    },
+    save_qwen_backend_settings: async function (value) {
+      record('save_qwen_backend_settings', arguments);
+      localStorage.setItem('testQwenBackend', value);
+      return {ok: true};
+    },
     save_api_config: async function () { record('save_api_config', arguments); return true; },
     get_summary_templates: async function () { return [{ name: 'General', prompt: 'Summarize' }]; },
     save_summary_templates: async function () { record('save_summary_templates', arguments); return true; },

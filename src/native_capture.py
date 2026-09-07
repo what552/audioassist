@@ -85,6 +85,7 @@ class NativeCaptureHelper:
         output_path: Optional[str] = None,
         helper_path: Optional[str] = None,
         model_id: Optional[str] = None,
+        qwen_backend: Optional[str] = None,
     ) -> None:
         self._mode        = mode
         self._engine      = engine
@@ -93,6 +94,7 @@ class NativeCaptureHelper:
         self._output_path = output_path        # WAV path written by the helper
         self._helper_path = helper_path or _default_helper_path()
         self._model_id    = model_id
+        self._qwen_backend = qwen_backend
 
         # Subprocess / IPC handles
         self._process: Optional[subprocess.Popen] = None
@@ -455,6 +457,7 @@ class NativeCaptureHelper:
                 with_timestamps=False,
                 model_path=resolved.local_path,
                 aligner_path=None,
+                backend_override=self._qwen_backend,
             )
         try:
             self._asr.load()

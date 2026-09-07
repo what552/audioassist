@@ -39,6 +39,7 @@ Priority meanings:
 | 20 | LOCAL-API-CLEANUP-01 | P3 | Complete | Make stale desktop discovery cleanup robust after abnormal app termination |
 | 21 | CAPTURE-PERM-01 | P1 | Complete | Enforce and explain the distinct Mic/System/Mix macOS permission matrix before capture startup; installed 2.0.1 gate passed |
 | 22 | REL-TCC-01 | P1 | Blocked: stable signing identity unavailable | Prove that a signed DMG upgrade preserves recording permissions without a TCC reset, and separately verify clean-install prompts |
+| 23 | QWEN-UI-01 | P1 | Implemented: reviewing | Persist a personal Qwen backend default in Settings; shared CLI/file/realtime routing, job snapshots, no automatic fallback; 1038 regression tests pass |
 
 ### QWEN-04A follow-up — Correct the backend evidence
 
@@ -333,7 +334,7 @@ Promotion-level gaps move to QWEN-04; they do not silently disappear.
 | R03-B1 | Complete: HTTP service lifecycle/security design | Approved bounded v1 contract in `docs/http-mcp-contract.md`; no daemon or background inference queue |
 | R03-B2 | Complete: HTTP recording control plus MCP adapter | Shared-service reads work with the app closed; recording mutations require a live authenticated visible app and return stable errors |
 | AGENT-01 | Summary Agent reliability (paused by owner) | Request/tool timeouts, transcript paging instead of a fixed 6000-character truncation, and summary writes through the shared service |
-| TEST-UI-01 | Complete: close frontend coverage gaps | 34 browser tests cover core workflow, capture permissions, playback/session state, errors, and Summary Agent flows |
+| TEST-UI-01 | Complete: close frontend coverage gaps | 37 browser tests cover core workflow, capture permissions, playback/session state, errors, persistent backend settings, and Summary Agent flows |
 | TRANS-01 | Complete: cancellation and concurrency hardening | Immediate cancel registration, duplicate-job rejection, transactional output/refine, retryable refine cancellation, and serialized rename/rerun mutations |
 | ASR-QUALITY-01 | Complete: speaker/timestamp quality | Interval-overlap assignment, conservative dominance/coverage gates, and bounded same-speaker gap repair shared by file and realtime paths |
 | TEXT-01 | Complete: conservative punctuation | Pause-backed internal terminals, transcript-final punctuation, punctuation de-duplication, and Chinese/Japanese/mixed/non-ASCII language fixtures; no semantic rewriting |

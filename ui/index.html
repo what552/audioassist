@@ -233,6 +233,17 @@
       <button id="btn-modal-close" class="btn-icon" title="Close">✕</button>
     </div>
     <div class="modal-body">
+      <div class="config-section-title">Qwen 推理后端</div>
+      <div class="config-row">
+        <label for="cfg-qwen-backend">默认后端</label>
+        <select id="cfg-qwen-backend" disabled aria-describedby="cfg-qwen-help cfg-qwen-status"></select>
+      </div>
+      <p id="cfg-qwen-help" class="config-hint">保存一次，后续 Qwen 文件转写、重新转写及录音沿用。不会切换进行中的任务；断点恢复沿用原后端。不影响 Whisper。失败时明确报错，不自动回退。</p>
+      <p class="config-hint">MPS / MLX 为实验性选项；Auto 在 Mac 上仍使用 CPU。</p>
+      <p id="cfg-qwen-status" class="config-hint" role="status" aria-live="polite">正在读取后端设置…</p>
+      <div class="config-actions">
+        <button id="btn-save-qwen-backend" class="btn-primary btn-sm" disabled>保存默认后端</button>
+      </div>
       <div class="config-section-title">API Configuration</div>
       <div class="config-row">
         <label for="cfg-base-url">Base URL</label>

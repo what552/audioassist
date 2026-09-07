@@ -189,6 +189,19 @@ Files written inside the data directory:
 - **Qwen3-ASR** (`engine="qwen"`): best accuracy for Chinese + 30 languages; the official PyTorch adapter selects CUDA when available and CPU otherwise. Apple Silicon supports explicit `AUDIOASSIST_QWEN_BACKEND=mlx` and diagnostic `pytorch-mps` overrides; the QWEN-03 evidence hold keeps automatic selection unchanged (see [benchmark record](docs/qwen-benchmark-results.md)).
 - **Whisper** (`engine="whisper"`): Apple Silicon — uses `mlx-whisper` on the Apple GPU through Metal; other platforms — uses `faster-whisper` (CPU/CUDA).
 
+Settings → **Qwen 推理后端 → 默认后端** persists `qwen_backend` in the existing
+App Data `config.json`. Choose once: CPU, experimental MPS/MLX, Auto (CPU on
+Mac), or CUDA where available. The preference applies to subsequent Qwen file
+transcription, re-transcription, refinement and Mic/System/Mix sessions; it does
+not affect Whisper or mutate an already submitted job. Resuming a checkpoint
+retains its recorded backend. The shared CLI service reads the same preference
+from its selected config file. Precedence: checkpoint backend, submitted job
+snapshot, explicit `AUDIOASSIST_QWEN_BACKEND`, saved preference, then Auto.
+The UI shows environment overrides and disables unavailable choices. Saving a
+preference never loads/downloads a model or requests capture permission. A failed
+backend reports an error; there is no automatic fallback. This personal default
+does not promote MPS/MLX to the product's out-of-box automatic policy.
+
 Qwen adapters share local float32 audio decoding and lossless low-energy chunks
 of at most 30 seconds (`src/qwen_audio.py`). Inference is serial, with a 1024-token
 budget per chunk. The explicit MPS path uses float32 for both ASR and alignment;

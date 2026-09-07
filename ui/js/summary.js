@@ -26,6 +26,7 @@ const Summary = (() => {
   let _agentStreamBuffer = '';  // agent chunk accumulator
   let dom = {};
   let agentDom = {};
+  let qwenLoadGeneration = 0;
 
   function _showError(message) {
     console.error('[Summary]', message);
@@ -67,6 +68,9 @@ const Summary = (() => {
       cfgBaseUrl:     document.getElementById('cfg-base-url'),
       cfgApiKey:      document.getElementById('cfg-api-key'),
       cfgModel:       document.getElementById('cfg-model'),
+      cfgQwenBackend: document.getElementById('cfg-qwen-backend'),
+      qwenStatus: document.getElementById('cfg-qwen-status'),
+      btnSaveQwen: document.getElementById('btn-save-qwen-backend'),
       btnSaveConfig:      document.getElementById('btn-save-config'),
       btnAddTemplate:     document.getElementById('btn-add-template'),
       templateList:       document.getElementById('template-list'),
@@ -95,6 +99,10 @@ const Summary = (() => {
     dom.modal.addEventListener('click', (e) => { if (e.target === dom.modal) _closeModal(); });
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
+    dom.btnSaveQwen.addEventListener('click', _saveQwenBackend);
+    dom.cfgQwenBackend.addEventListener('change', () => {
+      dom.btnSaveQwen.disabled = !!dom.cfgQwenBackend.selectedOptions[0]?.disabled;
+    });
     dom.btnAddTemplate.addEventListener('click', _onAddTemplate);
     dom.btnOutputBrowse.addEventListener('click', _onOutputBrowse);
     dom.btnSaveStorage.addEventListener('click', _onSaveStorage);
@@ -179,6 +187,7 @@ const Summary = (() => {
   // ── Config ─────────────────────────────────────────────────────────────────
 
   async function _loadConfig() {
+    await _loadQwenBackend();
     try {
       const cfg = await window.pywebview.api.get_api_config();
       dom.cfgBaseUrl.value = cfg.base_url || '';
@@ -199,6 +208,49 @@ const Summary = (() => {
       dom.cfgOutputFolder.value = st.output_dir || '';
     } catch (e) {
       console.warn('[Summary] _loadStorageConfig error:', e);
+    }
+  }
+
+  async function _loadQwenBackend() {
+    const generation = ++qwenLoadGeneration;
+    dom.cfgQwenBackend.disabled = true;
+    dom.btnSaveQwen.disabled = true;
+    try {
+      const cfg = await window.pywebview.api.get_qwen_backend_settings();
+      if (generation !== qwenLoadGeneration) return;
+      dom.cfgQwenBackend.replaceChildren();
+      for (const item of cfg.options) {
+        const option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label + (item.available ? '' : `（不可用：${item.reason}）`);
+        option.disabled = !item.available;
+        dom.cfgQwenBackend.appendChild(option);
+      }
+      dom.cfgQwenBackend.value = cfg.saved;
+      dom.cfgQwenBackend.disabled = false;
+      dom.btnSaveQwen.disabled = !!dom.cfgQwenBackend.selectedOptions[0]?.disabled;
+      dom.qwenStatus.textContent = cfg.environment_override
+        ? `已保存：${cfg.saved}。当前被启动环境变量覆盖为 ${cfg.effective}；移除环境变量后才使用已保存设置。`
+        : `已保存：${cfg.saved}。用于下一次新任务。`;
+    } catch (e) {
+      if (generation !== qwenLoadGeneration) return;
+      dom.qwenStatus.textContent = `读取后端设置失败：${e.message || e}`;
+    }
+  }
+
+  async function _saveQwenBackend() {
+    ++qwenLoadGeneration;
+    const value = dom.cfgQwenBackend.value;
+    dom.btnSaveQwen.disabled = true;
+    dom.cfgQwenBackend.disabled = true;
+    try {
+      const result = await window.pywebview.api.save_qwen_backend_settings(value);
+      if (!result.ok) throw new Error(result.error || '保存失败');
+      await _loadQwenBackend();
+    } catch (e) {
+      dom.qwenStatus.textContent = `保存失败，原设置未更改：${e.message || e}`;
+      dom.cfgQwenBackend.disabled = false;
+      dom.btnSaveQwen.disabled = false;
     }
   }
 
@@ -271,6 +323,7 @@ const Summary = (() => {
     const open = !dom.modal.hidden;
     dom.modal.hidden = open;
     dom.btnSettings.classList.toggle('active', !open);
+    if (!open) _loadQwenBackend();
   }
 
   // ── Templates ──────────────────────────────────────────────────────────────

@@ -72,6 +72,7 @@ def run(
     output_stem: Optional[str] = None,
     session_dir: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
+    qwen_backend: Optional[str] = None,
 ) -> tuple[str, str]:
     """
     Run full transcription pipeline on an audio file.
@@ -152,7 +153,7 @@ def run(
                 with_timestamps=with_timestamps,
                 model_path=asr_path,
                 aligner_path=aligner_path,
-                backend_override=(ckpt_data or {}).get("qwen_backend"),
+                backend_override=(ckpt_data or {}).get("qwen_backend") or qwen_backend,
             )
         try:
             asr.load()

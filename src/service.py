@@ -326,6 +326,7 @@ class AudioAssistService:
         job_id: str | None = None,
         realtime_segments: list[dict] | None = None,
         progress_callback: ProgressCallback | None = None,
+        qwen_backend: str | None = None,
     ) -> dict:
         """Run one transcription synchronously and persist a complete session."""
         source = os.path.abspath(os.path.expanduser(audio_path))
@@ -333,6 +334,12 @@ class AudioAssistService:
             raise FileNotFoundError(f"Audio file not found: {source}")
         job_id = validate_job_id(job_id or str(uuid.uuid4()))
         engine = self._engine_for_model(model_id, engine)
+        if engine == "qwen":
+            from .preferences import default_backend, validate_backend
+            try:
+                qwen_backend = validate_backend(qwen_backend) if qwen_backend is not None else default_backend(self.config_path)
+            except (ValueError, OSError) as exc:
+                raise ConfigurationError(f"Invalid Qwen backend preference: {exc}") from exc
         paths = get_session_paths(self.output_dir, job_id)
         os.makedirs(paths.session_dir, exist_ok=True)
         staging_dir = tempfile.mkdtemp(prefix=".transcribe-", dir=paths.session_dir)
@@ -366,6 +373,7 @@ class AudioAssistService:
                     output_stem="transcript",
                     session_dir=paths.session_dir,
                     progress_callback=progress_callback,
+                    qwen_backend=qwen_backend,
                 )
 
             audio_copy: str | None = None

@@ -465,6 +465,8 @@ class API:
 
         # Register before starting the thread so an immediate cancel cannot
         # miss the job. A job id owns at most one transcription/refine worker.
+        from src.preferences import default_backend
+        qwen_backend = default_backend(CONFIG_PATH) if engine == "qwen" else None
         cancel_ev = _register_transcription(job_id)
         if cancel_ev is None:
             return {"error": "job_in_progress", "job_id": job_id}
@@ -496,6 +498,7 @@ class API:
                         job_id=job_id,
                         realtime_segments=rt_segments,
                         progress_callback=_progress,
+                        qwen_backend=qwen_backend,
                     )
                     s_dir = _session_dir(job_id)
                     json_path = result["json_path"]
@@ -558,6 +561,9 @@ class API:
         if opts is None:
             return {"error": "no_refine_options"}
 
+        from src.preferences import default_backend
+        qwen_backend = default_backend(CONFIG_PATH) if opts["engine"] == "qwen" else None
+
         cancel_ev = _register_transcription(job_id)
         if cancel_ev is None:
             return {"error": "job_in_progress", "job_id": job_id}
@@ -590,6 +596,7 @@ class API:
                         num_speakers=num_speakers,
                         job_id=job_id,
                         progress_callback=_progress,
+                        qwen_backend=qwen_backend,
                     )
 
                 _unregister_transcription(job_id, cancel_ev)
@@ -882,6 +889,15 @@ class API:
         """
         options = options or {}
         capture_mode = options.get("capture_mode", "mic")
+        model_id = options.get("model_id")
+        engine = options.get("engine", "qwen")
+        if model_id:
+            from src.model_manager import CATALOG
+            info = next((m for m in CATALOG if m.id == model_id), None)
+            if info:
+                engine = "whisper" if info.engine == "mlx-whisper" else info.engine
+        from src.preferences import default_backend
+        qwen_backend = default_backend(CONFIG_PATH) if engine == "qwen" else None
         with self._recording_lock:
             if self._realtime is not None:
                 return {"status": "already_running"}
@@ -908,14 +924,6 @@ class API:
             self._recording_generation += 1
             generation = self._recording_generation
         self._caffeinate_start()
-
-        model_id = options.get("model_id")
-        engine   = options.get("engine", "qwen")
-        if model_id:
-            from src.model_manager import CATALOG
-            _info = next((m for m in CATALOG if m.id == model_id), None)
-            if _info:
-                engine = "whisper" if _info.engine == "mlx-whisper" else _info.engine
 
         self._set_recording_status(
             "starting",
@@ -947,6 +955,7 @@ class API:
                     rt = NativeCaptureHelper(
                         mode=capture_mode,
                         engine=engine,
+                        qwen_backend=qwen_backend,
                         model_id=model_id,
                         output_path=output_path,
                         on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
@@ -957,6 +966,7 @@ class API:
                     from src.realtime import RealtimeTranscriber
                     rt = RealtimeTranscriber(
                         engine=engine,
+                        qwen_backend=qwen_backend,
                         model_id=model_id,
                         output_path=output_path,
                         diagnostic_id=session_id,
@@ -1495,13 +1505,24 @@ class API:
 
     def save_api_config(self, config: dict) -> bool:
         os.makedirs(APP_DATA_DIR, exist_ok=True)
-        cfg = self._load_config()
-        cfg["api"] = config
-        self._save_config(cfg)
+        from src.preferences import update_config
+        update_config(CONFIG_PATH, lambda cfg: cfg.update(api=config))
         return True
 
     def get_api_config(self) -> dict:
         return self._load_config().get("api", {})
+
+    def get_qwen_backend_settings(self) -> dict:
+        from src.preferences import get_backend_settings
+        return get_backend_settings(CONFIG_PATH)
+
+    def save_qwen_backend_settings(self, backend: str) -> dict:
+        from src.preferences import save_backend_settings
+        try:
+            save_backend_settings(CONFIG_PATH, backend)
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     # ── Storage config ──────────────────────────────────────────────────────────
 
@@ -1523,9 +1544,8 @@ class API:
         if not os.path.isdir(path):
             return {"ok": False, "error": f"Directory not found: {path}"}
         os.makedirs(APP_DATA_DIR, exist_ok=True)
-        cfg = self._load_config()
-        cfg.setdefault("storage", {})["output_dir"] = path
-        self._save_config(cfg)
+        from src.preferences import update_config
+        update_config(CONFIG_PATH, lambda cfg: cfg.setdefault("storage", {}).update(output_dir=path))
         OUTPUT_DIR = path
         return {"ok": True, "path": path}
 
@@ -1547,9 +1567,8 @@ class API:
     def set_obsidian_config(self, folder: str, enabled: bool) -> bool:
         """Save Obsidian sync settings to config.json."""
         os.makedirs(APP_DATA_DIR, exist_ok=True)
-        cfg = self._load_config()
-        cfg["obsidian"] = {"folder": (folder or "").strip(), "enabled": bool(enabled)}
-        self._save_config(cfg)
+        from src.preferences import update_config
+        update_config(CONFIG_PATH, lambda cfg: cfg.update(obsidian={"folder": (folder or "").strip(), "enabled": bool(enabled)}))
         return True
 
     def select_obsidian_folder(self) -> Optional[str]:

@@ -341,6 +341,7 @@ class TestASRLifecycle:
                 str(tmp_path),
                 engine="qwen",
                 session_dir=str(tmp_path / "session"),
+                qwen_backend="mlx",
             )
 
         factory_kwargs = mock_pipeline_deps["asr_cls"].call_args.kwargs

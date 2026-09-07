@@ -548,7 +548,8 @@ class TestLoadModels:
         )
         mock_whisper_cls.return_value.load.assert_called_once()
 
-    def test_qwen_engine_uses_internal_factory(self):
+    @pytest.mark.parametrize("backend", [None, "mlx", "pytorch-mps"])
+    def test_qwen_engine_uses_internal_factory(self, backend):
         """engine='qwen' stays public while construction uses the factory."""
         mock_asr_cls = MagicMock()
 
@@ -568,13 +569,14 @@ class TestLoadModels:
             "src.realtime.create_qwen_engine", mock_asr_cls,
         ):
             import src.realtime as m
-            rt = m.RealtimeTranscriber(engine="qwen")
+            rt = m.RealtimeTranscriber(engine="qwen", qwen_backend=backend)
             rt._load_models()
 
         mock_asr_cls.assert_called_once_with(
             with_timestamps=False,
             model_path="/models/qwen",
             aligner_path=None,
+            backend_override=backend,
         )
         mock_asr_cls.return_value.load.assert_called_once()
 

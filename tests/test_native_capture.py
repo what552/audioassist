@@ -399,7 +399,8 @@ class TestGetSegments:
 
 
 class TestLocalModelLoading:
-    def test_qwen_uses_validated_local_path_without_aligner(self):
+    @pytest.mark.parametrize("backend", [None, "mlx", "pytorch-mps"])
+    def test_qwen_uses_validated_local_path_without_aligner(self, backend):
         asr_class = MagicMock()
         silero = types.ModuleType("silero_vad")
         silero.load_silero_vad = MagicMock(return_value=MagicMock())
@@ -415,13 +416,14 @@ class TestLocalModelLoading:
              ), patch(
                  "src.native_capture.create_qwen_engine", asr_class,
              ):
-            helper = _helper()
+            helper = NativeCaptureHelper(qwen_backend=backend)
             helper._load_models()
 
         asr_class.assert_called_once_with(
             with_timestamps=False,
             model_path="/models/qwen",
             aligner_path=None,
+            backend_override=backend,
         )
         asr_class.return_value.load.assert_called_once()
 

@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current baseline is 943 automated tests, including 34 browser tests. It
+The current source baseline is 1038 automated tests, including 37 browser tests. It
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
@@ -40,8 +40,16 @@ about 29% faster than CPU on the warm code-switching pass with equal 0.65% CER.
 PyTorch MPS was much faster on the two monolingual clips but repeatedly truncated
 the code-switching clip, with 79-103 seconds missing across repeated runs. Combined
 with the existing 5/5/10-minute evidence, neither accelerated backend is approved
-for automatic selection: MPS fails the short code-switching quality gate and MLX
-still fails the existing 10-minute cross-backend text/timestamp thresholds.
+for automatic selection under that historical configuration. The 2026-09-07
+[runtime corrections](qwen-backend-investigation.md) now pass short/10-minute
+comparisons; the earlier failures are no longer the current blockers. Broader
+human-reference, long-duration/lifecycle and packaged release gates remain.
+
+QWEN-UI-01 adds a persisted personal backend default in Settings, independently
+of product-wide automatic promotion. New Qwen jobs use the saved CPU/MPS/MLX
+choice (unless explicitly overridden by the launch environment); active jobs
+keep their snapshot and checkpoint resumes retain their backend. No automatic
+fallback is implemented. File and realtime routing share the same preference.
 
 TRANS-01 now registers cancellation before worker startup, rejects concurrent
 operations for the same job, and writes transcription/refine results through a
@@ -54,7 +62,7 @@ Per-session mutation locks now use weak-value retention, so active owners and wa
 share one lock while inactive job entries are reclaimed. Session deletion takes that
 same lock and cannot race a transcribe, refine, save, or rename operation.
 
-TEST-UI-01 established a browser harness that has since grown to 34 tests. The real
+TEST-UI-01 established a browser harness that has since grown to 37 tests. The real
 frontend scripts run against a configurable,
 call-recording PyWebView API double for first-run setup, model download failures,
 upload retry/cancel, model library state, serial drag/drop queueing, and Summary Agent

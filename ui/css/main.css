@@ -736,7 +736,8 @@ select { font-family: inherit; }
   color: var(--text-muted);
   font-weight: 500;
 }
-.config-row input {
+.config-row input,
+.config-row select {
   background: var(--bg-input);
   color: var(--text);
   border: 1px solid var(--border);
@@ -747,6 +748,15 @@ select { font-family: inherit; }
   font-family: var(--font-mono);
 }
 .config-row input:focus { border-color: var(--border-focus); }
+
+.config-row select:focus { border-color: var(--border-focus); }
+.config-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
 .config-actions {
   display: flex;
   justify-content: flex-end;
