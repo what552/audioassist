@@ -106,6 +106,8 @@ class NativeCaptureHelper:
         self._pcm_thread:    Optional[threading.Thread] = None
         self._stderr_thread: Optional[threading.Thread] = None
         self._worker_thread: Optional[threading.Thread] = None
+        self._worker_ready = threading.Event()
+        self._worker_load_error: BaseException | None = None
 
         # Runtime state
         self._running = False
@@ -156,9 +158,23 @@ class NativeCaptureHelper:
             self._worker_thread = None
 
         self._stop_event.clear()
-        self._load_models()
 
         try:
+            self._worker_ready.clear()
+            self._worker_load_error = None
+            self._worker_thread = threading.Thread(
+                target=self._transcription_worker,
+                daemon=True,
+                name="native-transcribe-worker",
+            )
+            self._worker_thread.start()
+            self._worker_ready.wait()
+            if self._worker_load_error is not None:
+                error = self._worker_load_error
+                self._worker_thread.join()
+                self._worker_thread = None
+                raise error
+
             # Create FIFO
             self._fifo_path = os.path.join(
                 tempfile.gettempdir(),
@@ -174,14 +190,6 @@ class NativeCaptureHelper:
             # Switch to blocking reads for the PCM reader thread.
             fl = fcntl.fcntl(self._fifo_fd, fcntl.F_GETFL)
             fcntl.fcntl(self._fifo_fd, fcntl.F_SETFL, fl & ~os.O_NONBLOCK)
-
-            # Start serial ASR worker
-            self._worker_thread = threading.Thread(
-                target=self._transcription_worker,
-                daemon=True,
-                name="native-transcribe-worker",
-            )
-            self._worker_thread.start()
 
             # Launch helper subprocess
             cmd = [
@@ -267,7 +275,6 @@ class NativeCaptureHelper:
             worker.join(timeout=5)
         if worker is None or not worker.is_alive():
             self._worker_thread = None
-            self._close_asr()
 
         if self._fifo_path and os.path.exists(self._fifo_path):
             try:
@@ -469,6 +476,7 @@ class NativeCaptureHelper:
             self._engine,
             getattr(self._asr, "backend_name", "default"),
             resolved.local_path,
+            extra={"audioassist_diagnostic": True},
         )
 
     def _close_asr(self, expected: object | None = None) -> None:
@@ -649,8 +657,18 @@ class NativeCaptureHelper:
         self._transcribe_queue.put((buf, start_sec, end_sec))
 
     def _transcription_worker(self) -> None:
-        """Serial ASR worker — drains the transcription queue."""
-        backend = self._asr
+        """Own backend load, serialized inference, and close on one thread."""
+        backend = None
+        try:
+            if self._asr is None:
+                self._load_models()
+            backend = self._asr
+        except BaseException as exc:
+            self._worker_load_error = exc
+            return
+        finally:
+            self._worker_ready.set()
+
         try:
             while True:
                 item = self._transcribe_queue.get()
@@ -689,7 +707,10 @@ class NativeCaptureHelper:
                 self._segments.append(seg)
                 self._on_result(seg)
         except Exception as e:
-            logger.exception("NativeCaptureHelper: transcribe segment failed")
+            logger.exception(
+                "NativeCaptureHelper: transcribe segment failed",
+                extra={"audioassist_diagnostic": True},
+            )
             self._on_error(str(e))
         finally:
             if tmp_path and os.path.exists(tmp_path):

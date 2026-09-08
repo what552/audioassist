@@ -82,6 +82,8 @@ class RealtimeTranscriber:
         # Serial transcription worker — prevents concurrent Metal GPU usage
         self._transcribe_queue: queue.Queue = queue.Queue()
         self._worker_thread: Optional[threading.Thread] = None
+        self._worker_ready = threading.Event()
+        self._worker_load_error: BaseException | None = None
         self._first_audio_frame_event = threading.Event()
         self._first_audio_frame_info: Optional[tuple[int, str]] = None
         self._diagnostic_thread: Optional[threading.Thread] = None
@@ -134,18 +136,27 @@ class RealtimeTranscriber:
             self._worker_thread = None
         started = time.monotonic()
         self._log_start_stage("model_load.begin")
-        self._load_models()
+        self._worker_ready.clear()
+        self._worker_load_error = None
+        self._worker_thread = threading.Thread(
+            target=self._transcription_worker,
+            daemon=True,
+            name="realtime-transcribe-worker",
+        )
+        try:
+            self._worker_thread.start()
+        except BaseException:
+            self._worker_thread = None
+            raise
+        self._worker_ready.wait()
+        if self._worker_load_error is not None:
+            error = self._worker_load_error
+            self._worker_thread.join()
+            self._worker_thread = None
+            raise error
         self._log_start_stage("model_load.done", started)
         try:
             self._running = True
-
-            # Start the serial worker that drains the transcription queue
-            self._worker_thread = threading.Thread(
-                target=self._transcription_worker,
-                daemon=True,
-                name="realtime-transcribe-worker",
-            )
-            self._worker_thread.start()
 
             # Open session WAV writer before the stream captures audio
             if self._output_path is not None:
@@ -214,7 +225,6 @@ class RealtimeTranscriber:
                 self._worker_thread.join()
             self._worker_thread = None
             self._stop_diagnostic_waiter()
-            self._close_asr()
             raise
         logger.info("Realtime transcription started (engine=%s)", self._engine)
 
@@ -315,6 +325,7 @@ class RealtimeTranscriber:
             self._engine,
             getattr(self._asr, "backend_name", "default"),
             resolved.local_path,
+            extra={"audioassist_diagnostic": True},
         )
 
     def _close_asr(self, expected: object | None = None) -> None:
@@ -386,15 +397,23 @@ class RealtimeTranscriber:
     def _transcription_worker(self) -> None:
         """Long-running worker that serially drains the transcription queue.
 
-        Using a single worker thread guarantees that mlx-whisper (and any other
-        Metal/GPU backend) is never called from two threads simultaneously,
-        preventing the ``A command encoder is already encoding to this command
-        buffer`` Metal assertion failure on Apple Silicon.
+        The worker owns backend load, inference, and close. Besides preventing
+        concurrent Metal use, this preserves MLX's thread-local stream identity.
 
         The worker exits when it dequeues the ``None`` sentinel value (sent by
         ``stop()`` after the audio stream is closed).
         """
-        backend = self._asr
+        backend = None
+        try:
+            if self._asr is None:
+                self._load_models()
+            backend = self._asr
+        except BaseException as exc:
+            self._worker_load_error = exc
+            return
+        finally:
+            self._worker_ready.set()
+
         try:
             while True:
                 item = self._transcribe_queue.get()
@@ -431,7 +450,10 @@ class RealtimeTranscriber:
                 self._segments.append(seg)
                 self._on_result(seg)
         except Exception as e:
-            logger.exception("Realtime: transcribe segment failed")
+            logger.exception(
+                "Realtime: transcribe segment failed",
+                extra={"audioassist_diagnostic": True},
+            )
             self._on_error(str(e))
         finally:
             if tmp_path and os.path.exists(tmp_path):

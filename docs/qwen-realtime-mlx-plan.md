@@ -1,7 +1,7 @@
 # QWEN-REALTIME-MLX-01 Development Plan
 
 Date: 2026-09-08  
-Status: In progress  
+Status: Source implemented and verified; independent review pending
 Target release: 2.0.5
 
 ## Problem
@@ -107,3 +107,27 @@ no fallback to another backend and no change to the saved user preference.
 the installed gate, realtime recording should use CPU or MPS. The version will
 not be bumped and no App/DMG will be generated until source implementation,
 tests, and independent review pass.
+
+## Source implementation result
+
+The Mic and NativeCapture serialized workers now establish a ready/error
+handshake, load the selected backend inside the worker, process every queued
+utterance there, and close the backend in that same worker. Capture opens only
+after model readiness. Packaged runtime diagnostics now include the snapshotted
+Qwen backend and the resolved backend after load.
+
+Verification completed before review:
+
+- the new ownership tests failed twice on 2.0.4, then passed after the change;
+- focused realtime/native tests: 161 passed;
+- complete suite outside the restricted browser/socket sandbox: 1078 passed,
+  957 dependency warnings;
+- explicit frontend suite: 38 passed;
+- real 4-second `RealtimeTranscriber` probes passed on CPU, MPS, and MLX with a
+  fake audio device and clean worker shutdown;
+- a real-MLX `NativeCaptureHelper` probe passed with a fake helper process,
+  exercising the System/Mix ASR path without capturing user audio.
+
+No version bump or installable artifact has been produced. Independent review,
+source capture checks, 2.0.5 packaging, and installed nine-combination acceptance
+remain open.

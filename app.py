@@ -966,11 +966,12 @@ class API:
                 os.makedirs(rt_session_dir, exist_ok=True)
                 output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
                 logger.info(
-                    "Realtime start attempt=%s stage=backend_create.begin mode=%s engine=%s model=%s",
+                    "Realtime start attempt=%s stage=backend_create.begin mode=%s engine=%s model=%s qwen_backend=%s",
                     session_id,
                     capture_mode,
                     engine,
                     model_id or "default",
+                    qwen_backend or "not-applicable",
                     extra={"audioassist_diagnostic": True},
                 )
 
