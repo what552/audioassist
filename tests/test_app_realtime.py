@@ -319,6 +319,67 @@ class TestRaceCondition:
         assert api._realtime is None
         assert any("onRealtimeStopped" in call for call in js_calls)
 
+    def test_shutdown_during_load_cancels_and_waits_for_startup_lease(self):
+        api = API()
+        start_entered = threading.Event()
+        stop_entered = threading.Event()
+        release = threading.Event()
+        js_calls = []
+
+        class SlowBackend:
+            def start(self):
+                start_entered.set()
+                release.wait(timeout=5)
+
+            def stop(self):
+                stop_entered.set()
+                release.wait(timeout=5)
+
+        with patch(
+            "src.realtime.RealtimeTranscriber", return_value=SlowBackend()
+        ), patch.object(app_module, "_push", side_effect=js_calls.append):
+            assert api.start_realtime()["status"] == "started"
+            assert start_entered.wait(timeout=2)
+            shutdown = threading.Thread(target=api.shutdown, daemon=True)
+            shutdown.start()
+            assert stop_entered.wait(timeout=2)
+            assert api._realtime is not None
+            assert api.start_realtime()["status"] == "already_running"
+            release.set()
+            shutdown.join(timeout=2)
+
+        assert not shutdown.is_alive()
+        assert api._realtime is None
+        assert api.get_recording_status()["state"] == "idle"
+        assert not any("onRealtimeStarted" in call for call in js_calls)
+
+    def test_shutdown_waits_for_late_native_worker_before_clearing_lease(self):
+        from src.native_capture import RealtimeWorkerStillStopping
+
+        api = API()
+        wait_entered = threading.Event()
+        release = threading.Event()
+        rt = MagicMock()
+        rt.stop.side_effect = RealtimeWorkerStillStopping("still stopping")
+
+        def wait_for_worker_exit():
+            wait_entered.set()
+            release.wait(timeout=5)
+
+        rt.wait_for_worker_exit.side_effect = wait_for_worker_exit
+        api._realtime = rt
+        shutdown = threading.Thread(target=api.shutdown, daemon=True)
+        shutdown.start()
+        assert wait_entered.wait(timeout=2)
+        assert api._realtime is rt
+        assert api.start_realtime()["status"] == "already_running"
+        release.set()
+        shutdown.join(timeout=2)
+
+        assert not shutdown.is_alive()
+        assert api._realtime is None
+        assert api.get_recording_status()["state"] == "idle"
+
 
 # ── pause_realtime / resume_realtime ─────────────────────────────────────────
 

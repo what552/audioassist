@@ -1,7 +1,7 @@
 # QWEN-REALTIME-MLX-01 Development Plan
 
 Date: 2026-09-08  
-Status: Source implemented; first review findings fixed; re-review pending
+Status: Source implemented; second review shutdown finding fixed; re-review pending
 Target release: 2.0.5
 
 ## Problem
@@ -166,3 +166,19 @@ Post-remediation verification:
 
 No version bump or installable artifact has been produced. Exact-commit
 re-review and the 2.0.5 package/install matrix remain open.
+
+## Second independent review and remediation
+
+The second review confirmed both original P1 findings were fixed, then found a
+remaining P1 in application shutdown: `shutdown()` still understood only a
+fully-started backend, not the new startup lease. Closing AudioAssist during
+model load could therefore clear app state without cancelling the late capture
+and owner worker.
+
+The shutdown path now cancels either a startup lease or an active backend,
+waits synchronously for a late Native worker when required, and releases the
+lease only after cleanup succeeds. Two additional tests cover application exit
+during blocked startup and exit during a delayed Native worker shutdown.
+
+Post-fix focused realtime/native lifecycle tests: 209 passed. A new exact-
+commit review and final full-suite run remain required before packaging.

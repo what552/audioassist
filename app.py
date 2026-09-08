@@ -1243,21 +1243,41 @@ class API:
         """Synchronously release capture and sleep-prevention resources on app exit."""
         with self._recording_lock:
             rt = self._realtime
-            self._realtime = None
             self._recording_generation += 1
         self._caffeinate_stop()
-        if rt is not None and hasattr(rt, "stop"):
+        cleanup_error = None
+        if rt is not None:
             try:
-                rt.stop()
-            except Exception:
-                logger.exception("Realtime shutdown failed")
-        self._set_recording_status(
-            "idle",
-            session_id=None,
-            capture_mode=None,
-            started_at=None,
-            error=None,
-        )
+                if isinstance(rt, _RealtimeStartupLease):
+                    rt.cancel_and_stop()
+                elif hasattr(rt, "stop"):
+                    rt.stop()
+            except Exception as error:
+                if (
+                    type(error).__name__ == "RealtimeWorkerStillStopping"
+                    and hasattr(rt, "wait_for_worker_exit")
+                ):
+                    try:
+                        rt.wait_for_worker_exit()
+                    except Exception as wait_error:
+                        cleanup_error = wait_error
+                        logger.exception("Realtime shutdown wait failed")
+                else:
+                    cleanup_error = error
+                    logger.exception("Realtime shutdown failed")
+        if cleanup_error is None:
+            with self._recording_lock:
+                if self._realtime is rt:
+                    self._realtime = None
+            self._set_recording_status(
+                "idle",
+                session_id=None,
+                capture_mode=None,
+                started_at=None,
+                error=None,
+            )
+        else:
+            self._set_recording_status("error", error=str(cleanup_error))
 
     # ── Summary ────────────────────────────────────────────────────────────────
 
