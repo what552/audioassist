@@ -24,7 +24,7 @@ Priority meanings:
 | 5 | QWEN-03 | P1 | Complete: hold | Add a reproducible benchmark gate and keep the Mac automatic backend unchanged |
 | 6 | REL-01 | P1 | Implemented: external gate | Produce and verify a reproducible signed macOS release candidate |
 | 7 | ASR-LANG-01 | P1 | Complete | Canonicalize detected languages, correct strong metadata/text conflicts, and support mixed Chinese/English |
-| 8 | QWEN-04A | P1 | Packaged file/Mic pass; System/Mix permission gate pending | Short/10m/realtime, 36-file FLEURS, 60-minute meeting/overlap, 50-cycle lifecycle, packaged CPU/MPS/MLX file and packaged Mic gates pass; re-authorize the new ad-hoc CDHash for System/Mix |
+| 8 | QWEN-04A | P1 | Complete: 2.0.5 installed realtime acceptance passed | Short/10m/realtime, 36-file FLEURS, 60-minute meeting/overlap, 50-cycle lifecycle, packaged CPU/MPS/MLX file and recording gates passed |
 | 9 | QWEN-04B | P1 | Hold: release gate not met | Keep Auto on CPU; MPS is fastest but retains a larger Metal cache, while MLX is lower-memory but not text-identical. A signed upgrade/permission gate is still unavailable |
 | 10 | TRANS-01 | P2 | Complete | Make cancel/refine/rerun transactional and serialize conflicting same-session mutations |
 | 11 | TEST-UI-01 | P2 | Complete | Cover setup, cancel/retry, model modal, drag/drop, and Summary Agent browser flows |
