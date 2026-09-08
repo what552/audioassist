@@ -48,6 +48,9 @@ const Transcript = (() => {
     const speaker = document.createElement('span');
     speaker.className = 'row-speaker';
     speaker.textContent = seg.speaker;
+    speaker.tabIndex = 0;
+    speaker.setAttribute('role', 'button');
+    speaker.title = '修改这一段的说话人，或统一重命名';
 
     const text = document.createElement('span');
     text.className = 'row-text';
@@ -57,6 +60,12 @@ const Transcript = (() => {
 
     // Click on speaker label → rename menu
     speaker.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _openSpeakerMenu(e, speaker, row);
+    });
+    speaker.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
       e.stopPropagation();
       _openSpeakerMenu(e, speaker, row);
     });
@@ -144,6 +153,7 @@ const Transcript = (() => {
   function _openSpeakerMenu(e, speakerEl, row) {
     _closeMenu();
     const oldName = speakerEl.textContent;
+    const affectedCount = _segments.filter(seg => seg.speaker === oldName).length;
 
     const menu = document.createElement('div');
     menu.className = 'speaker-menu';
@@ -151,7 +161,7 @@ const Transcript = (() => {
 
     const btnSingle = document.createElement('button');
     btnSingle.className = 'speaker-menu-item';
-    btnSingle.textContent = 'Rename this';
+    btnSingle.textContent = '仅修改这一段';
     btnSingle.addEventListener('click', (ev) => {
       ev.stopPropagation();
       _closeMenu();
@@ -160,7 +170,7 @@ const Transcript = (() => {
 
     const btnAll = document.createElement('button');
     btnAll.className = 'speaker-menu-item';
-    btnAll.textContent = `Rename all "${oldName}"`;
+    btnAll.textContent = `统一重命名 “${oldName}”（${affectedCount} 段）`;
     btnAll.addEventListener('click', (ev) => {
       ev.stopPropagation();
       _closeMenu();

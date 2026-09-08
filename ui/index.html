@@ -11,14 +11,17 @@
 
   <!-- ── Toolbar ─────────────────────────────────────────────────────────── -->
   <header id="toolbar">
-    <span class="app-title">AudioAssist</span>
-    <div class="toolbar-actions">
+    <div class="toolbar-primary">
+      <span class="app-title">AudioAssist</span>
       <select id="sel-engine" title="ASR engine">
         <option value="" disabled selected>Loading models…</option>
       </select>
-      <button id="btn-models" class="btn-toolbar" title="Model library">Models</button>
-      <button id="btn-summary-config" class="btn-toolbar" title="API config &amp; templates">⚙</button>
-      <button id="btn-summary-toggle" class="btn-toolbar" title="Toggle summary panel">Summary</button>
+    </div>
+    <div class="toolbar-actions">
+      <button id="btn-summary-toggle" class="btn-toolbar btn-with-icon" title="Toggle summary panel" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+        Summary
+      </button>
     </div>
   </header>
 
@@ -26,16 +29,28 @@
   <main id="main">
 
     <!-- ── Left: History sidebar ──────────────────────────────────────────── -->
-    <nav id="history-panel" style="width:210px">
-      <div id="history-list"></div>
-      <div id="history-footer">
-        <button id="btn-upload" class="btn-sidebar">📁 Upload File</button>
+    <nav id="history-panel">
+      <div id="history-footer" class="history-create">
         <!-- Capture mode selector -->
         <div id="capture-mode-row" aria-label="Capture mode">
-          <button class="btn-mode active" data-mode="mic"    title="Microphone">🎙 Mic</button>
-          <button class="btn-mode"        data-mode="system" title="System Audio">🔊 System</button>
-          <button class="btn-mode"        data-mode="mix"    title="Microphone + System">⊕ Mix</button>
+          <button class="btn-mode active" data-mode="mic" title="Microphone">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M9 22h6"/></svg>Mic
+          </button>
+          <button class="btn-mode" data-mode="system" title="System Audio">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 21h8M12 16v5"/></svg>System
+          </button>
+          <button class="btn-mode" data-mode="mix" title="Microphone + System">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Mix
+          </button>
         </div>
+        <button id="btn-start-recording" class="btn-sidebar btn-sidebar-record btn-with-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M9 22h6"/></svg>
+          <span class="btn-label">Start Recording</span>
+        </button>
+        <button id="btn-upload" class="btn-sidebar btn-with-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 8h18"/></svg>
+          Upload File
+        </button>
         <!-- Permission / preflight notice -->
         <div id="capture-perm-notice" hidden>
           <p id="capture-perm-text"></p>
@@ -44,7 +59,18 @@
             <button id="btn-open-screen-privacy" class="btn-link btn-sm" hidden>屏幕与系统音频设置 →</button>
           </div>
         </div>
-        <button id="btn-start-recording" class="btn-sidebar btn-sidebar-record">🎙 Start Recording</button>
+      </div>
+      <div class="history-section-heading"><span>RECENT TRANSCRIPTS</span></div>
+      <div id="history-list"></div>
+      <div class="history-manage">
+        <button id="btn-models" class="btn-toolbar btn-with-icon" title="Model library">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="8" cy="7" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="11" cy="17" r="1.5"/></svg>
+          Models
+        </button>
+        <button id="btn-summary-config" class="btn-toolbar btn-with-icon" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-.7 2.1-2.1 1.2L5 6 3 9l1.5 1.8v2.4L3 15l2 3 2.2-.3 2.1 1.2L10 21h4l.7-2.1 2.1-1.2 2.2.3 2-3-1.5-1.8v-2.4L21 9l-2-3-2.2.3-2.1-1.2L14 3Z"/><circle cx="12" cy="12" r="3"/></svg>
+          Settings
+        </button>
       </div>
     </nav>
 
@@ -53,13 +79,6 @@
 
     <!-- ── Center: player + transcript content ────────────────────────────── -->
     <section id="center-panel">
-
-      <!-- Player bar (shown when a job is loaded) -->
-      <div id="player-bar" hidden>
-        <div id="player-filename"></div>
-        <audio id="audio-el" controls></audio>
-        <div id="player-time">00:00 / 00:00</div>
-      </div>
 
       <!-- Setup panel (first-run: models not downloaded) -->
       <div id="setup-panel" hidden>
@@ -125,11 +144,16 @@
 
       <!-- Transcript (done state) -->
       <div id="transcript-header" hidden>
-        <span id="transcript-meta"></span>
-        <button id="btn-high-accuracy" class="btn-primary btn-sm" hidden>高精度转写</button>
-        <button id="btn-save" class="btn-save" hidden>Save</button>
-        <span id="save-status" class="save-status"></span>
-        <button id="btn-export-transcript" class="btn-toolbar btn-sm">Export ▾</button>
+        <div class="transcript-heading">
+          <div id="transcript-title"></div>
+          <span id="transcript-meta"></span>
+        </div>
+        <div class="transcript-actions">
+          <button id="btn-high-accuracy" class="btn-primary btn-sm" hidden>高精度转写</button>
+          <button id="btn-save" class="btn-save" hidden>Save</button>
+          <span id="save-status" class="save-status"></span>
+          <button id="btn-export-transcript" class="btn-toolbar btn-sm">Export ▾</button>
+        </div>
       </div>
       <!-- Refine hint (shown while background high-accuracy ASR runs) -->
       <div id="refine-hint" class="refine-hint" hidden></div>
@@ -160,13 +184,20 @@
         </div>
       </div>
 
+      <!-- Player dock (shown when a completed job is loaded) -->
+      <div id="player-bar" hidden>
+        <div id="player-filename"></div>
+        <audio id="audio-el" controls></audio>
+        <div id="player-time">00:00 / 00:00</div>
+      </div>
+
     </section>
 
     <!-- ── Resizer: center | summary ────────────────────────────────────── -->
     <div class="col-resizer" id="resizer-right" hidden></div>
 
     <!-- ── Right: Summary panel (collapsible via toolbar toggle) ──────────── -->
-    <aside id="summary-panel" hidden style="width:360px">
+    <aside id="summary-panel" hidden>
       <div id="summary-inner">
 
         <!-- Controls row -->
@@ -233,6 +264,16 @@
       <button id="btn-modal-close" class="btn-icon" title="Close">✕</button>
     </div>
     <div class="modal-body">
+      <div class="config-section-title">Appearance</div>
+      <div class="config-row">
+        <label for="cfg-theme">Theme</label>
+        <select id="cfg-theme">
+          <option value="system">Follow system</option>
+          <option value="light">Light · Warm</option>
+          <option value="dark">Dark · Graphite</option>
+        </select>
+      </div>
+      <p class="config-hint">Applies immediately and is remembered on this Mac.</p>
       <div class="config-section-title">Qwen 推理后端</div>
       <div class="config-row">
         <label for="cfg-qwen-backend">默认后端</label>
@@ -307,6 +348,7 @@
 
 <script src="js/vendor/marked.min.js"></script>
 <script src="js/vendor/purify.min.js"></script>
+<script src="js/theme.js"></script>
 <script src="js/player.js"></script>
 <script src="js/transcript.js"></script>
 <script src="js/realtime.js"></script>

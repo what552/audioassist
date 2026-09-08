@@ -194,7 +194,9 @@ const App = (() => {
 
   function _showFileDone(session) {
     const data = session._data;
-    dom.playerFilename.textContent = session.filename || data.filename || data.audio;
+    const displayName = session.filename || data.filename || data.audio;
+    dom.playerFilename.textContent = displayName;
+    dom.transcriptTitle.textContent = displayName;
     dom.transcriptMeta.textContent =
       `${(data.segments || []).length} segments · ${data.language || ''}`;
     Player.load(session.audioPath || '');
@@ -616,6 +618,7 @@ const App = (() => {
       errorMsg:           document.getElementById('error-msg'),
       btnRetry:           document.getElementById('btn-retry'),
       transcriptHeader:   document.getElementById('transcript-header'),
+      transcriptTitle:    document.getElementById('transcript-title'),
       transcriptMeta:     document.getElementById('transcript-meta'),
       btnHighAccuracy:    document.getElementById('btn-high-accuracy'),
       refineHint:         document.getElementById('refine-hint'),
@@ -1113,4 +1116,5 @@ function onModelDownloadError(name, message) {
 // init) can actually reach the backend.
 // Tests call App.init() directly — no bootstrap needed in that environment.
 
+Theme.init();
 window.addEventListener('pywebviewready', () => App.init());
