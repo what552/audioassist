@@ -1,7 +1,7 @@
 # QWEN-REALTIME-MLX-01 Development Plan
 
 Date: 2026-09-08  
-Status: Source implemented; second review shutdown finding fixed; re-review pending
+Status: Source implemented, independently reviewed, and verified; packaging pending
 Target release: 2.0.5
 
 ## Problem
@@ -180,5 +180,11 @@ waits synchronously for a late Native worker when required, and releases the
 lease only after cleanup succeeds. Two additional tests cover application exit
 during blocked startup and exit during a delayed Native worker shutdown.
 
-Post-fix focused realtime/native lifecycle tests: 209 passed. A new exact-
-commit review and final full-suite run remain required before packaging.
+Post-fix focused realtime/native lifecycle tests: 209 passed. The final full
+suite passed 1084 tests with one dependency warning.
+
+The third independent review examined exact commit `23dcf88` and passed it with
+no P0, P1, or P2 findings. It confirmed shutdown-during-load, delayed Native
+shutdown, normal stop, owner-thread identity, single-sentinel cleanup, and
+CPU/MPS/Whisper routing. Source implementation is therefore accepted; 2.0.5
+packaging and installed recording checks are the remaining release gates.
