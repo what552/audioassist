@@ -1,7 +1,7 @@
 # QWEN-REALTIME-MLX-01 Development Plan
 
 Date: 2026-09-08  
-Status: Source implemented and verified; independent review pending
+Status: Source implemented; first review findings fixed; re-review pending
 Target release: 2.0.5
 
 ## Problem
@@ -41,6 +41,11 @@ capture callback/PCM thread: collect audio + enqueue utterances only
 ASR worker thread: create + load + transcribe serially + close ASR
 ```
 
+The desktop API also holds one cancelable session lease from backend
+construction until the owner worker has fully exited. A stop during model load
+marks that lease cancelled, and a new session cannot start while the old lease
+is starting or stopping.
+
 CPU, MPS, MLX, and MLX Whisper will use the same ownership contract. There is
 no fallback to another backend and no change to the saved user preference.
 
@@ -74,8 +79,8 @@ no fallback to another backend and no change to the saved user preference.
 2. Add worker ready/error state and move backend construction/loading into each
    serialized ASR worker without moving inference into an audio callback.
 3. Make startup failure and post-capture cleanup join the worker without closing
-   a live backend from a foreign thread. Preserve the native 30-second bounded
-   drain behavior.
+   a live backend from a foreign thread. A native 30-second drain timeout keeps
+   the API in `stopping` and retains the lease until late cleanup finishes.
 4. Add restart, load-failure, capture-open-failure, pause/resume, and stop-during-
    startup regression coverage.
 5. Add backend identity to recording startup diagnostics.
@@ -131,3 +136,33 @@ Verification completed before review:
 No version bump or installable artifact has been produced. Independent review,
 source capture checks, 2.0.5 packaging, and installed nine-combination acceptance
 remain open.
+
+## First independent review and remediation
+
+The first exact-commit concurrency review rejected `2feeac3` with two P1
+findings: startup used an un-cancelable placeholder that allowed a new MLX
+session to overlap a slow old load, and NativeCapture reported success after a
+30-second worker timeout while the old backend was still alive.
+
+The remediation adds:
+
+- a cancelable startup lease published before backend construction;
+- bounded, cancellation-aware model readiness waits;
+- serialized capture activation and teardown;
+- exactly-once worker stop signalling;
+- retention of the app lease and `stopping` state until Native PCM/ASR workers
+  have actually exited;
+- regression tests for stop-during-load, blocked restart, late Native shutdown,
+  model-load timeout, and factory/create/load/infer/close thread identity.
+
+Post-remediation verification:
+
+- focused realtime/native/app lifecycle tests: 207 passed;
+- complete suite outside the restricted browser/socket sandbox: 1082 passed;
+- explicit frontend suite: 38 passed;
+- real 4-second Mic-path probes passed on `pytorch-cpu`, `pytorch-mps`, and
+  `mlx`, with a non-empty result and no surviving worker;
+- the real MLX NativeCapture ASR path passed with a fake helper process.
+
+No version bump or installable artifact has been produced. Exact-commit
+re-review and the 2.0.5 package/install matrix remain open.

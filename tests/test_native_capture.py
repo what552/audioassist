@@ -1135,15 +1135,17 @@ class TestStopDrainTiming:
             real_join = worker.join
 
             # Simulate the production 30-second join timing out immediately.
-            with patch.object(worker, "join", return_value=None):
+            with patch.object(worker, "join", return_value=None), pytest.raises(
+                RuntimeError, match="still stopping"
+            ):
                 h.stop()
 
             backend.close.assert_not_called()
-            with pytest.raises(RuntimeError, match="still stopping"):
-                h.start()
+            assert h.has_live_worker()
 
             release.set()
             real_join(timeout=2)
+            h.wait_for_worker_exit(timeout=2)
 
         assert not worker.is_alive()
         backend.close.assert_called_once()
@@ -1346,7 +1348,8 @@ class TestStopDrainTiming:
             h._in_speech = True
             # Swap in the stuck thread so stop() sees is_alive() == True
             h._pcm_thread = _StuckThread()
-            h.stop()
+            with pytest.raises(RuntimeError, match="still stopping"):
+                h.stop()
 
         assert flush_called == [], "flush must not run when pcm_thread is still alive (fatal path)"
         # Best-effort sentinel IS sent so the worker can drain already-queued items

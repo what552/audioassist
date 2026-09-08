@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import wave
 from typing import Callable, Optional
 
@@ -39,6 +40,12 @@ VAD_THRESHOLD      = 0.5
 SILENCE_CHUNKS     = 15
 MIN_SPEECH_CHUNKS  = 5
 MAX_SEGMENT_SECONDS = 10       # force-flush when a single utterance exceeds this
+MODEL_READY_TIMEOUT_SECONDS = 120.0
+MODEL_READY_POLL_SECONDS = 0.05
+
+
+class RealtimeWorkerStillStopping(RuntimeError):
+    """The capture stopped, but the owner worker still holds the ASR backend."""
 
 
 def _default_helper_path() -> str:
@@ -108,6 +115,10 @@ class NativeCaptureHelper:
         self._worker_thread: Optional[threading.Thread] = None
         self._worker_ready = threading.Event()
         self._worker_load_error: BaseException | None = None
+        self._startup_cancel = threading.Event()
+        self._worker_control_lock = threading.Lock()
+        self._worker_stop_sent = False
+        self._capture_lifecycle_lock = threading.Lock()
 
         # Runtime state
         self._running = False
@@ -140,6 +151,8 @@ class NativeCaptureHelper:
 
     def start(self) -> None:
         """Load models, create FIFO, launch helper, start reader threads."""
+        if self._startup_cancel.is_set():
+            raise RuntimeError("Realtime startup was cancelled")
         if not self._output_path:
             raise ValueError("output_path must be set before calling start()")
         for attribute in ("_pcm_thread", "_event_thread", "_stderr_thread"):
@@ -168,72 +181,85 @@ class NativeCaptureHelper:
                 name="native-transcribe-worker",
             )
             self._worker_thread.start()
-            self._worker_ready.wait()
+            deadline = time.monotonic() + MODEL_READY_TIMEOUT_SECONDS
+            while not self._worker_ready.wait(timeout=MODEL_READY_POLL_SECONDS):
+                if self._startup_cancel.is_set():
+                    raise RuntimeError("Realtime startup was cancelled")
+                if time.monotonic() >= deadline:
+                    self._startup_cancel.set()
+                    self._request_worker_stop()
+                    raise TimeoutError("Realtime ASR model loading timed out")
+            if self._startup_cancel.is_set():
+                raise RuntimeError("Realtime startup was cancelled")
             if self._worker_load_error is not None:
                 error = self._worker_load_error
                 self._worker_thread.join()
                 self._worker_thread = None
                 raise error
 
-            # Create FIFO
-            self._fifo_path = os.path.join(
-                tempfile.gettempdir(),
-                f"audioassist-{os.getpid()}.fifo",
-            )
-            if os.path.exists(self._fifo_path):
-                os.unlink(self._fifo_path)
-            os.mkfifo(self._fifo_path)
+            with self._capture_lifecycle_lock:
+                if self._startup_cancel.is_set():
+                    raise RuntimeError("Realtime startup was cancelled")
+                # Create FIFO
+                self._fifo_path = os.path.join(
+                    tempfile.gettempdir(),
+                    f"audioassist-{os.getpid()}.fifo",
+                )
+                if os.path.exists(self._fifo_path):
+                    os.unlink(self._fifo_path)
+                os.mkfifo(self._fifo_path)
 
-            # Open FIFO read-end BEFORE launching the helper so the helper's
-            # blocking O_WRONLY open completes immediately.
-            self._fifo_fd = os.open(self._fifo_path, os.O_RDONLY | os.O_NONBLOCK)
-            # Switch to blocking reads for the PCM reader thread.
-            fl = fcntl.fcntl(self._fifo_fd, fcntl.F_GETFL)
-            fcntl.fcntl(self._fifo_fd, fcntl.F_SETFL, fl & ~os.O_NONBLOCK)
+                # Open FIFO read-end BEFORE launching the helper so the helper's
+                # blocking O_WRONLY open completes immediately.
+                self._fifo_fd = os.open(self._fifo_path, os.O_RDONLY | os.O_NONBLOCK)
+                # Switch to blocking reads for the PCM reader thread.
+                fl = fcntl.fcntl(self._fifo_fd, fcntl.F_GETFL)
+                fcntl.fcntl(self._fifo_fd, fcntl.F_SETFL, fl & ~os.O_NONBLOCK)
 
-            # Launch helper subprocess
-            cmd = [
-                self._helper_path, "stream",
-                "--mode",        self._mode,
-                "--pcm-fifo",    self._fifo_path,
-                "--wav-out",     self._output_path,
-                "--sample-rate", str(SAMPLE_RATE),
-                "--channels",    "1",
-            ]
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+                # Launch helper subprocess
+                cmd = [
+                    self._helper_path, "stream",
+                    "--mode",        self._mode,
+                    "--pcm-fifo",    self._fifo_path,
+                    "--wav-out",     self._output_path,
+                    "--sample-rate", str(SAMPLE_RATE),
+                    "--channels",    "1",
+                ]
+                self._process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
 
-            # Event reader thread (parses stdout NDJSON)
-            self._event_thread = threading.Thread(
-                target=self._event_reader,
-                daemon=True,
-                name="native-event-reader",
-            )
-            self._event_thread.start()
+                # Event reader thread (parses stdout NDJSON)
+                self._event_thread = threading.Thread(
+                    target=self._event_reader,
+                    daemon=True,
+                    name="native-event-reader",
+                )
+                self._event_thread.start()
 
-            # Stderr drain thread — prevents helper pipe backpressure.
-            self._stderr_thread = threading.Thread(
-                target=self._stderr_reader,
-                daemon=True,
-                name="native-stderr-reader",
-            )
-            self._stderr_thread.start()
+                # Stderr drain thread — prevents helper pipe backpressure.
+                self._stderr_thread = threading.Thread(
+                    target=self._stderr_reader,
+                    daemon=True,
+                    name="native-stderr-reader",
+                )
+                self._stderr_thread.start()
 
-            # PCM reader thread (reads FIFO, runs VAD + ASR)
-            self._pcm_thread = threading.Thread(
-                target=self._pcm_reader,
-                daemon=True,
-                name="native-pcm-reader",
-            )
-            self._pcm_thread.start()
+                # PCM reader thread (reads FIFO, runs VAD + ASR)
+                self._pcm_thread = threading.Thread(
+                    target=self._pcm_reader,
+                    daemon=True,
+                    name="native-pcm-reader",
+                )
+                self._pcm_thread.start()
 
-            self._running = True
+                self._running = True
         except Exception:
-            self._cleanup_failed_start()
+            if not self._startup_cancel.is_set():
+                self._cleanup_failed_start()
             raise
 
         logger.info("NativeCaptureHelper started (mode=%s)", self._mode)
@@ -271,7 +297,7 @@ class NativeCaptureHelper:
 
         worker = self._worker_thread
         if worker is not None and worker.is_alive():
-            self._transcribe_queue.put(None)
+            self._request_worker_stop()
             worker.join(timeout=5)
         if worker is None or not worker.is_alive():
             self._worker_thread = None
@@ -311,6 +337,12 @@ class NativeCaptureHelper:
         logger.info("NativeCaptureHelper resumed")
 
     def stop(self) -> None:
+        """Cancel startup, then serialize capture teardown with activation."""
+        self._startup_cancel.set()
+        with self._capture_lifecycle_lock:
+            self._stop_capture()
+
+    def _stop_capture(self) -> None:
         """Stop capture: terminate helper, drain FIFO, flush ASR queue, clean up."""
         errors: list[Exception] = []
 
@@ -368,7 +400,7 @@ class NativeCaptureHelper:
                 # was already queued before the reader got stuck.
                 if self._worker_thread is not None and self._worker_thread.is_alive():
                     try:
-                        self._transcribe_queue.put(None)
+                        self._request_worker_stop()
                     except Exception as exc:
                         errors.append(exc)
             else:
@@ -385,7 +417,7 @@ class NativeCaptureHelper:
             # Step 5: Drain the ASR worker.
             if self._worker_thread is not None and self._worker_thread.is_alive():
                 try:
-                    self._transcribe_queue.put(None)  # sentinel
+                    self._request_worker_stop()
                     self._worker_thread.join(timeout=30)
                 except Exception as exc:
                     errors.append(exc)
@@ -435,8 +467,52 @@ class NativeCaptureHelper:
             self._flush_count,
             self._chunks_read,
         )
+        if self.has_live_worker():
+            error = RealtimeWorkerStillStopping(
+                "Native realtime ASR worker is still stopping"
+            )
+            if errors:
+                raise error from errors[0]
+            raise error
         if errors:
             raise errors[0]
+
+    def _request_worker_stop(self) -> None:
+        """Queue exactly one owner-worker sentinel, including during model load."""
+        with self._worker_control_lock:
+            worker = self._worker_thread
+            if worker is None or not worker.is_alive() or self._worker_stop_sent:
+                return
+            self._worker_stop_sent = True
+            self._transcribe_queue.put(None)
+
+    def has_live_worker(self) -> bool:
+        worker = self._worker_thread
+        pcm = self._pcm_thread
+        return bool(
+            (worker is not None and worker.is_alive())
+            or (pcm is not None and pcm.is_alive())
+        )
+
+    def wait_for_worker_exit(self, timeout: float | None = None) -> None:
+        """Wait for capture production and backend ownership to fully end."""
+        pcm = self._pcm_thread
+        if pcm is not None:
+            pcm.join(timeout=timeout)
+            if pcm.is_alive():
+                raise RealtimeWorkerStillStopping(
+                    "Native realtime PCM worker is still stopping"
+                )
+            self._pcm_thread = None
+        worker = self._worker_thread
+        if worker is None:
+            return
+        worker.join(timeout=timeout)
+        if worker.is_alive():
+            raise RealtimeWorkerStillStopping(
+                "Native realtime ASR worker is still stopping"
+            )
+        self._worker_thread = None
 
     def get_segments(self) -> list:
         """Return a copy of accumulated realtime transcription segments."""

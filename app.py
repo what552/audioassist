@@ -362,6 +362,38 @@ def _transcript_to_md(segments: list) -> str:
     return "\n".join(lines)
 
 
+class _RealtimeStartupLease:
+    """Cancelable placeholder published before a realtime backend is constructed."""
+
+    def __init__(self) -> None:
+        self.cancelled = threading.Event()
+        self.backend_ready = threading.Event()
+        self._lock = threading.Lock()
+        self._backend = None
+
+    def publish_backend(self, backend) -> None:
+        with self._lock:
+            self._backend = backend
+        self.backend_ready.set()
+
+    def publish_failure(self) -> None:
+        self.backend_ready.set()
+
+    def cancel_and_stop(self) -> None:
+        self.cancelled.set()
+        self.backend_ready.wait()
+        with self._lock:
+            backend = self._backend
+        if backend is not None and hasattr(backend, "stop"):
+            backend.stop()
+
+    def wait_for_worker_exit(self, timeout: float | None = None) -> None:
+        with self._lock:
+            backend = self._backend
+        if backend is not None and hasattr(backend, "wait_for_worker_exit"):
+            backend.wait_for_worker_exit(timeout=timeout)
+
+
 class API:
     def __init__(self):
         self._realtime = None  # RealtimeTranscriber instance when active
@@ -943,8 +975,9 @@ class API:
                     "missing_permissions": missing_permissions,
                     **permission_result,
                 }
-            # Sentinel prevents a second call racing before _run() installs the backend.
-            self._realtime = object()
+            # Keep a concrete, cancelable lease from construction through model load.
+            lease = _RealtimeStartupLease()
+            self._realtime = lease
             self._recording_generation += 1
             generation = self._recording_generation
         self._caffeinate_start()
@@ -998,24 +1031,25 @@ class API:
                         on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                     )
+                lease.publish_backend(rt)
                 logger.info(
                     "Realtime start attempt=%s stage=backend_create.done backend=%s",
                     session_id,
                     type(rt).__name__,
                     extra={"audioassist_diagnostic": True},
                 )
+                if lease.cancelled.is_set():
+                    return
                 rt.start()
-                # Race: stop_realtime() may have cleared self._realtime while
-                # models were loading. If so, shut down immediately and return.
                 with self._recording_lock:
                     cancelled = (
-                        self._realtime is None
+                        lease.cancelled.is_set()
+                        or self._realtime is not lease
                         or generation != self._recording_generation
                     )
                     if not cancelled:
                         self._realtime = rt
                 if cancelled:
-                    rt.stop()
                     return
                 self._set_recording_status(
                     "recording",
@@ -1038,10 +1072,31 @@ class API:
                     extra={"audioassist_diagnostic": True},
                 )
                 logger.exception("Realtime start failed")
+                lease.publish_failure()
                 with self._recording_lock:
-                    if generation != self._recording_generation:
+                    cancelled = (
+                        lease.cancelled.is_set()
+                        or generation != self._recording_generation
+                    )
+                    if cancelled:
                         return
-                    self._realtime = None
+                # A timed-out load can leave the owner worker finishing late.
+                # Hold the lease until cleanup closes that backend.
+                try:
+                    rt = locals().get("rt")
+                    if rt is not None and hasattr(rt, "stop"):
+                        rt.stop()
+                except Exception as cleanup_error:
+                    if (
+                        type(cleanup_error).__name__ == "RealtimeWorkerStillStopping"
+                        and hasattr(rt, "wait_for_worker_exit")
+                    ):
+                        rt.wait_for_worker_exit()
+                    else:
+                        logger.exception("Realtime failed-start cleanup failed")
+                with self._recording_lock:
+                    if self._realtime is lease:
+                        self._realtime = None
                 self._set_recording_status("error", error=str(e))
                 self._caffeinate_stop()
                 _push(f"onRealtimeError({json.dumps(str(e))})")
@@ -1114,16 +1169,17 @@ class API:
         """
         with self._recording_lock:
             rt = self._realtime
-            self._realtime = None
+            if rt is None:
+                return {"status": "not_running"}
             self._recording_generation += 1
         self._caffeinate_stop()
-        if rt is None:
-            return {"status": "not_running"}
         self._set_recording_status("stopping", error=None)
 
         def _run():
             try:
-                if hasattr(rt, "stop"):
+                if isinstance(rt, _RealtimeStartupLease):
+                    rt.cancel_and_stop()
+                elif hasattr(rt, "stop"):
                     rt.stop()
                 # After stop(), the worker queue is fully drained — segments complete.
                 wav_path = getattr(rt, "_output_path", None)
@@ -1132,21 +1188,56 @@ class API:
                     if segs:
                         self._rt_segments[wav_path] = segs
             except Exception as error:
-                logger.exception("Realtime stop failed")
-                self._set_recording_status("error", error=str(error))
-                _push(f"onRealtimeError({json.dumps(str(error))})")
+                if (
+                    type(error).__name__ == "RealtimeWorkerStillStopping"
+                    and hasattr(rt, "wait_for_worker_exit")
+                ):
+                    logger.warning(
+                        "Realtime backend still draining; retaining session lease"
+                    )
+                    try:
+                        rt.wait_for_worker_exit()
+                    except Exception as wait_error:
+                        logger.exception("Realtime worker shutdown failed")
+                        self._set_recording_status("error", error=str(wait_error))
+                        _push(f"onRealtimeError({json.dumps(str(wait_error))})")
+                        return
+                    else:
+                        self._collect_realtime_segments(rt)
+                        self._finish_realtime_stop(rt)
+                else:
+                    logger.exception("Realtime stop failed")
+                    with self._recording_lock:
+                        if self._realtime is rt:
+                            self._realtime = None
+                    self._set_recording_status("error", error=str(error))
+                    _push(f"onRealtimeError({json.dumps(str(error))})")
             else:
-                self._set_recording_status(
-                    "idle",
-                    session_id=None,
-                    capture_mode=None,
-                    started_at=None,
-                    error=None,
-                )
-                _push("onRealtimeStopped()")
+                self._finish_realtime_stop(rt)
 
         threading.Thread(target=_run, daemon=True).start()
         return {"status": "stopped"}
+
+    def _collect_realtime_segments(self, rt) -> None:
+        wav_path = getattr(rt, "_output_path", None)
+        if wav_path and hasattr(rt, "get_segments"):
+            segs = rt.get_segments()
+            if segs:
+                self._rt_segments[wav_path] = segs
+
+    def _finish_realtime_stop(self, rt) -> None:
+        """Release the global lease only after its owner worker has exited."""
+        with self._recording_lock:
+            if self._realtime is rt:
+                self._realtime = None
+        self._set_recording_status(
+            "idle",
+            session_id=None,
+            capture_mode=None,
+            started_at=None,
+            error=None,
+        )
+        _push("onRealtimeStopped()")
 
     def shutdown(self) -> None:
         """Synchronously release capture and sleep-prevention resources on app exit."""
