@@ -1,5 +1,6 @@
 """Tests for app.API.start_realtime / stop_realtime / delete_model."""
 import os
+import threading
 import time
 import pytest
 from unittest.mock import MagicMock, patch
@@ -32,6 +33,7 @@ class TestReturnValues:
              patch.object(app_module, "_push"):
             MockRT.return_value.start.return_value = None
             result = api.start_realtime()
+            _wait(0.1)
         assert result["status"] == "started"
 
     def test_start_returns_already_running(self):
@@ -237,31 +239,146 @@ class TestJSEvents:
 # ── Race condition: stop_realtime() during model load ─────────────────────────
 
 class TestRaceCondition:
-    def test_stop_during_load_calls_rt_stop(self):
+    def test_stop_during_load_holds_lease_until_backend_exits(self):
         """
-        If stop_realtime() is called while start_realtime() is still loading
-        models (before rt.start() returns), the background thread detects
-        self._realtime is None and calls rt.stop() to abort cleanly.
+        A second session must not start while a cancelled startup still owns
+        the process-global MLX backend.
         """
         api = API()
-        rt_stopped = []
+        start_entered = threading.Event()
+        stop_entered = threading.Event()
+        release = threading.Event()
+        js_calls = []
 
-        def slow_start():
-            # Simulate model loading time; stop_realtime clears _realtime meanwhile
-            api._realtime = None  # mimic stop_realtime() called externally
+        class SlowBackend:
+            def start(self):
+                start_entered.set()
+                release.wait(timeout=5)
 
-        def capture_init(*args, **kwargs):
-            inst = MagicMock()
-            inst.start.side_effect = slow_start
-            inst.stop.side_effect = lambda: rt_stopped.append(True)
-            return inst
+            def stop(self):
+                stop_entered.set()
+                release.wait(timeout=5)
 
-        with patch("src.realtime.RealtimeTranscriber", side_effect=capture_init), \
-             patch.object(app_module, "_push"):
-            api.start_realtime()
-            _wait(0.3)
+        immediate = MagicMock()
+        immediate.start.return_value = None
 
-        assert rt_stopped, "rt.stop() must be called when stop_realtime() races with load"
+        with patch(
+            "src.realtime.RealtimeTranscriber",
+            side_effect=[SlowBackend(), immediate],
+        ), patch.object(app_module, "_push", side_effect=js_calls.append):
+            assert api.start_realtime()["status"] == "started"
+            assert start_entered.wait(timeout=2)
+            assert api.stop_realtime()["status"] == "stopped"
+            assert stop_entered.wait(timeout=2)
+            assert api.get_recording_status()["state"] == "stopping"
+            assert api.start_realtime()["status"] == "already_running"
+            assert not any("onRealtimeStopped" in call for call in js_calls)
+
+            release.set()
+            deadline = time.monotonic() + 2
+            while api._realtime is not None and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+            assert api._realtime is None
+            assert any("onRealtimeStopped" in call for call in js_calls)
+            assert not any("onRealtimeStarted" in call for call in js_calls)
+            assert api.start_realtime()["status"] == "started"
+            deadline = time.monotonic() + 2
+            while not immediate.start.called and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert immediate.start.called
+
+    def test_native_timeout_retains_lease_until_worker_exit(self):
+        from src.native_capture import RealtimeWorkerStillStopping
+
+        api = API()
+        wait_entered = threading.Event()
+        release = threading.Event()
+        js_calls = []
+        rt = MagicMock()
+        rt.stop.side_effect = RealtimeWorkerStillStopping("still stopping")
+
+        def wait_for_worker_exit():
+            wait_entered.set()
+            release.wait(timeout=5)
+
+        rt.wait_for_worker_exit.side_effect = wait_for_worker_exit
+        api._realtime = rt
+
+        with patch.object(app_module, "_push", side_effect=js_calls.append):
+            assert api.stop_realtime()["status"] == "stopped"
+            assert wait_entered.wait(timeout=2)
+            assert api.get_recording_status()["state"] == "stopping"
+            assert api.start_realtime()["status"] == "already_running"
+            assert not any("onRealtimeStopped" in call for call in js_calls)
+            release.set()
+            deadline = time.monotonic() + 2
+            while api._realtime is not None and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        assert api._realtime is None
+        assert any("onRealtimeStopped" in call for call in js_calls)
+
+    def test_shutdown_during_load_cancels_and_waits_for_startup_lease(self):
+        api = API()
+        start_entered = threading.Event()
+        stop_entered = threading.Event()
+        release = threading.Event()
+        js_calls = []
+
+        class SlowBackend:
+            def start(self):
+                start_entered.set()
+                release.wait(timeout=5)
+
+            def stop(self):
+                stop_entered.set()
+                release.wait(timeout=5)
+
+        with patch(
+            "src.realtime.RealtimeTranscriber", return_value=SlowBackend()
+        ), patch.object(app_module, "_push", side_effect=js_calls.append):
+            assert api.start_realtime()["status"] == "started"
+            assert start_entered.wait(timeout=2)
+            shutdown = threading.Thread(target=api.shutdown, daemon=True)
+            shutdown.start()
+            assert stop_entered.wait(timeout=2)
+            assert api._realtime is not None
+            assert api.start_realtime()["status"] == "already_running"
+            release.set()
+            shutdown.join(timeout=2)
+
+        assert not shutdown.is_alive()
+        assert api._realtime is None
+        assert api.get_recording_status()["state"] == "idle"
+        assert not any("onRealtimeStarted" in call for call in js_calls)
+
+    def test_shutdown_waits_for_late_native_worker_before_clearing_lease(self):
+        from src.native_capture import RealtimeWorkerStillStopping
+
+        api = API()
+        wait_entered = threading.Event()
+        release = threading.Event()
+        rt = MagicMock()
+        rt.stop.side_effect = RealtimeWorkerStillStopping("still stopping")
+
+        def wait_for_worker_exit():
+            wait_entered.set()
+            release.wait(timeout=5)
+
+        rt.wait_for_worker_exit.side_effect = wait_for_worker_exit
+        api._realtime = rt
+        shutdown = threading.Thread(target=api.shutdown, daemon=True)
+        shutdown.start()
+        assert wait_entered.wait(timeout=2)
+        assert api._realtime is rt
+        assert api.start_realtime()["status"] == "already_running"
+        release.set()
+        shutdown.join(timeout=2)
+
+        assert not shutdown.is_alive()
+        assert api._realtime is None
+        assert api.get_recording_status()["state"] == "idle"
 
 
 # ── pause_realtime / resume_realtime ─────────────────────────────────────────

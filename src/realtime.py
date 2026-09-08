@@ -35,6 +35,8 @@ CHUNK_SIZE     = 512      # samples per VAD frame (~32 ms at 16 kHz)
 VAD_THRESHOLD  = 0.5      # speech probability cutoff
 SILENCE_CHUNKS = 15       # consecutive silence frames to end utterance (~480 ms)
 MIN_SPEECH_CHUNKS = 5     # minimum speech frames to bother transcribing (~160 ms)
+MODEL_READY_TIMEOUT_SECONDS = 120.0
+MODEL_READY_POLL_SECONDS = 0.05
 
 
 # ── Main class ────────────────────────────────────────────────────────────────
@@ -82,6 +84,12 @@ class RealtimeTranscriber:
         # Serial transcription worker — prevents concurrent Metal GPU usage
         self._transcribe_queue: queue.Queue = queue.Queue()
         self._worker_thread: Optional[threading.Thread] = None
+        self._worker_ready = threading.Event()
+        self._worker_load_error: BaseException | None = None
+        self._startup_cancel = threading.Event()
+        self._worker_control_lock = threading.Lock()
+        self._worker_stop_sent = False
+        self._capture_lifecycle_lock = threading.Lock()
         self._first_audio_frame_event = threading.Event()
         self._first_audio_frame_info: Optional[tuple[int, str]] = None
         self._diagnostic_thread: Optional[threading.Thread] = None
@@ -126,6 +134,8 @@ class RealtimeTranscriber:
 
     def start(self) -> None:
         """Load models then open the microphone stream."""
+        if self._startup_cancel.is_set():
+            raise RuntimeError("Realtime startup was cancelled")
         if self._worker_thread is not None:
             if self._worker_thread.is_alive():
                 raise RuntimeError(
@@ -134,68 +144,91 @@ class RealtimeTranscriber:
             self._worker_thread = None
         started = time.monotonic()
         self._log_start_stage("model_load.begin")
-        self._load_models()
+        self._worker_ready.clear()
+        self._worker_load_error = None
+        self._worker_thread = threading.Thread(
+            target=self._transcription_worker,
+            daemon=True,
+            name="realtime-transcribe-worker",
+        )
+        try:
+            self._worker_thread.start()
+        except BaseException:
+            self._worker_thread = None
+            raise
+        deadline = time.monotonic() + MODEL_READY_TIMEOUT_SECONDS
+        while not self._worker_ready.wait(timeout=MODEL_READY_POLL_SECONDS):
+            if self._startup_cancel.is_set():
+                raise RuntimeError("Realtime startup was cancelled")
+            if time.monotonic() >= deadline:
+                self._startup_cancel.set()
+                self._request_worker_stop()
+                raise TimeoutError("Realtime ASR model loading timed out")
+        if self._startup_cancel.is_set():
+            raise RuntimeError("Realtime startup was cancelled")
+        if self._worker_load_error is not None:
+            error = self._worker_load_error
+            self._worker_thread.join()
+            self._worker_thread = None
+            raise error
         self._log_start_stage("model_load.done", started)
         try:
-            self._running = True
+            with self._capture_lifecycle_lock:
+                if self._startup_cancel.is_set():
+                    raise RuntimeError("Realtime startup was cancelled")
+                self._running = True
 
-            # Start the serial worker that drains the transcription queue
-            self._worker_thread = threading.Thread(
-                target=self._transcription_worker,
-                daemon=True,
-                name="realtime-transcribe-worker",
-            )
-            self._worker_thread.start()
+                # Open session WAV writer before the stream captures audio
+                if self._output_path is not None:
+                    wav_started = time.monotonic()
+                    self._log_start_stage("wav_open.begin")
+                    parent = os.path.dirname(self._output_path)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    self._wav_writer = wave.open(self._output_path, "wb")
+                    self._wav_writer.setnchannels(1)
+                    self._wav_writer.setsampwidth(2)
+                    self._wav_writer.setframerate(SAMPLE_RATE)
+                    self._log_start_stage("wav_open.done", wav_started)
 
-            # Open session WAV writer before the stream captures audio
-            if self._output_path is not None:
-                wav_started = time.monotonic()
-                self._log_start_stage("wav_open.begin")
-                parent = os.path.dirname(self._output_path)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
-                self._wav_writer = wave.open(self._output_path, "wb")
-                self._wav_writer.setnchannels(1)
-                self._wav_writer.setsampwidth(2)
-                self._wav_writer.setframerate(SAMPLE_RATE)
-                self._log_start_stage("wav_open.done", wav_started)
-
-            import_started = time.monotonic()
-            self._log_start_stage("sounddevice_import.begin")
-            import sounddevice as sd
-            self._log_start_stage(
-                "sounddevice_import.done",
-                import_started,
-                sounddevice=getattr(sd, "__version__", "unknown"),
-            )
-            stream_started = time.monotonic()
-            self._log_start_stage(
-                "stream_open.begin",
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                blocksize=CHUNK_SIZE,
-            )
-            self._stream = sd.InputStream(
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                dtype="float32",
-                blocksize=CHUNK_SIZE,
-                callback=self._audio_callback,
-            )
-            self._log_start_stage("stream_open.done", stream_started)
-            activate_started = time.monotonic()
-            self._log_start_stage("stream_start.begin")
-            self._first_audio_frame_info = None
-            self._first_audio_frame_event.clear()
-            self._diagnostic_thread = threading.Thread(
-                target=self._wait_for_first_audio_frame,
-                daemon=True,
-                name="realtime-first-frame-diagnostic",
-            )
-            self._diagnostic_thread.start()
-            self._stream.start()
-            self._log_start_stage("stream_start.done", activate_started)
+                import_started = time.monotonic()
+                self._log_start_stage("sounddevice_import.begin")
+                import sounddevice as sd
+                self._log_start_stage(
+                    "sounddevice_import.done",
+                    import_started,
+                    sounddevice=getattr(sd, "__version__", "unknown"),
+                )
+                stream_started = time.monotonic()
+                self._log_start_stage(
+                    "stream_open.begin",
+                    samplerate=SAMPLE_RATE,
+                    channels=1,
+                    blocksize=CHUNK_SIZE,
+                )
+                self._stream = sd.InputStream(
+                    samplerate=SAMPLE_RATE,
+                    channels=1,
+                    dtype="float32",
+                    blocksize=CHUNK_SIZE,
+                    callback=self._audio_callback,
+                )
+                self._log_start_stage("stream_open.done", stream_started)
+                activate_started = time.monotonic()
+                self._log_start_stage("stream_start.begin")
+                self._first_audio_frame_info = None
+                self._first_audio_frame_event.clear()
+                self._diagnostic_thread = threading.Thread(
+                    target=self._wait_for_first_audio_frame,
+                    daemon=True,
+                    name="realtime-first-frame-diagnostic",
+                )
+                self._diagnostic_thread.start()
+                self._stream.start()
+                self._log_start_stage("stream_start.done", activate_started)
         except Exception:
+            if self._startup_cancel.is_set():
+                raise
             self._running = False
             if self._stream is not None:
                 try:
@@ -210,56 +243,66 @@ class RealtimeTranscriber:
                     pass
                 self._wav_writer = None
             if self._worker_thread is not None and self._worker_thread.is_alive():
-                self._transcribe_queue.put(None)
+                self._request_worker_stop()
                 self._worker_thread.join()
             self._worker_thread = None
             self._stop_diagnostic_waiter()
-            self._close_asr()
             raise
         logger.info("Realtime transcription started (engine=%s)", self._engine)
 
     def stop(self) -> None:
         """Stop the microphone stream and flush any pending speech."""
-        self._running = False
+        self._startup_cancel.set()
         errors: list[Exception] = []
-        stream = self._stream
-        self._stream = None
-        if stream is not None:
-            try:
-                stream.stop()   # blocks until audio callback finishes
-            except Exception as exc:
-                errors.append(exc)
-            try:
-                stream.close()
-            except Exception as exc:
-                errors.append(exc)
-        # Stream is fully stopped — safe to close WAV writer (no more callbacks)
-        writer = self._wav_writer
-        self._wav_writer = None
-        if writer is not None:
-            try:
-                writer.close()
-            except Exception as exc:
-                errors.append(exc)
-        if self._speech_buffer:
-            try:
-                self._flush_speech()
-            except Exception as exc:
-                errors.append(exc)
-        # Signal worker to stop after it drains remaining items, then wait
-        if self._worker_thread is not None and self._worker_thread.is_alive():
-            try:
-                self._transcribe_queue.put(None)  # sentinel
-                self._worker_thread.join()
-            except Exception as exc:
-                errors.append(exc)
-        if self._worker_thread is None or not self._worker_thread.is_alive():
-            self._worker_thread = None
-            self._close_asr()
-        self._stop_diagnostic_waiter()
+        with self._capture_lifecycle_lock:
+            self._running = False
+            stream = self._stream
+            self._stream = None
+            if stream is not None:
+                try:
+                    stream.stop()   # blocks until audio callback finishes
+                except Exception as exc:
+                    errors.append(exc)
+                try:
+                    stream.close()
+                except Exception as exc:
+                    errors.append(exc)
+            # Stream is fully stopped — safe to close WAV writer (no more callbacks)
+            writer = self._wav_writer
+            self._wav_writer = None
+            if writer is not None:
+                try:
+                    writer.close()
+                except Exception as exc:
+                    errors.append(exc)
+            if self._speech_buffer:
+                try:
+                    self._flush_speech()
+                except Exception as exc:
+                    errors.append(exc)
+            # Signal worker to stop after it drains remaining items, then wait.
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                try:
+                    self._request_worker_stop()
+                    self._worker_thread.join()
+                except Exception as exc:
+                    errors.append(exc)
+            if self._worker_thread is None or not self._worker_thread.is_alive():
+                self._worker_thread = None
+                self._close_asr()
+            self._stop_diagnostic_waiter()
         logger.info("Realtime transcription stopped")
         if errors:
             raise errors[0]
+
+    def _request_worker_stop(self) -> None:
+        """Queue exactly one owner-worker sentinel, including during model load."""
+        with self._worker_control_lock:
+            worker = self._worker_thread
+            if worker is None or not worker.is_alive() or self._worker_stop_sent:
+                return
+            self._worker_stop_sent = True
+            self._transcribe_queue.put(None)
 
     def pause(self) -> None:
         """Pause microphone capture; WAV writer stays open."""
@@ -315,6 +358,7 @@ class RealtimeTranscriber:
             self._engine,
             getattr(self._asr, "backend_name", "default"),
             resolved.local_path,
+            extra={"audioassist_diagnostic": True},
         )
 
     def _close_asr(self, expected: object | None = None) -> None:
@@ -386,15 +430,23 @@ class RealtimeTranscriber:
     def _transcription_worker(self) -> None:
         """Long-running worker that serially drains the transcription queue.
 
-        Using a single worker thread guarantees that mlx-whisper (and any other
-        Metal/GPU backend) is never called from two threads simultaneously,
-        preventing the ``A command encoder is already encoding to this command
-        buffer`` Metal assertion failure on Apple Silicon.
+        The worker owns backend load, inference, and close. Besides preventing
+        concurrent Metal use, this preserves MLX's thread-local stream identity.
 
         The worker exits when it dequeues the ``None`` sentinel value (sent by
         ``stop()`` after the audio stream is closed).
         """
-        backend = self._asr
+        backend = None
+        try:
+            if self._asr is None:
+                self._load_models()
+            backend = self._asr
+        except BaseException as exc:
+            self._worker_load_error = exc
+            return
+        finally:
+            self._worker_ready.set()
+
         try:
             while True:
                 item = self._transcribe_queue.get()
@@ -431,7 +483,10 @@ class RealtimeTranscriber:
                 self._segments.append(seg)
                 self._on_result(seg)
         except Exception as e:
-            logger.exception("Realtime: transcribe segment failed")
+            logger.exception(
+                "Realtime: transcribe segment failed",
+                extra={"audioassist_diagnostic": True},
+            )
             self._on_error(str(e))
         finally:
             if tmp_path and os.path.exists(tmp_path):
