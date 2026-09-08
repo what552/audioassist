@@ -1,7 +1,7 @@
 # QWEN-REALTIME-MLX-01 Development Plan
 
 Date: 2026-09-08  
-Status: Source implemented, independently reviewed, and verified; packaging pending
+Status: 2.0.5 mechanically verified; installed recording acceptance pending
 Target release: 2.0.5
 
 ## Problem
@@ -109,9 +109,8 @@ no fallback to another backend and no change to the saved user preference.
 ## Release policy
 
 2.0.4 remains valid for file transcription, including MLX. Until 2.0.5 passes
-the installed gate, realtime recording should use CPU or MPS. The version will
-not be bumped and no App/DMG will be generated until source implementation,
-tests, and independent review pass.
+the installed gate, realtime recording should use CPU or MPS. The 2.0.5 App and
+DMG are local ad-hoc test candidates, not distributable signed upgrades.
 
 ## Source implementation result
 
@@ -188,3 +187,15 @@ no P0, P1, or P2 findings. It confirmed shutdown-during-load, delayed Native
 shutdown, normal stop, owner-thread identity, single-sentinel cleanup, and
 CPU/MPS/Whisper routing. Source implementation is therefore accepted; 2.0.5
 packaging and installed recording checks are the remaining release gates.
+
+## 2.0.5 package result
+
+`bash scripts/build_dmg.sh` refreshed the editable installation to 2.0.5 and
+produced `dist/AudioAssist.app`, `dist/AudioAssist-2.0.5.dmg`, and
+`dist/release-verification-2.0.5.json`. Mechanical verification passed with 491
+Mach-O files, 584 symlinks, aligned source/App/DMG metadata, required Qwen/MLX
+assets, and a matching read-only mounted payload. The DMG SHA-256 is
+`3794c591df2a66062affd62548e0f4c39050055d33cbb0e19199e63bef09008e`.
+
+The package is ad-hoc signed. It has not been installed over the owner's 2.0.4
+application, and the installed CPU/MPS/MLX × Mic/System/Mix matrix remains open.

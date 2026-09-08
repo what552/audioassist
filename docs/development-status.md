@@ -175,10 +175,13 @@ after that installed file gate. In 2.0.4 the capture startup thread loads MLX, b
 the serialized ASR worker performs inference; MLX rejects that foreign Metal stream
 with `There is no Stream(gpu, 1) in current thread.` The source implementation now
 makes the worker own backend load, inference, and close for Mic and NativeCapture,
-while capture callbacks remain queue-only. Thread-identity regressions, the full
-1078-test suite, 38 frontend tests, real CPU/MPS/MLX Mic-worker probes, and a real
-MLX NativeCapture ASR probe pass. Independent concurrency review and the 2.0.5
-packaged nine-combination recording gate remain pending.
+while capture callbacks remain queue-only. A cancelable startup lease now blocks
+overlapping backends during start, stop, delayed Native drain, and application
+shutdown. Thread-identity regressions, the full 1084-test suite, 38 frontend tests,
+real CPU/MPS/MLX Mic-worker probes, and a real MLX NativeCapture ASR probe pass.
+Exact commit `23dcf88` passed independent concurrency review. The 2.0.5 App and
+DMG passed mechanical verification; installed nine-combination recording
+acceptance remains pending.
 
 ## Historical gate record
 

@@ -1,6 +1,30 @@
 # REL-01 Release Candidate Record
 
-Updated: 2026-09-07
+Updated: 2026-09-08
+
+## 2.0.5 MLX realtime worker-ownership candidate
+
+- Source baseline: merge `4694b43`; the concurrency implementation at
+  `23dcf88` passed independent review with no P0/P1/P2 findings. The full host
+  suite passed **1084 tests** and the explicit frontend suite passed 38 tests.
+- Real source probes transcribed the same 4-second Mandarin sample through the
+  Mic pipeline on `pytorch-cpu`, `pytorch-mps`, and `mlx`. A real MLX
+  NativeCapture ASR-path probe also passed; all returned text and closed their
+  owner worker.
+- Build: `bash scripts/build_dmg.sh` refreshed `audioassist-local` metadata from
+  2.0.4 to 2.0.5, then completed successfully.
+- Version: `2.0.5`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- App: `dist/AudioAssist.app`; DMG: `dist/AudioAssist-2.0.5.dmg`.
+- DMG SHA-256:
+  `3794c591df2a66062affd62548e0f4c39050055d33cbb0e19199e63bef09008e`.
+- App CDHash: `9abf09a05dfbcdfd1b2f4d98340a0ef863427d52`.
+- `dist/release-verification-2.0.5.json`: PASS, including 491 Mach-O files,
+  584 symlinks, required Qwen/MLX assets, matching source/App/DMG metadata, and
+  a matching read-only mounted DMG payload.
+- The candidate has not replaced `/Applications/AudioAssist.app`. Installed
+  CPU/MPS/MLX × Mic/System/Mix acceptance remains a separate gate and requires
+  re-authorizing this new ad-hoc CDHash.
+- This is a local ad-hoc test candidate, not a distributable signed upgrade.
 
 ## 2.0.4 Qwen timestamp-boundary fix candidate
 

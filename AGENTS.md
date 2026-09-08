@@ -47,7 +47,7 @@ permanent builder/researcher/reviewer worktree workflow.
   never rebuild or replace an artifact while reusing its previous version number.
 - Use a patch bump for fixes, a minor bump for backward-compatible features, and a major
   bump for incompatible product or data-contract changes. The current packaged baseline
-  is `2.0.4`, so the next packaged build must be `2.0.5` or higher.
+  is `2.0.5`, so the next packaged build must be `2.0.6` or higher.
 - Keep the application bundle version, DMG filename, and
   `dist/release-verification-<version>.json` aligned with the `pyproject.toml` version,
   and update the packaged baseline in this file when that release is produced.
