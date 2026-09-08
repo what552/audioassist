@@ -21,9 +21,13 @@ Updated: 2026-09-08
 - `dist/release-verification-2.0.5.json`: PASS, including 491 Mach-O files,
   584 symlinks, required Qwen/MLX assets, matching source/App/DMG metadata, and
   a matching read-only mounted DMG payload.
-- The candidate has not replaced `/Applications/AudioAssist.app`. Installed
-  CPU/MPS/MLX × Mic/System/Mix acceptance remains a separate gate and requires
-  re-authorizing this new ad-hoc CDHash.
+- Owner installation and recording acceptance: PASS. `/Applications/AudioAssist.app`
+  reports 2.0.5. The owner reported no issues after testing; runtime evidence
+  independently confirms MPS Mic, MLX Mic, and MLX Mix reached
+  `recording.confirmed` without the MLX stream error. Those sessions produced
+  valid 16 kHz mono WAV files of 68.26, 45.86, and 82.88 seconds and persisted
+  transcripts containing 18, 12, and 26 segments. Mix exercises the shared
+  NativeCapture system-audio path.
 - This is a local ad-hoc test candidate, not a distributable signed upgrade.
 
 ## 2.0.4 Qwen timestamp-boundary fix candidate

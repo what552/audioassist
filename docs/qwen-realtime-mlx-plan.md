@@ -1,7 +1,7 @@
 # QWEN-REALTIME-MLX-01 Development Plan
 
 Date: 2026-09-08  
-Status: 2.0.5 mechanically verified; installed recording acceptance pending
+Status: Complete; 2.0.5 installed owner acceptance passed
 Target release: 2.0.5
 
 ## Problem
@@ -197,5 +197,10 @@ Mach-O files, 584 symlinks, aligned source/App/DMG metadata, required Qwen/MLX
 assets, and a matching read-only mounted payload. The DMG SHA-256 is
 `3794c591df2a66062affd62548e0f4c39050055d33cbb0e19199e63bef09008e`.
 
-The package is ad-hoc signed. It has not been installed over the owner's 2.0.4
-application, and the installed CPU/MPS/MLX × Mic/System/Mix matrix remains open.
+The package is ad-hoc signed. The owner installed 2.0.5 and reported no issues.
+Runtime logs confirm successful MPS Mic, MLX Mic, and MLX Mix startup, and the
+three saved 16 kHz mono WAV files contain 68.26, 45.86, and 82.88 seconds of
+audio with persisted transcripts of 18, 12, and 26 segments. Because Mix uses
+the shared NativeCapture system-audio path, this closes the reported MLX
+realtime failure. Stable Developer ID upgrade continuity remains outside this
+local candidate and is tracked separately by REL-TCC-01.

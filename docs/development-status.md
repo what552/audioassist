@@ -180,8 +180,11 @@ overlapping backends during start, stop, delayed Native drain, and application
 shutdown. Thread-identity regressions, the full 1084-test suite, 38 frontend tests,
 real CPU/MPS/MLX Mic-worker probes, and a real MLX NativeCapture ASR probe pass.
 Exact commit `23dcf88` passed independent concurrency review. The 2.0.5 App and
-DMG passed mechanical verification; installed nine-combination recording
-acceptance remains pending.
+DMG passed mechanical verification. The owner-installed 2.0.5 candidate was
+accepted without reported issues; logs and saved outputs confirm successful MPS
+Mic, MLX Mic, and MLX Mix sessions with valid audio and transcript segments.
+The local realtime defect is closed; Developer ID upgrade continuity remains the
+separate REL-TCC-01 external gate.
 
 ## Historical gate record
 
