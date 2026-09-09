@@ -92,6 +92,226 @@ def test_history_loads(page: Page, ui_base_url: str) -> None:
     assert "lecture.mp4" in sidebar_text
 
 
+def test_reorganized_controls_keep_their_existing_functions(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url)
+
+    assert page.locator("#history-footer #btn-start-recording").count() == 1
+    assert page.locator("#history-footer #btn-upload").count() == 1
+    assert page.locator(".history-manage #btn-models").count() == 1
+    assert page.locator(".history-manage #btn-summary-config").count() == 1
+    assert page.locator("#toolbar #sel-engine").count() == 1
+    assert page.locator("#toolbar #btn-summary-toggle").count() == 1
+
+    page.locator(".history-item", has_text="meeting.mp3").locator(
+        ".history-item-body"
+    ).click()
+    expect(page.locator("#transcript-title")).to_have_text("meeting.mp3")
+    expect(page.locator("#transcript-header #btn-export-transcript")).to_be_visible()
+    expect(page.locator("#center-panel > #player-bar")).to_be_visible()
+
+
+def test_high_accuracy_action_restores_from_history_and_remains_retryable(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [
+            {
+                "job_id": "quick-draft", "filename": "Realtime draft", "type": "file",
+                "status": "done", "date": "2026-09-09T12:00:00",
+                "audio_path": "/audio/realtime.wav", "refine_available": True,
+            },
+            {
+                "job_id": "full-file", "filename": "Full transcript", "type": "file",
+                "status": "done", "date": "2026-09-09T11:00:00",
+                "audio_path": "/audio/file.m4a", "refine_available": False,
+            },
+        ],
+    })
+
+    page.locator(".history-item", has_text="Realtime draft").locator(
+        ".history-item-body"
+    ).click()
+    expect(page.locator("#btn-high-accuracy")).to_be_visible()
+    page.locator("#btn-high-accuracy").click()
+    page.wait_for_function("_mockApi.calls('refine').length === 1")
+    assert page.evaluate("_mockApi.calls('refine')")[0]["args"] == [
+        "quick-draft", {"model_id": "qwen3-asr-1.7b"},
+    ]
+    page.evaluate("onTranscribeProgress('quick-draft', 0.42, 'Running ASR')")
+    expect(page.locator("#refine-hint")).to_contain_text("42% · Running ASR")
+    page.evaluate("onTranscribeRefineError('quick-draft', 'engine crashed')")
+    expect(page.locator("#btn-high-accuracy")).to_be_visible()
+    expect(page.locator("#toast")).to_contain_text("engine crashed")
+
+    page.locator(".history-item", has_text="Full transcript").locator(
+        ".history-item-body"
+    ).click()
+    expect(page.locator("#btn-high-accuracy")).to_be_hidden()
+
+
+def test_high_accuracy_cancel_keeps_draft_visible_and_retryable(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "quick-draft", "filename": "Realtime draft", "type": "file",
+            "status": "done", "date": "2026-09-09T12:00:00",
+            "audio_path": "/audio/realtime.wav", "refine_available": True,
+        }],
+    })
+    page.locator(".history-item-body").click()
+    page.locator("#btn-high-accuracy").click()
+    page.evaluate("onTranscribeCancel('quick-draft')")
+
+    expect(page.locator(".history-item")).to_have_count(1)
+    expect(page.locator("#btn-high-accuracy")).to_be_visible()
+
+
+def test_high_accuracy_start_failure_restores_the_clicked_session_after_switch(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [
+            {
+                "job_id": "quick-draft", "filename": "Realtime draft", "type": "file",
+                "status": "done", "date": "2026-09-09T12:00:00",
+                "audio_path": "/audio/realtime.wav", "refine_available": True,
+            },
+            {
+                "job_id": "full-file", "filename": "Full transcript", "type": "file",
+                "status": "done", "date": "2026-09-09T11:00:00",
+                "audio_path": "/audio/file.m4a", "refine_available": False,
+            },
+        ],
+    })
+    page.evaluate(
+        "() => { window.pywebview.api.refine = async () => { "
+        "await new Promise(resolve => setTimeout(resolve, 100)); "
+        "throw new Error('start failed'); }; }"
+    )
+    page.locator(".history-item", has_text="Realtime draft").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#btn-high-accuracy").click()
+    page.locator(".history-item", has_text="Full transcript").locator(
+        ".history-item-body"
+    ).click()
+    page.wait_for_function("document.querySelector('#toast').textContent.includes('start failed')")
+    expect(page.locator("#btn-high-accuracy")).to_be_hidden()
+
+    page.locator(".history-item", has_text="Realtime draft").locator(
+        ".history-item-body"
+    ).click()
+    expect(page.locator("#btn-high-accuracy")).to_be_visible()
+
+
+def test_minimum_window_keeps_transcript_and_summary_usable(
+    page: Page, ui_base_url: str
+) -> None:
+    page.set_viewport_size({"width": 900, "height": 600})
+    _inject_and_navigate(page, ui_base_url)
+    page.locator(".history-item", has_text="meeting.mp3").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#btn-summary-toggle").click()
+
+    center = page.locator("#center-panel").bounding_box()
+    assert center is not None and center["width"] >= 300
+    expect(page.locator("#transcript-title")).to_be_visible()
+    expect(page.locator("#btn-export-transcript")).to_be_visible()
+    expect(page.locator("#summary-panel")).to_be_visible()
+
+
+def test_summary_defaults_closed_and_session_switch_preserves_visibility(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    first = page.locator(".history-item", has_text="meeting.mp3").locator(
+        ".history-item-body"
+    )
+    second = page.locator(".history-item", has_text="lecture.mp4").locator(
+        ".history-item-body"
+    )
+
+    first.click()
+    expect(page.locator("#summary-panel")).to_be_hidden()
+    expect(page.locator("#btn-summary-toggle")).to_have_attribute("aria-expanded", "false")
+
+    page.locator("#btn-summary-toggle").click()
+    expect(page.locator("#summary-panel")).to_be_visible()
+    expect(page.locator("#btn-summary-toggle")).to_have_attribute("aria-expanded", "true")
+    second.click()
+    expect(page.locator("#summary-panel")).to_be_visible()
+
+    page.locator("#btn-summary-toggle").click()
+    first.click()
+    expect(page.locator("#summary-panel")).to_be_hidden()
+
+
+def test_theme_setting_applies_immediately_and_persists(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.evaluate("Theme.set('system')")
+    page.locator("#btn-summary-config").click()
+    page.locator("#cfg-theme").select_option("dark")
+    expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+    expect(page.locator("html")).to_have_attribute("data-theme-setting", "dark")
+
+    page.reload()
+    page.evaluate("window._mockApi.dispatchReady()")
+    page.locator("#btn-summary-config").click()
+    expect(page.locator("#cfg-theme")).to_have_value("dark")
+    expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+    page.evaluate("Theme.set('system')")
+
+
+def test_speaker_menu_distinguishes_single_correction_and_bulk_rename(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url)
+    page.evaluate(
+        """
+        window.pywebview.api.get_transcript = async jobId => ({
+          job_id: jobId, audio: '/audio/test.mp3', language: 'zh', segments: [
+            {speaker:'SPEAKER_00',start:0,end:2,text:'第一段',words:[]},
+            {speaker:'SPEAKER_00',start:2,end:4,text:'第二段',words:[]},
+            {speaker:'SPEAKER_01',start:4,end:6,text:'第三段',words:[]},
+          ]
+        });
+        """
+    )
+    page.locator(".history-item", has_text="meeting.mp3").locator(
+        ".history-item-body"
+    ).click()
+    expect(page.locator(".transcript-row")).to_have_count(3)
+
+    page.locator(".row-speaker").first.click()
+    expect(page.locator(".speaker-menu")).to_contain_text("仅修改这一段")
+    expect(page.locator(".speaker-menu")).to_contain_text("统一重命名 “SPEAKER_00”（2 段）")
+    page.locator(".speaker-menu-item", has_text="统一重命名").click()
+    page.locator(".row-speaker-input").fill("张总")
+    page.locator(".row-speaker-input").press("Enter")
+    page.wait_for_function("_mockApi.calls('rename_speaker').length === 1")
+    assert page.evaluate("_mockApi.calls('rename_speaker')")[0]["args"] == [
+        "job-aaa", "SPEAKER_00", "张总",
+    ]
+    expect(page.locator(".row-speaker", has_text="张总")).to_have_count(2)
+
+    page.locator(".row-speaker").last.click()
+    page.locator(".speaker-menu-item", has_text="仅修改这一段").click()
+    page.locator(".row-speaker-input").fill("李总")
+    page.locator(".row-speaker-input").press("Enter")
+    page.wait_for_function("_mockApi.calls('rename_segment_speaker').length === 1")
+    assert page.evaluate("_mockApi.calls('rename_segment_speaker')")[0]["args"] == [
+        "job-aaa", 2, "李总",
+    ]
+    expect(page.locator(".row-speaker", has_text="李总")).to_have_count(1)
+    expect(page.locator(".row-speaker", has_text="张总")).to_have_count(2)
+
+
 def test_qwen_default_persists_across_page_reload(page: Page, ui_base_url: str) -> None:
     _inject_and_navigate(page, ui_base_url)
     page.locator('#btn-summary-config').click()
@@ -842,7 +1062,7 @@ def test_microphone_permission_failure_resets_ui_without_starting(
 
     assert page.evaluate("_mockApi.calls('start_realtime').length") == 0
     assert page.locator("#capture-perm-notice").is_visible()
-    assert page.locator("#btn-start-recording").inner_text() == "🎙 Start Recording"
+    assert page.locator("#btn-start-recording").inner_text() == "Start Recording"
     expected = "Permission timed out" if status == "timeout" else "Microphone unavailable"
     assert page.locator("#realtime-status").inner_text() == expected
     assert not page.locator("#btn-open-microphone-privacy").is_visible()
@@ -947,6 +1167,7 @@ def test_missing_summary_template_uses_non_blocking_toast(
     page.locator(".history-item", has_text="meeting.mp3").locator(
         ".history-item-body"
     ).click()
+    page.locator("#btn-summary-toggle").click()
     page.locator("#btn-summarize").click()
     page.wait_for_function(
         "document.querySelector('#toast').textContent.includes('No template selected')"
@@ -1023,6 +1244,7 @@ def test_summary_agent_stream_tool_error_recovery_and_clear(page: Page, ui_base_
     })
     page.locator(".history-item", has_text="meeting.mp3").locator(".history-item-body").click()
     page.wait_for_function("_mockApi.calls('get_agent_session').length >= 1")
+    page.locator("#btn-summary-toggle").click()
     assert page.locator("#agent-messages .chat-bubble").count() == 2
 
     page.locator("#agent-input").fill("列出行动项")

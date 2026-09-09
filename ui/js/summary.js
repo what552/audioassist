@@ -4,7 +4,7 @@
  *
  * Public API:
  *   Summary.init()               — wire up DOM; call once after DOMContentLoaded
- *   Summary.showForJob(jobId)    — reveal the summary panel and load versions for a job
+ *   Summary.showForJob(jobId)    — load a job without changing panel visibility
  *
  * Python → JS callbacks (called via evaluate_js):
  *   onSummaryChunk(jobId, chunk)        — streaming token/chunk
@@ -132,13 +132,14 @@ const Summary = (() => {
 
   function _onTogglePanel() {
     dom.panel.hidden = !dom.panel.hidden;
+    dom.btnToggle.classList.toggle('active', !dom.panel.hidden);
+    dom.btnToggle.setAttribute('aria-expanded', String(!dom.panel.hidden));
   }
 
   // ── Public: show for a job ─────────────────────────────────────────────────
 
   async function showForJob(jobId) {
     _jobId = jobId;
-    dom.panel.hidden = false;
     _setOutput('placeholder');
     await _loadVersions(jobId);
     await _initChat(jobId);
@@ -446,7 +447,7 @@ const Summary = (() => {
     const templates = await window.pywebview.api.get_summary_templates();
     const template = templates.find(t => t.name === selectedName);
     if (!template) {
-      _showError('No template selected. Please add a template in ⚙ settings.');
+      _showError('No template selected. Please add a template in Settings.');
       return;
     }
 

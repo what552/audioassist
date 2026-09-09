@@ -95,8 +95,9 @@ def main():
         base = os.path.dirname(os.path.abspath(__file__))
     ui_path = os.path.join(base, "ui", "index.html")
 
+    window_title = "AudioAssist" if getattr(sys, "frozen", False) else "AudioAssist · Dev"
     window = webview.create_window(
-        "AudioAssist",
+        window_title,
         url=f"file://{ui_path}",
         js_api=api,
         width=1280,

@@ -212,7 +212,7 @@ const Realtime = (() => {
     _loading = false;
     _setLoading(false);
     _disableModeButtons(true);
-    dom.btnToggle.textContent = '⏹ Stop Recording';
+    _setStartButtonLabel('Stop Recording', true);
     dom.btnToggle.classList.add('recording');
     dom.statusDot.classList.add('active');
     _setStatus('Recording · ' + (MODE_LABELS[_captureMode] || _captureMode));
@@ -225,7 +225,7 @@ const Realtime = (() => {
     _loading = false;
     _setLoading(false);
     _disableModeButtons(false);
-    dom.btnToggle.textContent = '🎙 Start Recording';
+    _setStartButtonLabel('Start Recording');
     dom.btnToggle.classList.remove('recording');
     dom.statusDot.classList.remove('active');
     _setStatus('Stopped');
@@ -265,7 +265,7 @@ const Realtime = (() => {
     _loading = false;
     _setLoading(false);
     _disableModeButtons(false);
-    dom.btnToggle.textContent = '🎙 Start Recording';
+    _setStartButtonLabel('Start Recording');
     dom.btnToggle.classList.remove('recording');
     dom.statusDot.classList.remove('active');
     _setStatus('⚠ ' + message);
@@ -374,6 +374,36 @@ const Realtime = (() => {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
+  function _setStartButtonLabel(label, stop = false) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const icon = document.createElementNS(ns, 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('aria-hidden', 'true');
+    if (stop) {
+      const rect = document.createElementNS(ns, 'rect');
+      rect.setAttribute('x', '7');
+      rect.setAttribute('y', '7');
+      rect.setAttribute('width', '10');
+      rect.setAttribute('height', '10');
+      rect.setAttribute('rx', '1');
+      icon.appendChild(rect);
+    } else {
+      const rect = document.createElementNS(ns, 'rect');
+      rect.setAttribute('x', '9');
+      rect.setAttribute('y', '3');
+      rect.setAttribute('width', '6');
+      rect.setAttribute('height', '11');
+      rect.setAttribute('rx', '3');
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', 'M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M9 22h6');
+      icon.append(rect, path);
+    }
+    const text = document.createElement('span');
+    text.className = 'btn-label';
+    text.textContent = label;
+    dom.btnToggle.replaceChildren(icon, text);
+  }
+
   function _setLoading(active) {
     let label = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 'Loading…';
     _loading = active;
@@ -385,10 +415,10 @@ const Realtime = (() => {
     }
 
     if (_recording) {
-      dom.btnToggle.textContent = '⏹ Stop Recording';
+      _setStartButtonLabel('Stop Recording', true);
       return;
     }
-    dom.btnToggle.textContent = '🎙 Start Recording';
+    _setStartButtonLabel('Start Recording');
   }
 
   function _setStatus(text) {
