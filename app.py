@@ -543,12 +543,32 @@ class API:
 
                     # Store options for optional manual high-accuracy refine (realtime only).
                     if rt_segments:
-                        self._refine_options[job_id] = {
-                            "path": path, "s_dir": s_dir, "engine": engine,
+                        refine_source = audio_copy or path
+                        refine_options = {
+                            "path": refine_source, "s_dir": s_dir, "engine": engine,
                             "model_id": model_id, "hf_token": hf_token,
                             "num_speakers": num_speakers, "audio_copy": audio_copy,
-                            "json_path": json_path,
+                            "json_path": json_path, "qwen_backend": qwen_backend,
                         }
+                        self._refine_options[job_id] = refine_options
+                        try:
+                            _service().set_high_accuracy_refine(
+                                job_id,
+                                source_audio=refine_source,
+                                engine=engine,
+                                model_id=model_id,
+                                num_speakers=num_speakers,
+                                qwen_backend=qwen_backend,
+                            )
+                        except OSError:
+                            # The transcript is already committed. Keep the current
+                            # session usable even if the optional capability marker
+                            # cannot be made durable (for example, a full disk).
+                            logger.warning(
+                                "Unable to persist high-accuracy eligibility for %s",
+                                job_id,
+                                exc_info=True,
+                            )
 
                 # Stop accepting cancellation once the transactional service
                 # has committed the completed session.
@@ -600,7 +620,7 @@ class API:
         threading.Thread(target=_run, daemon=True).start()
         return {"job_id": job_id, "qwen_backend": qwen_backend}
 
-    def refine(self, job_id: str) -> dict:
+    def refine(self, job_id: str, options: Optional[dict] = None) -> dict:
         """
         Trigger manual high-accuracy re-transcription for a realtime session (Phase 2).
         Called from the UI when the user clicks "高精度转写".
@@ -613,16 +633,54 @@ class API:
             if job_id in _cancel_flags:
                 return {"error": "job_in_progress", "job_id": job_id}
 
+        options = options or {}
         opts = self._refine_options.get(job_id)
         if opts is None:
+            opts = _service().get_high_accuracy_refine(job_id)
+            if opts is not None:
+                self._refine_options[job_id] = opts
+        if opts is None:
             return {"error": "no_refine_options"}
+        if opts.get("legacy_inferred"):
+            model_id = options.get("model_id")
+            if not model_id:
+                return {"error": "legacy_refine_model_required"}
+            from src.model_manager import CATALOG as _CATALOG
+            model_info = next((model for model in _CATALOG if model.id == model_id), None)
+            if model_info is None or model_info.role != "asr":
+                return {"error": "invalid_refine_model"}
+            opts = dict(opts)
+            opts["model_id"] = model_id
+            opts["engine"] = (
+                "whisper" if model_info.engine == "mlx-whisper" else model_info.engine
+            )
+            self._refine_options[job_id] = opts
 
         from src.preferences import default_backend
-        qwen_backend = default_backend(CONFIG_PATH) if opts["engine"] == "qwen" else None
+        qwen_backend = (
+            opts.get("qwen_backend") or default_backend(CONFIG_PATH)
+            if opts["engine"] == "qwen"
+            else None
+        )
 
         cancel_ev = _register_transcription(job_id)
         if cancel_ev is None:
             return {"error": "job_in_progress", "job_id": job_id}
+        try:
+            _service().set_high_accuracy_refine(
+                job_id,
+                source_audio=opts["path"],
+                engine=opts["engine"],
+                model_id=opts.get("model_id"),
+                num_speakers=opts.get("num_speakers"),
+                qwen_backend=qwen_backend,
+            )
+        except OSError:
+            logger.warning(
+                "Unable to persist high-accuracy eligibility before refine for %s",
+                job_id,
+                exc_info=True,
+            )
         self._refine_options.pop(job_id, None)
 
         path         = opts["path"]
@@ -654,6 +712,17 @@ class API:
                         progress_callback=_progress,
                         qwen_backend=qwen_backend,
                     )
+                    try:
+                        _service().clear_high_accuracy_refine(job_id)
+                    except OSError:
+                        # Full ASR output is already committed. A stale optional
+                        # marker must not turn a successful transcription into an
+                        # error in the current UI.
+                        logger.warning(
+                            "Unable to clear high-accuracy eligibility for %s",
+                            job_id,
+                            exc_info=True,
+                        )
 
                 _unregister_transcription(job_id, cancel_ev)
                 _push(f"onTranscribeRefined({json.dumps(job_id)})")
@@ -662,9 +731,13 @@ class API:
                 logger.info("Refine ASR cancelled for job %s", job_id)
                 self._refine_options[job_id] = opts
                 _push(f"onTranscribeCancel({json.dumps(job_id)})")
-            except Exception:
+            except Exception as exc:
                 logger.exception("Refine ASR failed for job %s", job_id)
-                _push(f"onTranscribeRefined({json.dumps(job_id)})")
+                self._refine_options[job_id] = opts
+                _push(
+                    f"onTranscribeRefineError({json.dumps(job_id)}, "
+                    f"{json.dumps(str(exc))})"
+                )
             finally:
                 _unregister_transcription(job_id, cancel_ev)
 

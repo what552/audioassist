@@ -114,6 +114,136 @@ class TestGetHistory:
         result = api.get_history()
         assert result[0]["audio_path"] == "/abs/path/j4_audio.mp3"
 
+    def test_completed_session_reports_persisted_high_accuracy_availability(self, env):
+        api, tmp = env
+        job_id = "refine-ready"
+        session_dir = tmp / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        source = session_dir / "source_audio.wav"
+        source.write_bytes(b"RIFF")
+        (session_dir / "transcript.json").write_text(json.dumps({
+            "filename": "Recording", "audio": str(source), "language": "zh",
+            "created_at": "2026-09-09 12:00", "segments": [{
+                "speaker": "SPEAKER_00", "start": 0, "end": 1,
+                "text": "draft", "words": [],
+            }],
+        }), encoding="utf-8")
+        (session_dir / "meta.json").write_text(json.dumps({
+            "high_accuracy_refine": {
+                "available": True,
+                "source_audio": str(source),
+                "engine": "qwen",
+                "model_id": "qwen3-asr-1.7b",
+                "num_speakers": None,
+                "qwen_backend": "mlx",
+            },
+        }), encoding="utf-8")
+
+        result = api.get_history()
+
+        assert result[0]["refine_available"] is True
+
+    def test_missing_refine_audio_hides_high_accuracy_action(self, env):
+        api, tmp = env
+        job_id = "refine-missing-audio"
+        session_dir = tmp / "meetings" / job_id
+        session_dir.mkdir(parents=True)
+        (session_dir / "transcript.json").write_text(json.dumps({
+            "filename": "Recording", "audio": "missing.wav", "language": "zh",
+            "created_at": "2026-09-09 12:00", "segments": [],
+        }), encoding="utf-8")
+        (session_dir / "meta.json").write_text(json.dumps({
+            "high_accuracy_refine": {
+                "available": True,
+                "source_audio": str(session_dir / "missing.wav"),
+                "engine": "qwen",
+            },
+        }), encoding="utf-8")
+
+        result = api.get_history()
+
+        assert result[0]["refine_available"] is False
+
+    def test_legacy_realtime_quick_draft_recovers_high_accuracy_action(self, env):
+        api, tmp = env
+        recording_id = "legacy-recording"
+        recording_dir = tmp / "meetings" / recording_id
+        recording_dir.mkdir(parents=True)
+        (recording_dir / "realtime_recording_legacy.wav").write_bytes(b"RIFF")
+        target_id = "legacy-quick-draft"
+        (recording_dir / "meta.json").write_text(json.dumps({
+            "transcribed_job_id": target_id,
+        }), encoding="utf-8")
+        target_dir = tmp / "meetings" / target_id
+        target_dir.mkdir()
+        source = target_dir / "source_audio.wav"
+        source.write_bytes(b"RIFF")
+        (target_dir / "transcript.json").write_text(json.dumps({
+            "filename": "Old recording", "audio": str(source), "language": "zh",
+            "created_at": "2026-09-08 12:00", "segments": [{
+                "speaker": "SPEAKER_00", "start": 0, "end": 1,
+                "text": "draft", "words": [],
+            }],
+        }), encoding="utf-8")
+
+        history = api.get_history()
+        restored = app_module._service().get_high_accuracy_refine(target_id)
+        without_model = api.refine(target_id)
+
+        assert history[0]["refine_available"] is True
+        assert restored is not None
+        assert restored["path"] == str(source)
+        assert restored["engine"] is None
+        assert restored["legacy_inferred"] is True
+        assert without_model == {"error": "legacy_refine_model_required"}
+
+    def test_legacy_realtime_full_qwen_output_is_not_treated_as_quick_draft(self, env):
+        api, tmp = env
+        recording_dir = tmp / "meetings" / "legacy-recording"
+        recording_dir.mkdir(parents=True)
+        (recording_dir / "realtime_recording_legacy.wav").write_bytes(b"RIFF")
+        target_id = "legacy-full-output"
+        (recording_dir / "meta.json").write_text(json.dumps({
+            "transcribed_job_id": target_id,
+        }), encoding="utf-8")
+        target_dir = tmp / "meetings" / target_id
+        target_dir.mkdir()
+        source = target_dir / "source_audio.wav"
+        source.write_bytes(b"RIFF")
+        (target_dir / "transcript.json").write_text(json.dumps({
+            "filename": "Already refined", "audio": str(source), "language": "zh",
+            "qwen_backend": "mlx", "created_at": "2026-09-08 12:00", "segments": [],
+        }), encoding="utf-8")
+
+        history = api.get_history()
+
+        assert history[0]["refine_available"] is False
+
+    def test_legacy_aligned_output_without_backend_is_not_treated_as_quick_draft(self, env):
+        api, tmp = env
+        recording_dir = tmp / "meetings" / "legacy-recording"
+        recording_dir.mkdir(parents=True)
+        (recording_dir / "realtime_recording_legacy.wav").write_bytes(b"RIFF")
+        target_id = "legacy-whisper-output"
+        (recording_dir / "meta.json").write_text(json.dumps({
+            "transcribed_job_id": target_id,
+        }), encoding="utf-8")
+        target_dir = tmp / "meetings" / target_id
+        target_dir.mkdir()
+        source = target_dir / "source_audio.wav"
+        source.write_bytes(b"RIFF")
+        (target_dir / "transcript.json").write_text(json.dumps({
+            "filename": "Aligned output", "audio": str(source), "language": "en",
+            "created_at": "2026-09-08 12:00", "segments": [{
+                "speaker": "SPEAKER_00", "start": 0, "end": 1, "text": "done",
+                "words": [{"word": "done", "start": 0, "end": 1}],
+            }],
+        }), encoding="utf-8")
+
+        history = api.get_history()
+
+        assert history[0]["refine_available"] is False
+
 
 class TestGetHistoryWavEntries:
     def test_wav_without_json_appears_as_realtime(self, env):

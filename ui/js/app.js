@@ -385,6 +385,7 @@ const App = (() => {
             language:   item.language,
             audioPath:  item.audio_path || null,
             qwenBackend: item.qwen_backend || null,
+            refineAvailable: item.refine_available === true,
           });
         }
       }
@@ -534,7 +535,13 @@ const App = (() => {
   function onTranscribeProgress(jobId, pct, message) {
     if (_selectedId !== jobId) return;
     const s = _sessions.get(jobId);
-    if (!s || s.status !== 'transcribing') return;
+    if (!s) return;
+    if (s.status === 'refining') {
+      const percent = Math.max(0, Math.min(100, Math.round(pct * 100)));
+      dom.refineHint.textContent = `高精度转写 ${percent}% · ${message}`;
+      return;
+    }
+    if (s.status !== 'transcribing') return;
     _setProgress(pct, message);
   }
 
@@ -550,6 +557,12 @@ const App = (() => {
     const s = _sessions.get(jobId);
     s._data = null;  // force JSON reload
     _updateSession(jobId, { status: 'done', refineAvailable: false });
+  }
+
+  function onTranscribeRefineError(jobId, message) {
+    if (!_sessions.has(jobId)) return;
+    _updateSession(jobId, { status: 'done', refineAvailable: true });
+    showToast(`高精度转写失败：${message}`, 5000);
   }
 
   function onTranscribeError(jobId, message, qwenBackend = null) {
@@ -578,6 +591,10 @@ const App = (() => {
     if (s && s.status === 'interrupted') {
       // Keep session visible as interrupted
       _render();
+      return;
+    }
+    if (s.status === 'refining') {
+      _updateSession(jobId, { status: 'done', refineAvailable: true });
       return;
     }
     if (_selectedId === jobId) _selectSession(null);
@@ -671,15 +688,20 @@ const App = (() => {
 
     dom.btnHighAccuracy.addEventListener('click', async () => {
       if (!_selectedId) return;
-      const s = _sessions.get(_selectedId);
+      const jobId = _selectedId;
+      const s = _sessions.get(jobId);
       if (!s || !s.refineAvailable) return;
       dom.btnHighAccuracy.hidden = true;
-      _updateSession(_selectedId, { status: 'refining', refineAvailable: false });
+      _updateSession(jobId, { status: 'refining', refineAvailable: false });
       try {
-        await window.pywebview.api.refine(_selectedId);
+        const result = await window.pywebview.api.refine(jobId, {
+          model_id: dom.selEngine.value || null,
+        });
+        if (result && result.error) throw new Error(result.error);
       } catch (err) {
         console.error('[App] refine error:', err);
-        _updateSession(_selectedId, { status: 'done' });
+        _updateSession(jobId, { status: 'done', refineAvailable: true });
+        showToast(`高精度转写未启动：${String(err)}`, 5000);
       }
     });
 
@@ -1024,7 +1046,7 @@ const App = (() => {
   }
 
   return { init, onTranscribeProgress, onTranscribeComplete, onTranscribeError,
-           onTranscribeCancel, onTranscribeRefined,
+           onTranscribeCancel, onTranscribeRefined, onTranscribeRefineError,
            refreshEngineSelector: _populateEngineSelector,
            openExportMenu, showToast };
 })();
@@ -1036,6 +1058,7 @@ function onTranscribeComplete(jobId, jsonPath, hasRefine) { App.onTranscribeComp
 function onTranscribeError(jobId, message)          { App.onTranscribeError(jobId, message); }
 function onTranscribeCancel(jobId)                  { App.onTranscribeCancel(jobId); }
 function onTranscribeRefined(jobId)                 { App.onTranscribeRefined(jobId); }
+function onTranscribeRefineError(jobId, message)    { App.onTranscribeRefineError(jobId, message); }
 
 function onModelDownloadProgress(name, percent) {
   console.log(`[model] ${name} ${(percent * 100).toFixed(0)}%`);

@@ -58,6 +58,7 @@ class ConfigurationError(AudioAssistError):
 
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _REALTIME_WAV_PREFIX = "realtime_recording"
+_HIGH_ACCURACY_REFINE_KEY = "high_accuracy_refine"
 _summary_locks: dict[str, threading.Lock] = {}
 _summary_locks_guard = threading.Lock()
 
@@ -168,6 +169,7 @@ class AudioAssistService:
 
         seen_job_ids: set[str] = set()
         meetings_dir = os.path.join(self.output_dir, "meetings")
+        legacy_refine_jobs = self._legacy_realtime_transcript_ids(meetings_dir)
 
         if os.path.isdir(meetings_dir):
             for job_id in os.listdir(meetings_dir):
@@ -179,7 +181,17 @@ class AudioAssistService:
                     data = _read_json(transcript_path, None)
                     if self._is_transcript(data):
                         seen_job_ids.add(job_id)
-                        result.append(self._history_entry(job_id, data))
+                        meta = _read_json(os.path.join(session_dir, "meta.json"), {})
+                        refine_available = self._refine_available(meta, data)
+                        if not refine_available:
+                            refine_available = self._legacy_refine_available(
+                                job_id, data, meta, legacy_refine_jobs
+                            )
+                        result.append(self._history_entry(
+                            job_id,
+                            data,
+                            refine_available=refine_available,
+                        ))
                     continue
 
                 wav_path = self._find_realtime_wav(session_dir)
@@ -482,8 +494,174 @@ class AudioAssistService:
         data = _read_json(self.config_path, {})
         return data if isinstance(data, dict) else {}
 
+    def get_high_accuracy_refine(self, job_id: str) -> dict | None:
+        """Return a durable manual-refine descriptor for a completed session."""
+        job_id = validate_job_id(job_id)
+        paths = get_session_paths(self.output_dir, job_id)
+        meta = _read_json(os.path.join(paths.session_dir, "meta.json"), {})
+        if not isinstance(meta, dict):
+            return None
+        transcript = _read_json(paths.transcript_new, {})
+        descriptor = meta.get(_HIGH_ACCURACY_REFINE_KEY)
+        if not isinstance(descriptor, dict) or not descriptor.get("available"):
+            legacy_jobs = self._legacy_realtime_transcript_ids(
+                os.path.join(self.output_dir, "meetings")
+            )
+            if not self._legacy_refine_available(job_id, transcript, meta, legacy_jobs):
+                return None
+            descriptor = {
+                "available": True,
+                "source_audio": transcript.get("audio"),
+                "engine": None,
+                "model_id": None,
+                "num_speakers": None,
+                "qwen_backend": None,
+                "legacy_inferred": True,
+            }
+        elif not self._looks_like_realtime_quick_draft(transcript):
+            return None
+
+        source_audio = descriptor.get("source_audio")
+        if not isinstance(source_audio, str) or not os.path.isfile(source_audio):
+            return None
+        engine = descriptor.get("engine")
+        is_legacy = descriptor.get("legacy_inferred") is True
+        if engine not in {"qwen", "whisper"} and not is_legacy:
+            return None
+        return {
+            "path": os.path.abspath(source_audio),
+            "s_dir": paths.session_dir,
+            "engine": engine,
+            "model_id": descriptor.get("model_id"),
+            "hf_token": None,
+            "num_speakers": descriptor.get("num_speakers"),
+            "qwen_backend": descriptor.get("qwen_backend"),
+            "legacy_inferred": is_legacy,
+            "audio_copy": os.path.abspath(source_audio),
+            "json_path": paths.transcript_new,
+        }
+
+    def set_high_accuracy_refine(
+        self,
+        job_id: str,
+        *,
+        source_audio: str,
+        engine: str,
+        model_id: str | None,
+        num_speakers: int | None,
+        qwen_backend: str | None,
+    ) -> None:
+        """Persist eligibility and non-secret options for manual high accuracy."""
+        job_id = validate_job_id(job_id)
+        paths = get_session_paths(self.output_dir, job_id)
+        os.makedirs(paths.session_dir, exist_ok=True)
+        meta_path = os.path.join(paths.session_dir, "meta.json")
+        meta = _read_json(meta_path, {})
+        if not isinstance(meta, dict):
+            meta = {}
+        meta[_HIGH_ACCURACY_REFINE_KEY] = {
+            "available": True,
+            "source_audio": os.path.abspath(source_audio),
+            "engine": engine,
+            "model_id": model_id,
+            "num_speakers": num_speakers,
+            "qwen_backend": qwen_backend,
+        }
+        _write_json_atomic(meta_path, meta)
+
+    def clear_high_accuracy_refine(self, job_id: str) -> None:
+        """Mark a manual high-accuracy pass as consumed after it succeeds."""
+        job_id = validate_job_id(job_id)
+        paths = get_session_paths(self.output_dir, job_id)
+        meta_path = os.path.join(paths.session_dir, "meta.json")
+        meta = _read_json(meta_path, {})
+        if not isinstance(meta, dict) or _HIGH_ACCURACY_REFINE_KEY not in meta:
+            return
+        descriptor = meta.get(_HIGH_ACCURACY_REFINE_KEY)
+        if isinstance(descriptor, dict):
+            descriptor["available"] = False
+        else:
+            meta.pop(_HIGH_ACCURACY_REFINE_KEY, None)
+        _write_json_atomic(meta_path, meta)
+
     @staticmethod
-    def _history_entry(job_id: str, data: dict) -> dict:
+    def _refine_available(meta: Any, transcript: Any) -> bool:
+        if not isinstance(meta, dict):
+            return False
+        descriptor = meta.get(_HIGH_ACCURACY_REFINE_KEY)
+        if not isinstance(descriptor, dict) or not descriptor.get("available"):
+            return False
+        source_audio = descriptor.get("source_audio")
+        return (
+            isinstance(source_audio, str)
+            and os.path.isfile(source_audio)
+            and AudioAssistService._looks_like_realtime_quick_draft(transcript)
+        )
+
+    @staticmethod
+    def _legacy_realtime_transcript_ids(meetings_dir: str) -> set[str]:
+        """Find pre-metadata realtime drafts through their source-session link."""
+        result: set[str] = set()
+        if not os.path.isdir(meetings_dir):
+            return result
+        try:
+            session_ids = os.listdir(meetings_dir)
+        except OSError:
+            return result
+        for session_id in session_ids:
+            session_dir = os.path.join(meetings_dir, session_id)
+            meta = _read_json(os.path.join(session_dir, "meta.json"), {})
+            if not isinstance(meta, dict):
+                continue
+            target = meta.get("transcribed_job_id")
+            if not isinstance(target, str) or not target:
+                continue
+            if AudioAssistService._find_realtime_wav(session_dir):
+                result.add(target)
+        return result
+
+    @staticmethod
+    def _legacy_refine_available(
+        job_id: str,
+        transcript: Any,
+        meta: Any,
+        legacy_refine_jobs: set[str],
+    ) -> bool:
+        """Conservatively recognize realtime quick drafts written before this field."""
+        if job_id not in legacy_refine_jobs or not isinstance(transcript, dict):
+            return False
+        if isinstance(meta, dict) and _HIGH_ACCURACY_REFINE_KEY in meta:
+            return False
+        # Full Qwen output records the backend; the realtime diarize-only draft does not.
+        if transcript.get("qwen_backend"):
+            return False
+        source_audio = transcript.get("audio")
+        return (
+            isinstance(source_audio, str)
+            and os.path.isfile(source_audio)
+            and AudioAssistService._looks_like_realtime_quick_draft(transcript)
+        )
+
+    @staticmethod
+    def _looks_like_realtime_quick_draft(transcript: Any) -> bool:
+        """Realtime Phase 1 has segments but no word-level ASR alignment."""
+        if not isinstance(transcript, dict):
+            return False
+        segments = transcript.get("segments")
+        if not isinstance(segments, list) or not segments:
+            return False
+        return all(
+            isinstance(segment, dict) and not segment.get("words")
+            for segment in segments
+        )
+
+    @staticmethod
+    def _history_entry(
+        job_id: str,
+        data: dict,
+        *,
+        refine_available: bool = False,
+    ) -> dict:
         segments = data.get("segments", [])
         duration = round(segments[-1].get("end", 0)) if segments else 0
         text = " ".join(
@@ -501,6 +679,7 @@ class AudioAssistService:
             ),
             "audio_path": data.get("audio", ""),
             "type": "file",
+            "refine_available": refine_available,
         }
 
     @staticmethod

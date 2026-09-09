@@ -112,6 +112,101 @@ def test_reorganized_controls_keep_their_existing_functions(
     expect(page.locator("#center-panel > #player-bar")).to_be_visible()
 
 
+def test_high_accuracy_action_restores_from_history_and_remains_retryable(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [
+            {
+                "job_id": "quick-draft", "filename": "Realtime draft", "type": "file",
+                "status": "done", "date": "2026-09-09T12:00:00",
+                "audio_path": "/audio/realtime.wav", "refine_available": True,
+            },
+            {
+                "job_id": "full-file", "filename": "Full transcript", "type": "file",
+                "status": "done", "date": "2026-09-09T11:00:00",
+                "audio_path": "/audio/file.m4a", "refine_available": False,
+            },
+        ],
+    })
+
+    page.locator(".history-item", has_text="Realtime draft").locator(
+        ".history-item-body"
+    ).click()
+    expect(page.locator("#btn-high-accuracy")).to_be_visible()
+    page.locator("#btn-high-accuracy").click()
+    page.wait_for_function("_mockApi.calls('refine').length === 1")
+    assert page.evaluate("_mockApi.calls('refine')")[0]["args"] == [
+        "quick-draft", {"model_id": "qwen3-asr-1.7b"},
+    ]
+    page.evaluate("onTranscribeProgress('quick-draft', 0.42, 'Running ASR')")
+    expect(page.locator("#refine-hint")).to_contain_text("42% · Running ASR")
+    page.evaluate("onTranscribeRefineError('quick-draft', 'engine crashed')")
+    expect(page.locator("#btn-high-accuracy")).to_be_visible()
+    expect(page.locator("#toast")).to_contain_text("engine crashed")
+
+    page.locator(".history-item", has_text="Full transcript").locator(
+        ".history-item-body"
+    ).click()
+    expect(page.locator("#btn-high-accuracy")).to_be_hidden()
+
+
+def test_high_accuracy_cancel_keeps_draft_visible_and_retryable(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "quick-draft", "filename": "Realtime draft", "type": "file",
+            "status": "done", "date": "2026-09-09T12:00:00",
+            "audio_path": "/audio/realtime.wav", "refine_available": True,
+        }],
+    })
+    page.locator(".history-item-body").click()
+    page.locator("#btn-high-accuracy").click()
+    page.evaluate("onTranscribeCancel('quick-draft')")
+
+    expect(page.locator(".history-item")).to_have_count(1)
+    expect(page.locator("#btn-high-accuracy")).to_be_visible()
+
+
+def test_high_accuracy_start_failure_restores_the_clicked_session_after_switch(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [
+            {
+                "job_id": "quick-draft", "filename": "Realtime draft", "type": "file",
+                "status": "done", "date": "2026-09-09T12:00:00",
+                "audio_path": "/audio/realtime.wav", "refine_available": True,
+            },
+            {
+                "job_id": "full-file", "filename": "Full transcript", "type": "file",
+                "status": "done", "date": "2026-09-09T11:00:00",
+                "audio_path": "/audio/file.m4a", "refine_available": False,
+            },
+        ],
+    })
+    page.evaluate(
+        "() => { window.pywebview.api.refine = async () => { "
+        "await new Promise(resolve => setTimeout(resolve, 100)); "
+        "throw new Error('start failed'); }; }"
+    )
+    page.locator(".history-item", has_text="Realtime draft").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#btn-high-accuracy").click()
+    page.locator(".history-item", has_text="Full transcript").locator(
+        ".history-item-body"
+    ).click()
+    page.wait_for_function("document.querySelector('#toast').textContent.includes('start failed')")
+    expect(page.locator("#btn-high-accuracy")).to_be_hidden()
+
+    page.locator(".history-item", has_text="Realtime draft").locator(
+        ".history-item-body"
+    ).click()
+    expect(page.locator("#btn-high-accuracy")).to_be_visible()
+
+
 def test_minimum_window_keeps_transcript_and_summary_usable(
     page: Page, ui_base_url: str
 ) -> None:

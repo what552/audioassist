@@ -5,9 +5,9 @@ Flow:
   1. stop_realtime() stores pre-collected segments in _rt_segments.
   2. transcribe(wav_path, {}) pops segments → runs diarize-only (Phase 1).
   3. Pushes onTranscribeComplete(jobId, jsonPath, False)  ← hasRefine always False now
-  4. Stores options in api._refine_options[job_id] for optional manual refine.
+  4. Stores options in memory and session meta for optional manual refine.
   5. User clicks "高精度转写" → JS calls api.refine(job_id).
-  6. refine() pops options, runs full pipeline in background.
+  6. refine() can restore persisted options after restart, then runs in background.
   7. Overwrites JSON, pushes onTranscribeProgress events + onTranscribeRefined(jobId).
 """
 from __future__ import annotations
@@ -141,13 +141,18 @@ class TestHasRefineFlag:
                 api.transcribe(wav, {})
                 _wait(0.5)
 
-        assert captured_job, "onTranscribeComplete not received"
-        job_id = captured_job[0]
-        assert job_id in api._refine_options
-        opts = api._refine_options[job_id]
-        assert opts["path"] == wav
-        assert "json_path" in opts
-        assert "s_dir" in opts
+            assert captured_job, "onTranscribeComplete not received"
+            job_id = captured_job[0]
+            assert job_id in api._refine_options
+            opts = api._refine_options[job_id]
+            assert opts["path"].endswith(os.path.join(job_id, "source_audio.wav"))
+            assert os.path.isfile(opts["path"])
+            assert "json_path" in opts
+            assert "s_dir" in opts
+            meta_path = os.path.join(td, "meetings", job_id, "meta.json")
+            meta = json.loads(open(meta_path, encoding="utf-8").read())
+            assert meta["high_accuracy_refine"]["available"] is True
+            assert "hf_token" not in meta["high_accuracy_refine"]
 
     def test_refine_options_not_stored_for_file_transcription(self):
         """_refine_options must NOT be populated for regular file jobs."""
@@ -164,6 +169,26 @@ class TestHasRefineFlag:
                 _wait(0.5)
 
         assert not api._refine_options
+
+    def test_refine_metadata_write_failure_does_not_fail_committed_draft(self):
+        api = API()
+        with tempfile.TemporaryDirectory() as td:
+            wav = os.path.join(td, "session.wav"); open(wav, "wb").close()
+            api._rt_segments[wav] = [{"text": "draft", "start": 0.0, "end": 1.0}]
+            js_calls: list[str] = []
+            with patch("src.pipeline.run_realtime_segments",
+                       side_effect=_make_fake_diarize_only(td)), \
+                 patch("src.service.AudioAssistService.set_high_accuracy_refine",
+                       side_effect=OSError("disk full")), \
+                 patch.object(app_module, "_push", side_effect=js_calls.append), \
+                 patch.object(app_module, "OUTPUT_DIR", td):
+                result = api.transcribe(wav, {})
+                _wait(0.5)
+
+            transcript = os.path.join(td, "meetings", result["job_id"], "transcript.json")
+            assert os.path.isfile(transcript)
+            assert any("onTranscribeComplete" in call for call in js_calls)
+            assert not any("onTranscribeError" in call for call in js_calls)
 
 
 # ── Manual refine() API ───────────────────────────────────────────────────────
@@ -210,6 +235,42 @@ class TestManualRefine:
         api = API()
         result = api.refine("nonexistent-job-id")
         assert result == {"error": "no_refine_options"}
+
+    def test_refine_survives_api_restart_and_consumes_persisted_capability(self):
+        with tempfile.TemporaryDirectory() as td:
+            wav = os.path.join(td, "session.wav"); open(wav, "wb").close()
+            api, job_id = self._setup_after_phase1(td, wav)
+            meta_path = os.path.join(td, "meetings", job_id, "meta.json")
+            persisted = json.loads(open(meta_path, encoding="utf-8").read())
+            expected_backend = persisted["high_accuracy_refine"]["qwen_backend"]
+            del api
+
+            refined = threading.Event()
+            observed: dict = {}
+
+            def _pipeline(audio_path, output_dir, **kwargs):
+                observed["audio_path"] = audio_path
+                observed["qwen_backend"] = kwargs.get("qwen_backend")
+                return _make_fake_pipeline_run(td)(audio_path, output_dir, **kwargs)
+
+            def _push(js: str):
+                if "onTranscribeRefined" in js:
+                    refined.set()
+
+            restarted_api = API()
+            with patch("src.pipeline.run", side_effect=_pipeline), \
+                 patch.object(app_module, "_push", side_effect=_push), \
+                 patch.object(app_module, "OUTPUT_DIR", td):
+                assert restarted_api.refine(job_id) == {"job_id": job_id}
+                assert refined.wait(2)
+                history = restarted_api.get_history()
+
+            assert observed["audio_path"].endswith(
+                os.path.join(job_id, "source_audio.wav")
+            )
+            assert observed["qwen_backend"] == expected_backend
+            assert history[0]["refine_available"] is False
+            assert restarted_api.refine(job_id) == {"error": "no_refine_options"}
 
     def test_refine_options_cleared_after_call(self):
         """_refine_options entry is consumed (popped) by refine()."""
@@ -288,8 +349,8 @@ class TestManualRefine:
         texts = [s["text"] for s in data.get("segments", [])]
         assert "high quality" in texts
 
-    def test_refine_fail_pushes_onTranscribeRefined(self):
-        """If refine pipeline raises, onTranscribeRefined is still pushed (UI unblocks)."""
+    def test_refine_failure_preserves_retry_and_pushes_error(self):
+        """A failed refine returns to the draft and remains available for retry."""
         with tempfile.TemporaryDirectory() as td:
             wav = os.path.join(td, "session.wav"); open(wav, "wb").close()
             api, job_id = self._setup_after_phase1(td, wav)
@@ -305,8 +366,40 @@ class TestManualRefine:
                 api.refine(job_id)
                 _wait(0.5)
 
-        assert any("onTranscribeRefined" in c for c in js_calls)
+        assert any("onTranscribeRefineError" in c for c in js_calls)
+        assert not any("onTranscribeRefined" in c for c in js_calls)
+        assert job_id in api._refine_options
         assert not any("onTranscribeError" in c for c in js_calls)
+
+    def test_refine_marker_clear_failure_does_not_reverse_committed_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            wav = os.path.join(td, "session.wav"); open(wav, "wb").close()
+            api, job_id = self._setup_after_phase1(td, wav)
+            js_calls: list[str] = []
+
+            def _full_with_words(audio_path, output_dir, **kwargs):
+                paths = _make_fake_pipeline_run(td)(audio_path, output_dir, **kwargs)
+                data = json.loads(open(paths[0], encoding="utf-8").read())
+                data["segments"][0]["words"] = [
+                    {"word": "refined", "start": 0.0, "end": 1.0}
+                ]
+                with open(paths[0], "w", encoding="utf-8") as file:
+                    json.dump(data, file)
+                return paths
+
+            with patch("src.pipeline.run", side_effect=_full_with_words), \
+                 patch("src.service.AudioAssistService.clear_high_accuracy_refine",
+                       side_effect=OSError("disk full")), \
+                 patch.object(app_module, "_push", side_effect=js_calls.append), \
+                 patch.object(app_module, "OUTPUT_DIR", td):
+                api.refine(job_id)
+                _wait(0.5)
+                history = api.get_history()
+
+            assert any("onTranscribeRefined" in call for call in js_calls)
+            assert not any("onTranscribeRefineError" in call for call in js_calls)
+            assert job_id not in api._refine_options
+            assert history[0]["refine_available"] is False
 
     def test_refine_no_auto_trigger_after_transcribe(self):
         """After Phase 1, onTranscribeRefined must NOT be pushed automatically."""
