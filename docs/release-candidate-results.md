@@ -1,6 +1,42 @@
 # REL-01 Release Candidate Record
 
-Updated: 2026-09-08
+Updated: 2026-09-09
+
+## 2.1.0 transcription workspace candidate
+
+- Source baseline: UI implementation `9481f9a`, persistence correction `48298a6`,
+  integration merge `37ccccc`, and release preparation `f336f97`. The exact corrected
+  UI commit passed independent review with no P0/P1/P2 findings. The full host suite
+  passed **1100 tests**; its frontend coverage includes the refreshed workspace,
+  Summary default-collapsed behavior, transcript editing, and high-accuracy action
+  persistence.
+- The refreshed workspace preserves existing feature semantics while exposing more
+  transcript content as timestamp–speaker–text rows. It supports single-segment speaker
+  correction, speaker-wide rename, inline text edits, persisted themes, and a collapsed
+  Summary workspace by default. The manual high-accuracy action remains available after
+  reload and restart.
+- Build: `bash scripts/build_dmg.sh` refreshed the locked editable installation from
+  2.0.5 to 2.1.0, then completed the Swift helper, PyInstaller, ad-hoc signing, DMG, and
+  release-verification stages successfully.
+- Version: `2.1.0`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- App: `dist/AudioAssist.app`; DMG: `dist/AudioAssist-2.1.0.dmg`.
+- DMG SHA-256:
+  `ea581e18ba95cdcc35ce571614458193e3315537fb9ab85025fd9e7f5a808bf2`.
+- App CDHash: `7d5120412dc79537c3e607c211c67c7ab9af6dac`.
+- `dist/release-verification-2.1.0.json`: PASS, including 491 Mach-O files,
+  584 symlinks, required Qwen/MLX assets, matching source/App/DMG version metadata,
+  and a matching read-only mounted DMG payload.
+- Packaged-App smoke: the candidate launched directly from `dist`, Settings reported
+  `2.1.0 · packaged-app` and the exact candidate path, Summary was collapsed by default,
+  the existing 99-session history loaded, and an existing 9:53 M4A displayed in the
+  native player with its transcript. A different legacy session reported a missing
+  source file because its session directory contains only `transcript.json`; this is
+  pre-existing session data, not a packaged-App loading failure.
+- Pending owner-installed release gates: install the 2.1.0 DMG and manually verify Mic,
+  System, and Mix start/pause/resume/finish with valid WAV growth and a real-model
+  transcript. Fresh-install permission prompting may require resetting ad-hoc TCC
+  records. Developer-ID upgrade permission continuity cannot be claimed for this build.
+- This is a local ad-hoc test candidate, not a distributable signed upgrade.
 
 ## 2.0.5 MLX realtime worker-ownership candidate
 

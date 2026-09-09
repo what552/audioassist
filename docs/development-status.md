@@ -1,6 +1,6 @@
 # Development Status
 
-Updated: 2026-09-07
+Updated: 2026-09-09
 
 ## Current baseline
 
@@ -14,7 +14,15 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current source baseline is 1074 automated tests, including 38 browser tests. It
+The current source baseline is 1100 automated tests. AudioAssist 2.1.0 refreshes the
+desktop transcription workspace while preserving the established feature contract:
+Summary starts collapsed, transcript rows present timestamp–speaker–text, speaker and
+text corrections are editable in place, a speaker can be renamed globally, themes are
+persisted from Settings, and the manual high-accuracy action survives reload/restart.
+The 2.1.0 App and DMG pass mechanical release verification; installed Mic/System/Mix
+recording acceptance remains the release gate.
+
+The baseline also
 canonicalizes backend language names and ISO variants, corrects strongly conflicting
 language metadata from transcript script evidence, reports substantial Chinese/English
 code-switching as `mixed`, and normalizes legacy sessions on read without rewriting
