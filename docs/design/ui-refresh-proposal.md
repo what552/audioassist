@@ -1,6 +1,7 @@
 # AudioAssist UI 视觉更新讨论稿
 
-状态：已在 `codex/ui-refresh` 分支实现，等待源码版 UI 验收；尚未打包或安装。
+状态：已合并至 `main`，并生成 2.1.0 App/DMG 候选；源码版和打包版 UI
+冒烟验收通过，等待安装后的 Mic/System/Mix 录音验收。
 实现不修改录音线程、模型、权限、存储或用户数据。
 
 ## 目标与边界
@@ -87,9 +88,10 @@
 播放器在稿中采用统一视觉的自定义样式。正式实现若替换原生控件，必须单独验证
 键盘操作、拖动定位、音量和辅助功能；第一阶段可以保留原生播放器以控制范围。
 
-第一阶段已在短期分支调整布局、设计变量、排版、图标和 Summary 可见性策略；
+第一阶段已完成并合并：调整布局、设计变量、排版、图标和 Summary 可见性策略；
 不改录音线程、ASR 后端、权限或存储。Summary 启动/切换 session 的可见性、
-主题持久化、布局位置和 Speaker 两类修改已补前端测试；仍需全量测试和真实 UI 验收。
+主题持久化、布局位置和 Speaker 两类修改已补前端测试。源码全量测试以及从
+`dist/AudioAssist.app` 启动的打包版历史、播放器、转写显示和运行身份冒烟验收均已通过。
 
 ## 原型验证
 
@@ -102,5 +104,6 @@ Summary 展开/收起与 session 切换时的可见性保持、录音状态、�
 
 结果：通过。这只验证独立原型，不代表正式 App 回归测试。
 
-正式实现验证：`python -m pytest tests/frontend -q` 为 43 passed；
-`python -m pytest -q` 为 1089 passed、1 个既有 pyannote benchmark warning。
+正式实现最终验证：`python -m pytest -q` 为 1100 passed、1 个既有 pyannote
+benchmark warning；2.1.0 打包验证通过。安装后的 Mic/System/Mix
+start/pause/resume/finish 与真实模型转写仍按发布清单由设备所有者验收。
