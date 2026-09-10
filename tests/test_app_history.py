@@ -164,6 +164,46 @@ class TestGetHistory:
 
         assert result[0]["refine_available"] is False
 
+    def test_missing_refine_copy_uses_linked_recording(self, env):
+        api, tmp = env
+        job_id = "refine-linked-audio"
+        recording_dir = tmp / "meetings" / "recording-source"
+        recording_dir.mkdir(parents=True)
+        recording = recording_dir / "realtime_recording_source.wav"
+        recording.write_bytes(b"RIFF")
+        (recording_dir / "meta.json").write_text(json.dumps({
+            "transcribed_job_id": job_id,
+        }), encoding="utf-8")
+
+        session_dir = tmp / "meetings" / job_id
+        session_dir.mkdir()
+        missing_copy = session_dir / "source_audio.wav"
+        (session_dir / "transcript.json").write_text(json.dumps({
+            "filename": "Recording", "audio": str(missing_copy), "language": "zh",
+            "created_at": "2026-09-09 12:00", "segments": [{
+                "speaker": "SPEAKER_00", "start": 0, "end": 1,
+                "text": "draft", "words": [],
+            }],
+        }), encoding="utf-8")
+        (session_dir / "meta.json").write_text(json.dumps({
+            "high_accuracy_refine": {
+                "available": True,
+                "source_audio": str(missing_copy),
+                "engine": "qwen",
+                "model_id": "qwen3-asr-1.7b",
+                "num_speakers": None,
+                "qwen_backend": "mlx",
+            },
+        }), encoding="utf-8")
+
+        history = api.get_history()
+        restored = app_module._service().get_high_accuracy_refine(job_id)
+
+        assert history[0]["audio_path"] == str(recording)
+        assert history[0]["refine_available"] is True
+        assert restored is not None
+        assert restored["path"] == str(recording)
+
     def test_legacy_realtime_quick_draft_recovers_high_accuracy_action(self, env):
         api, tmp = env
         recording_id = "legacy-recording"

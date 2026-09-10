@@ -139,6 +139,13 @@ class AudioAssistService:
         result["language"] = canonical_transcript_language(
             result.get("language", ""), text
         )
+        # Realtime recording and transcription use separate session directories.
+        # Older or externally-cleaned sessions can lose the copied source_audio
+        # while the original recording remains linked through transcribed_job_id.
+        # Normalize the returned view without rewriting the historical JSON.
+        resolved_audio = self._resolve_audio_path(job_id, result)
+        if resolved_audio or "audio" in result:
+            result["audio"] = resolved_audio
         return result
 
     def get_summary_versions(self, job_id: str) -> list[dict]:
@@ -169,7 +176,8 @@ class AudioAssistService:
 
         seen_job_ids: set[str] = set()
         meetings_dir = os.path.join(self.output_dir, "meetings")
-        legacy_refine_jobs = self._legacy_realtime_transcript_ids(meetings_dir)
+        linked_realtime_audio = self._linked_realtime_audio_paths(meetings_dir)
+        legacy_refine_jobs = set(linked_realtime_audio)
 
         if os.path.isdir(meetings_dir):
             for job_id in os.listdir(meetings_dir):
@@ -181,6 +189,12 @@ class AudioAssistService:
                     data = _read_json(transcript_path, None)
                     if self._is_transcript(data):
                         seen_job_ids.add(job_id)
+                        data = dict(data)
+                        data["audio"] = self._resolve_audio_path(
+                            job_id,
+                            data,
+                            linked_realtime_audio,
+                        )
                         meta = _read_json(os.path.join(session_dir, "meta.json"), {})
                         refine_available = self._refine_available(meta, data)
                         if not refine_available:
@@ -225,6 +239,12 @@ class AudioAssistService:
             if job_id in seen_job_ids:
                 continue
             seen_job_ids.add(job_id)
+            data = dict(data)
+            data["audio"] = self._resolve_audio_path(
+                job_id,
+                data,
+                linked_realtime_audio,
+            )
             result.append(self._history_entry(job_id, data))
 
         for wav_path in glob.glob(os.path.join(self.output_dir, "*.wav")):
@@ -502,6 +522,10 @@ class AudioAssistService:
         if not isinstance(meta, dict):
             return None
         transcript = _read_json(paths.transcript_new, {})
+        resolved_audio = self._resolve_audio_path(job_id, transcript)
+        if isinstance(transcript, dict):
+            transcript = dict(transcript)
+            transcript["audio"] = resolved_audio
         descriptor = meta.get(_HIGH_ACCURACY_REFINE_KEY)
         if not isinstance(descriptor, dict) or not descriptor.get("available"):
             legacy_jobs = self._legacy_realtime_transcript_ids(
@@ -522,6 +546,8 @@ class AudioAssistService:
             return None
 
         source_audio = descriptor.get("source_audio")
+        if not isinstance(source_audio, str) or not os.path.isfile(source_audio):
+            source_audio = resolved_audio
         if not isinstance(source_audio, str) or not os.path.isfile(source_audio):
             return None
         engine = descriptor.get("engine")
@@ -592,33 +618,74 @@ class AudioAssistService:
         if not isinstance(descriptor, dict) or not descriptor.get("available"):
             return False
         source_audio = descriptor.get("source_audio")
+        if not isinstance(source_audio, str) or not os.path.isfile(source_audio):
+            source_audio = (
+                transcript.get("audio") if isinstance(transcript, dict) else None
+            )
         return (
             isinstance(source_audio, str)
             and os.path.isfile(source_audio)
             and AudioAssistService._looks_like_realtime_quick_draft(transcript)
         )
 
-    @staticmethod
-    def _legacy_realtime_transcript_ids(meetings_dir: str) -> set[str]:
-        """Find pre-metadata realtime drafts through their source-session link."""
-        result: set[str] = set()
-        if not os.path.isdir(meetings_dir):
-            return result
-        try:
-            session_ids = os.listdir(meetings_dir)
-        except OSError:
-            return result
-        for session_id in session_ids:
-            session_dir = os.path.join(meetings_dir, session_id)
-            meta = _read_json(os.path.join(session_dir, "meta.json"), {})
-            if not isinstance(meta, dict):
-                continue
-            target = meta.get("transcribed_job_id")
-            if not isinstance(target, str) or not target:
-                continue
-            if AudioAssistService._find_realtime_wav(session_dir):
-                result.add(target)
+    @classmethod
+    def _linked_realtime_audio_paths(cls, meetings_dir: str) -> dict[str, str]:
+        """Map completed transcript IDs to their still-present source recordings."""
+        result: dict[str, str] = {}
+        if os.path.isdir(meetings_dir):
+            try:
+                session_ids = sorted(os.listdir(meetings_dir))
+            except OSError:
+                session_ids = []
+            for session_id in session_ids:
+                session_dir = os.path.join(meetings_dir, session_id)
+                if not os.path.isdir(session_dir):
+                    continue
+                meta = _read_json(os.path.join(session_dir, "meta.json"), {})
+                target = (
+                    meta.get("transcribed_job_id") if isinstance(meta, dict) else None
+                )
+                if not isinstance(target, str) or not target or target in result:
+                    continue
+                wav_path = cls._find_realtime_wav(session_dir)
+                if wav_path and os.path.isfile(wav_path):
+                    result[target] = os.path.abspath(wav_path)
+
+        # Pre-session-directory recordings live directly under output_dir and
+        # carry their link in <recording_id>_meta.json. They remain supported
+        # read inputs, so they must participate in the same recovery index.
+        output_dir = os.path.dirname(os.path.abspath(meetings_dir))
+        for wav_path in sorted(glob.glob(os.path.join(output_dir, "*.wav"))):
+            stem = os.path.splitext(os.path.basename(wav_path))[0]
+            meta = _read_json(os.path.join(output_dir, f"{stem}_meta.json"), {})
+            target = meta.get("transcribed_job_id") if isinstance(meta, dict) else None
+            if isinstance(target, str) and target and target not in result:
+                result[target] = os.path.abspath(wav_path)
         return result
+
+    def _resolve_audio_path(
+        self,
+        job_id: str,
+        transcript: Any,
+        linked_realtime_audio: dict[str, str] | None = None,
+    ) -> str:
+        """Return a usable session audio path, falling back to its linked recording."""
+        recorded = transcript.get("audio") if isinstance(transcript, dict) else None
+        if isinstance(recorded, str) and os.path.isfile(recorded):
+            return os.path.abspath(recorded)
+        if linked_realtime_audio is None:
+            linked_realtime_audio = self._linked_realtime_audio_paths(
+                os.path.join(self.output_dir, "meetings")
+            )
+        fallback = linked_realtime_audio.get(job_id)
+        if fallback and os.path.isfile(fallback):
+            return os.path.abspath(fallback)
+        return recorded if isinstance(recorded, str) else ""
+
+    @classmethod
+    def _legacy_realtime_transcript_ids(cls, meetings_dir: str) -> set[str]:
+        """Find pre-metadata realtime drafts through their source-session link."""
+        return set(cls._linked_realtime_audio_paths(meetings_dir))
 
     @staticmethod
     def _legacy_refine_available(

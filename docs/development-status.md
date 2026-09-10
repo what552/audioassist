@@ -1,6 +1,6 @@
 # Development Status
 
-Updated: 2026-09-09
+Updated: 2026-09-10
 
 ## Current baseline
 
@@ -14,7 +14,7 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current source baseline is 1100 automated tests. AudioAssist 2.1.0 refreshes the
+The current source baseline is 1104 automated tests. AudioAssist 2.1.0 refreshes the
 desktop transcription workspace while preserving the established feature contract:
 Summary starts collapsed, transcript rows present timestamp–speaker–text, speaker and
 text corrections are editable in place, a speaker can be renamed globally, themes are
@@ -92,6 +92,13 @@ cancellation is exposed through the same API and keeps the option available for 
 Per-session mutation locks now use weak-value retention, so active owners and waiters
 share one lock while inactive job entries are reclaimed. Session deletion takes that
 same lock and cannot race a transcribe, refine, save, or rename operation.
+
+AUDIO-LINK-01 makes completed realtime sessions resilient to a missing duplicated
+`source_audio` file. When the recording session still links to the transcript through
+`transcribed_job_id`, history, transcript reads, retry, playback, and eligible manual
+high-accuracy refinement use that verified original WAV as a read-time fallback. An
+existing canonical copy always wins, unrelated missing paths still fail normally, and
+legacy transcript JSON is not silently rewritten.
 
 TEST-UI-01 established a browser harness that has since grown to 37 tests. The real
 frontend scripts run against a configurable,

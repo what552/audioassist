@@ -52,6 +52,105 @@ def test_list_sessions_supports_new_and_legacy_layouts(tmp_path):
     assert all(item["duration"] == 12 for item in sessions)
 
 
+def test_missing_transcript_audio_falls_back_to_linked_realtime_recording(tmp_path):
+    recording_dir = tmp_path / "meetings" / "recording-job"
+    recording_dir.mkdir(parents=True)
+    recording = recording_dir / "realtime_recording_recording-job.wav"
+    recording.write_bytes(b"RIFF-linked-source")
+    (recording_dir / "meta.json").write_text(
+        json.dumps({"transcribed_job_id": "transcript-job"}),
+        encoding="utf-8",
+    )
+
+    transcript_dir = tmp_path / "meetings" / "transcript-job"
+    transcript_dir.mkdir()
+    missing_copy = transcript_dir / "source_audio.wav"
+    stored = {
+        "job_id": "transcript-job",
+        "filename": "Recovered recording",
+        "audio": str(missing_copy),
+        "language": "zh",
+        "created_at": "2026-09-09T22:06:00",
+        "segments": [],
+    }
+    transcript_path = transcript_dir / "transcript.json"
+    transcript_path.write_text(json.dumps(stored), encoding="utf-8")
+
+    service = AudioAssistService(str(tmp_path))
+    sessions = service.list_sessions()
+    transcript = service.get_transcript("transcript-job")
+
+    assert len(sessions) == 1
+    assert sessions[0]["job_id"] == "transcript-job"
+    assert sessions[0]["audio_path"] == str(recording)
+    assert transcript is not None
+    assert transcript["audio"] == str(recording)
+    # Reading old data must not silently rewrite its persisted contract.
+    assert json.loads(transcript_path.read_text(encoding="utf-8"))["audio"] == str(
+        missing_copy
+    )
+
+
+def test_existing_transcript_audio_takes_precedence_over_linked_recording(tmp_path):
+    recording_dir = tmp_path / "meetings" / "recording-job"
+    recording_dir.mkdir(parents=True)
+    recording = recording_dir / "realtime_recording_recording-job.wav"
+    recording.write_bytes(b"RIFF-linked-source")
+    (recording_dir / "meta.json").write_text(
+        json.dumps({"transcribed_job_id": "transcript-job"}),
+        encoding="utf-8",
+    )
+
+    transcript_dir = tmp_path / "meetings" / "transcript-job"
+    transcript_dir.mkdir()
+    canonical = transcript_dir / "source_audio.wav"
+    canonical.write_bytes(b"RIFF-canonical-copy")
+    (transcript_dir / "transcript.json").write_text(
+        json.dumps({"audio": str(canonical), "segments": []}),
+        encoding="utf-8",
+    )
+
+    service = AudioAssistService(str(tmp_path))
+
+    assert service.list_sessions()[0]["audio_path"] == str(canonical)
+    assert service.get_transcript("transcript-job")["audio"] == str(canonical)
+
+
+def test_missing_legacy_transcript_audio_falls_back_to_flat_recording(tmp_path):
+    recording = tmp_path / "legacy-recording.wav"
+    recording.write_bytes(b"RIFF-legacy-linked-source")
+    (tmp_path / "legacy-recording_meta.json").write_text(
+        json.dumps({"transcribed_job_id": "legacy-transcript"}),
+        encoding="utf-8",
+    )
+    missing_copy = tmp_path / "missing-source.wav"
+    transcript_path = tmp_path / "legacy-transcript.json"
+    transcript_path.write_text(
+        json.dumps({
+            "job_id": "legacy-transcript",
+            "filename": "Legacy recovered recording",
+            "audio": str(missing_copy),
+            "language": "en",
+            "created_at": "2026-09-09T22:06:00",
+            "segments": [],
+        }),
+        encoding="utf-8",
+    )
+
+    service = AudioAssistService(str(tmp_path))
+    sessions = service.list_sessions()
+    transcript = service.get_transcript("legacy-transcript")
+
+    assert len(sessions) == 1
+    assert sessions[0]["job_id"] == "legacy-transcript"
+    assert sessions[0]["audio_path"] == str(recording)
+    assert transcript is not None
+    assert transcript["audio"] == str(recording)
+    assert json.loads(transcript_path.read_text(encoding="utf-8"))["audio"] == str(
+        missing_copy
+    )
+
+
 def test_status_reports_checkpoint_progress(tmp_path):
     session_dir = tmp_path / "meetings" / "job-1"
     session_dir.mkdir(parents=True)
