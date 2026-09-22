@@ -44,7 +44,7 @@ Priority meanings:
 | 25 | RUNTIME-ID-01 | P1 | Complete: 2.0.3 packaged verification passed | Report the actual source/App path and version in CLI/Settings; refresh and package Python metadata, then fail release verification on any version mismatch |
 | 26 | QWEN-BOUNDARY-01 | P0 | Complete: 2.0.4 installed MPS/MLX file gate passed | Clamp a final zero-duration aligner word when both start/end are within 50 ms beyond the chunk, retain strict rejection beyond that bound, and expose the actual backend in GUI failures |
 | 27 | QWEN-REALTIME-MLX-01 | P0 | Complete: 2.0.5 installed owner acceptance passed | Keep realtime ASR creation, load, inference, and close on one owner worker thread; preserve CPU/MPS behavior and verify MLX across Mic/System/Mix |
-| 28 | RECOVERY-TRANSCRIBE-01 | P0 | Implemented: source verification in progress | Recover saved raw recordings through a session-ID-owned full-transcription action, reject pathless macOS drops before job creation, and keep interrupted checkpoints resumable; target 2.1.1 |
+| 28 | RECOVERY-TRANSCRIBE-01 | P0 | Complete: source verified, 2.1.1 package pending | Recover saved raw recordings through a session-ID-owned full-transcription action, reject pathless macOS drops before job creation, and keep interrupted checkpoints resumable; target 2.1.1 |
 
 ### RECOVERY-TRANSCRIBE-01 acceptance
 

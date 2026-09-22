@@ -19,8 +19,8 @@ session-owned recovery path for valid realtime WAV files that outlive an interru
 or exited recording session. Raw recordings now expose a full-transcription action;
 the backend resolves their path by validated session id, invalid drag/drop paths are
 rejected before worker creation, and an interrupted full-transcription checkpoint is
-shown as resumable instead of being hidden by the raw WAV entry. Packaging remains
-pending until full verification and independent review complete.
+shown as resumable instead of being hidden by the raw WAV entry. Source verification
+and independent review are complete; packaging and release manual gates remain pending.
 The automated source gate currently passes **1119 tests** (including **54 browser
 tests**); real recovered-recording and packaged-app acceptance remain release gates.
 
