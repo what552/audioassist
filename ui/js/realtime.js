@@ -425,7 +425,11 @@ const Realtime = (() => {
     dom.statusText.textContent = text;
   }
 
-  return { init, onStarted, onStopped, onResult, onError, onPaused, onResumed };
+  function isBusy() {
+    return _loading || _recording || _awaitingPermission;
+  }
+
+  return { init, isBusy, onStarted, onStopped, onResult, onError, onPaused, onResumed };
 })();
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────

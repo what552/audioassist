@@ -466,12 +466,12 @@ const App = (() => {
   async function _startRecoveredRecording(jobId) {
     const session = _sessions.get(jobId);
     if (!session || !session.audioPath) return;
-    if (_activeRealtimeId !== null) {
+    if (_activeRealtimeId !== null || Realtime.isBusy()) {
       showToast('A recording is in progress. Finish it before starting transcription.', 4000);
       return;
     }
     for (const other of _sessions.values()) {
-      if (other.id !== jobId && other.status === 'transcribing') {
+      if (other.id !== jobId && ['transcribing', 'refining'].includes(other.status)) {
         showToast('Another transcription is already in progress. Please wait for it to finish.', 4000);
         return;
       }

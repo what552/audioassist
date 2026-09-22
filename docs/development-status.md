@@ -21,7 +21,7 @@ the backend resolves their path by validated session id, invalid drag/drop paths
 rejected before worker creation, and an interrupted full-transcription checkpoint is
 shown as resumable instead of being hidden by the raw WAV entry. Packaging remains
 pending until full verification and independent review complete.
-The automated source gate currently passes **1117 tests** (including **52 browser
+The automated source gate currently passes **1119 tests** (including **54 browser
 tests**); real recovered-recording and packaged-app acceptance remain release gates.
 
 The prior source baseline was 1104 automated tests. AudioAssist 2.1.0 refreshes the

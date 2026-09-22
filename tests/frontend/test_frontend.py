@@ -259,6 +259,55 @@ def test_recovered_recording_does_not_start_during_active_recording(
     assert page.evaluate("_mockApi.calls('transcribe_recording').length") == 0
 
 
+def test_recovered_recording_does_not_start_while_recording_is_loading(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "recovered-job", "filename": "Recovered recording",
+            "type": "realtime", "date": "2026-09-22T10:00:00",
+            "audio_path": "/audio/realtime_recording_recovered-job.wav",
+        }],
+    })
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+
+    page.locator(".history-item", has_text="Recovered recording").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#btn-transcribe-recording").click()
+
+    expect(page.locator("#toast")).to_contain_text("recording is in progress")
+    assert page.evaluate("_mockApi.calls('transcribe_recording').length") == 0
+
+
+def test_recovered_recording_does_not_start_during_high_accuracy_refine(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [
+            {
+                "job_id": "refine-job", "filename": "Refining file", "type": "file",
+                "status": "refining", "date": "2026-09-22T10:01:00",
+                "audio_path": "/audio/refining.wav",
+            },
+            {
+                "job_id": "recovered-job", "filename": "Recovered recording",
+                "type": "realtime", "date": "2026-09-22T10:00:00",
+                "audio_path": "/audio/realtime_recording_recovered-job.wav",
+            },
+        ],
+    })
+
+    page.locator(".history-item", has_text="Recovered recording").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#btn-transcribe-recording").click()
+
+    expect(page.locator("#toast")).to_contain_text("transcription is already in progress")
+    assert page.evaluate("_mockApi.calls('transcribe_recording').length") == 0
+
+
 def test_canceling_recovered_transcription_for_recording_restores_raw_action(
     page: Page, ui_base_url: str
 ) -> None:
