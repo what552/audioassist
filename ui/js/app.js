@@ -466,6 +466,16 @@ const App = (() => {
   async function _startRecoveredRecording(jobId) {
     const session = _sessions.get(jobId);
     if (!session || !session.audioPath) return;
+    if (_activeRealtimeId !== null) {
+      showToast('A recording is in progress. Finish it before starting transcription.', 4000);
+      return;
+    }
+    for (const other of _sessions.values()) {
+      if (other.id !== jobId && other.status === 'transcribing') {
+        showToast('Another transcription is already in progress. Please wait for it to finish.', 4000);
+        return;
+      }
+    }
     _updateSession(jobId, {
       type: 'file',
       status: 'transcribing',
@@ -619,6 +629,14 @@ const App = (() => {
     const wasResuming = _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
     const s = _sessions.get(jobId);
+    // A raw recording remains a valid recovery source even if cancellation
+    // happened before the first resumable checkpoint was written.
+    if (s.recordingSource) {
+      _updateSession(jobId, {
+        type: 'realtime', status: 'done', recordingSource: false, errorMsg: null,
+      });
+      return;
+    }
     if (wasResuming) {
       _updateSession(jobId, { status: 'interrupted' });
       _processQueue();
@@ -631,12 +649,6 @@ const App = (() => {
     }
     if (s.status === 'refining') {
       _updateSession(jobId, { status: 'done', refineAvailable: true });
-      return;
-    }
-    if (s.recordingSource) {
-      _updateSession(jobId, {
-        type: 'realtime', status: 'done', recordingSource: false, errorMsg: null,
-      });
       return;
     }
     if (_selectedId === jobId) _selectSession(null);

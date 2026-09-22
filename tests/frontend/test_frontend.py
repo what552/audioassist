@@ -208,6 +208,83 @@ def test_recovered_recording_start_failure_remains_retryable(
     expect(page.locator(".history-item")).to_have_count(1)
 
 
+def test_recovered_recording_does_not_start_during_another_transcription(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [
+            {
+                "job_id": "busy-job", "filename": "Busy file", "type": "file",
+                "status": "transcribing", "date": "2026-09-22T10:01:00",
+                "audio_path": "/audio/busy.wav",
+            },
+            {
+                "job_id": "recovered-job", "filename": "Recovered recording",
+                "type": "realtime", "date": "2026-09-22T10:00:00",
+                "audio_path": "/audio/realtime_recording_recovered-job.wav",
+            },
+        ],
+    })
+
+    page.locator(".history-item", has_text="Recovered recording").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#btn-transcribe-recording").click()
+
+    expect(page.locator("#toast")).to_contain_text("transcription is already in progress")
+    assert page.evaluate("_mockApi.calls('transcribe_recording').length") == 0
+    expect(page.locator("#btn-transcribe-recording")).to_be_visible()
+
+
+def test_recovered_recording_does_not_start_during_active_recording(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "recovered-job", "filename": "Recovered recording",
+            "type": "realtime", "date": "2026-09-22T10:00:00",
+            "audio_path": "/audio/realtime_recording_recovered-job.wav",
+        }],
+    })
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+    page.evaluate("onRealtimeStarted('live-job', '/audio/live.wav')")
+
+    page.locator(".history-item", has_text="Recovered recording").locator(
+        ".history-item-body"
+    ).click()
+    page.locator("#btn-transcribe-recording").click()
+
+    expect(page.locator("#toast")).to_contain_text("recording is in progress")
+    assert page.evaluate("_mockApi.calls('transcribe_recording').length") == 0
+
+
+def test_canceling_recovered_transcription_for_recording_restores_raw_action(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "recovered-job", "filename": "Recovered recording",
+            "type": "realtime", "date": "2026-09-22T10:00:00",
+            "audio_path": "/audio/realtime_recording_recovered-job.wav",
+        }],
+    })
+    page.on("dialog", lambda dialog: dialog.accept())
+    page.locator(".history-item-body").click()
+    page.locator("#btn-transcribe-recording").click()
+    page.wait_for_function("_mockApi.calls('transcribe_recording').length === 1")
+
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('cancel_transcription').length === 1")
+    page.evaluate("onTranscribeCancel('recovered-job')")
+    page.locator(".history-item", has_text="Recovered recording").locator(
+        ".history-item-body"
+    ).click()
+
+    expect(page.locator("#btn-transcribe-recording")).to_be_visible()
+    assert page.evaluate("_mockApi.calls('resume_transcription').length") == 0
+
+
 def test_high_accuracy_cancel_keeps_draft_visible_and_retryable(
     page: Page, ui_base_url: str
 ) -> None:
