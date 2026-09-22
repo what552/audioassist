@@ -1,6 +1,6 @@
 # AudioAssist Development Backlog
 
-Updated: 2026-09-08
+Updated: 2026-09-22
 
 This is the authoritative development task list. `agentops/TODO.md` and the
 older roadmap/report files are historical inputs; an unchecked box in those
@@ -44,6 +44,22 @@ Priority meanings:
 | 25 | RUNTIME-ID-01 | P1 | Complete: 2.0.3 packaged verification passed | Report the actual source/App path and version in CLI/Settings; refresh and package Python metadata, then fail release verification on any version mismatch |
 | 26 | QWEN-BOUNDARY-01 | P0 | Complete: 2.0.4 installed MPS/MLX file gate passed | Clamp a final zero-duration aligner word when both start/end are within 50 ms beyond the chunk, retain strict rejection beyond that bound, and expose the actual backend in GUI failures |
 | 27 | QWEN-REALTIME-MLX-01 | P0 | Complete: 2.0.5 installed owner acceptance passed | Keep realtime ASR creation, load, inference, and close on one owner worker thread; preserve CPU/MPS behavior and verify MLX across Mic/System/Mix |
+| 28 | RECOVERY-TRANSCRIBE-01 | P0 | Implemented: source verification in progress | Recover saved raw recordings through a session-ID-owned full-transcription action, reject pathless macOS drops before job creation, and keep interrupted checkpoints resumable; target 2.1.1 |
+
+### RECOVERY-TRANSCRIBE-01 acceptance
+
+- A realtime session containing a valid saved WAV but no transcript exposes a
+  high-accuracy transcription action after restart. The frontend sends only its
+  session id; the backend resolves the canonical or legacy recording path.
+- Missing, relative, or otherwise unusable audio paths are rejected before a
+  transcription worker/job is registered. A macOS drag event without an absolute
+  path explains that the native **Upload File** picker must be used.
+- If full transcription of a recovered WAV is interrupted, its checkpoint takes
+  precedence over the raw-recording history representation so completed chunks
+  remain resumable after restart.
+- Focused service, desktop API, and browser tests pass. Before packaging, run the
+  full Python/frontend suites, independently review the storage/concurrency change,
+  then bump/build/verify 2.1.1 and manually exercise one recovered long recording.
 
 ### QWEN-UI-01 acceptance
 

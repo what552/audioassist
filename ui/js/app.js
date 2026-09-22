@@ -174,6 +174,7 @@ const App = (() => {
         Summary.reset();
       } else { // done
         _setView('realtime-done');
+        dom.realtimeRecoveryActions.hidden = false;
         Player.load(session.audioPath || '');
         dom.playerFilename.textContent = session.filename;
         Summary.showForJob(session.id);
@@ -217,6 +218,7 @@ const App = (() => {
     dom.transcriptList.hidden     = state !== 'file-done';
     dom.realtimePanel.hidden      =
       !['realtime-rec','realtime-paused','realtime-done'].includes(state);
+    dom.realtimeRecoveryActions.hidden = true;
     dom.playerBar.hidden          =
       !['file-done','realtime-done'].includes(state);
     dom.saveBtn.hidden            = state !== 'file-done';
@@ -461,6 +463,40 @@ const App = (() => {
     }
   }
 
+  async function _startRecoveredRecording(jobId) {
+    const session = _sessions.get(jobId);
+    if (!session || !session.audioPath) return;
+    _updateSession(jobId, {
+      type: 'file',
+      status: 'transcribing',
+      recordingSource: true,
+      errorMsg: null,
+    });
+    _selectSession(jobId);
+    _setProgress(0, 'Starting…');
+    _render();
+    try {
+      const result = await window.pywebview.api.transcribe_recording(jobId, {
+        model_id:     dom.selEngine.value || null,
+        hf_token:     null,
+        num_speakers: null,
+      });
+      if (!result || result.error || !result.job_id) {
+        throw new Error(result?.error || 'Transcription did not start');
+      }
+      _updateSession(jobId, { qwenBackend: result.qwen_backend || null });
+    } catch (err) {
+      console.error('[App] transcribe_recording error:', err);
+      _updateSession(jobId, {
+        type: 'realtime',
+        status: 'done',
+        recordingSource: false,
+        errorMsg: null,
+      });
+      showToast(`高精度转写未启动：${String(err)}`, 5000);
+    }
+  }
+
   // ── F4: Re-transcribe / F2: Resume ────────────────────────────────────────
 
   async function _onRetranscribe(id) {
@@ -597,6 +633,12 @@ const App = (() => {
       _updateSession(jobId, { status: 'done', refineAvailable: true });
       return;
     }
+    if (s.recordingSource) {
+      _updateSession(jobId, {
+        type: 'realtime', status: 'done', recordingSource: false, errorMsg: null,
+      });
+      return;
+    }
     if (_selectedId === jobId) _selectSession(null);
     _sessions.delete(jobId);
     _render();
@@ -641,6 +683,8 @@ const App = (() => {
       refineHint:         document.getElementById('refine-hint'),
       transcriptList:     document.getElementById('transcript-list'),
       realtimePanel:      document.getElementById('realtime-panel'),
+      realtimeRecoveryActions: document.getElementById('realtime-recovery-actions'),
+      btnTranscribeRecording: document.getElementById('btn-transcribe-recording'),
       realtimeControlBar: document.getElementById('realtime-control-bar'),
       playerBar:          document.getElementById('player-bar'),
       playerFilename:     document.getElementById('player-filename'),
@@ -715,6 +759,9 @@ const App = (() => {
     });
 
     dom.btnUpload.addEventListener('click', _onUpload);
+    dom.btnTranscribeRecording.addEventListener('click', () => {
+      if (_selectedId) void _startRecoveredRecording(_selectedId);
+    });
 
     dom.rcBtnPause.addEventListener('click', _onPauseResume);
     dom.rcBtnPlay.addEventListener('click', _onPlayRecording);
@@ -740,6 +787,10 @@ const App = (() => {
     dom.btnRetry.addEventListener('click', () => {
       const s = _selectedId ? _sessions.get(_selectedId) : null;
       if (!s || s.status !== 'error' || !s.audioPath) return;
+      if (s.recordingSource) {
+        void _startRecoveredRecording(s.id);
+        return;
+      }
       const filePath    = s.audioPath;
       const displayName = s.filename;
       _sessions.delete(_selectedId);
@@ -761,7 +812,18 @@ const App = (() => {
       dom.centerPanel.classList.remove('drag-over');
       const files = Array.from(e.dataTransfer.files);
       if (files.length) {
-        const paths = files.map(f => f.path || f.name);
+        const paths = files.map(f => f.path).filter(path =>
+          typeof path === 'string' && (
+            path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')
+          )
+        );
+        if (paths.length !== files.length) {
+          showToast(
+            'macOS did not provide the full file path. Please use Upload File instead.',
+            5000,
+          );
+          return;
+        }
         _enqueueFiles(paths);
       }
     });

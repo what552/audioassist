@@ -19,7 +19,7 @@ import datetime as dt
 from typing import Optional
 
 from platformdirs import user_data_dir
-from src.service import AudioAssistService, language_instruction
+from src.service import AudioAssistError, AudioAssistService, language_instruction
 from src.session_paths import get_session_paths, resolve_transcript_path
 
 logger = logging.getLogger(__name__)
@@ -468,6 +468,19 @@ class API:
         ckpt_delete(_session_dir(job_id))
         return True
 
+    def transcribe_recording(self, job_id: str, options: Optional[dict] = None) -> dict:
+        """Start full transcription for a saved raw recording.
+
+        Resolve the audio from the backend-owned session id so recovery does
+        not depend on a browser File object's optional macOS path property.
+        Reusing the same job id upgrades the raw session in place.
+        """
+        try:
+            path = _service().get_recording_audio_path(job_id)
+        except AudioAssistError as exc:
+            return {"error": str(exc), "code": exc.code}
+        return self.transcribe(path, options or {}, job_id=job_id)
+
     # ── Transcription ──────────────────────────────────────────────────────────
 
     def transcribe(self, path: str, options: dict, job_id: Optional[str] = None) -> dict:
@@ -485,6 +498,29 @@ class API:
         import uuid
         if job_id is None:
             job_id = str(uuid.uuid4())
+
+        if not isinstance(path, str) or not path.strip():
+            return {
+                "error": "No audio file was selected. Use Upload File to choose one.",
+                "code": "invalid_audio_path",
+            }
+        raw_path = path.strip()
+        if not os.path.isabs(os.path.expanduser(raw_path)):
+            return {
+                "error": (
+                    "The full audio path is unavailable. On macOS, use Upload File "
+                    "to choose the recording instead of dragging it into the window."
+                ),
+                "code": "invalid_audio_path",
+            }
+        path = os.path.abspath(os.path.expanduser(raw_path))
+        segment_key = path if path in self._rt_segments else raw_path
+        pending_segments = self._rt_segments.get(segment_key)
+        if not os.path.isfile(path) and not pending_segments:
+            return {
+                "error": f"Audio file not found: {path}",
+                "code": "audio_file_not_found",
+            }
 
         # Resolve ASR engine/model before spawning thread so both the main
         # transcription and the optional background refine use the same choice.
@@ -510,7 +546,7 @@ class API:
 
         # Pop realtime segments only after registration succeeds. A rejected
         # duplicate must not consume the pending realtime result.
-        rt_segments = self._rt_segments.pop(path, None)
+        rt_segments = self._rt_segments.pop(segment_key, None)
 
         def _run():
             try:

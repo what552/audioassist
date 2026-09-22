@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import app as app_module
 from app import API
+from src.service import SessionNotFoundError
 
 
 def _wait(timeout: float = 0.4) -> None:
@@ -85,6 +86,61 @@ class TestAudioCopy:
             _wait()
 
         assert list(out_dir.rglob("source_audio.m4a")), "Expected source_audio.m4a copy"
+
+
+class TestTranscriptionPreflight:
+    def test_relative_drag_path_is_rejected_before_worker_starts(self, env):
+        api, _ = env
+
+        with patch.object(app_module, "_register_transcription") as register:
+            result = api.transcribe("realtime_recording_ff9ac201.wav", {})
+
+        assert result["code"] == "invalid_audio_path"
+        assert "Upload File" in result["error"]
+        register.assert_not_called()
+
+    def test_missing_absolute_path_is_rejected_before_worker_starts(self, env, tmp_path):
+        api, _ = env
+        missing = tmp_path / "missing.wav"
+
+        with patch.object(app_module, "_register_transcription") as register:
+            result = api.transcribe(str(missing), {})
+
+        assert result["code"] == "audio_file_not_found"
+        assert str(missing) in result["error"]
+        register.assert_not_called()
+
+    def test_recovered_recording_is_resolved_by_job_id(self, env):
+        api, _ = env
+        recording = "/absolute/realtime_recording_recovered-job.wav"
+
+        with patch.object(app_module, "_service") as service_factory, \
+             patch.object(api, "transcribe", return_value={"job_id": "recovered-job"}) as transcribe:
+            service_factory.return_value.get_recording_audio_path.return_value = recording
+            result = api.transcribe_recording(
+                "recovered-job", {"model_id": "qwen3-asr-1.7b"}
+            )
+
+        assert result == {"job_id": "recovered-job"}
+        transcribe.assert_called_once_with(
+            recording, {"model_id": "qwen3-asr-1.7b"}, job_id="recovered-job"
+        )
+
+    def test_missing_recovered_recording_returns_structured_error(self, env):
+        api, _ = env
+
+        with patch.object(app_module, "_service") as service_factory, \
+             patch.object(api, "transcribe") as transcribe:
+            service_factory.return_value.get_recording_audio_path.side_effect = (
+                SessionNotFoundError("Recording audio not found: missing-job")
+            )
+            result = api.transcribe_recording("missing-job", {})
+
+        assert result == {
+            "error": "Recording audio not found: missing-job",
+            "code": "session_not_found",
+        }
+        transcribe.assert_not_called()
 
 
 # ── JSON audio field ──────────────────────────────────────────────────────────

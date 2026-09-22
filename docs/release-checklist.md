@@ -77,6 +77,12 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
 - Verify the permission matrix explicitly: Mic requests only Microphone, System requests
   only Screen & System Audio Recording, and Mix reports/requests both independently.
 - Verify pause, playback while paused, resume, finish, and short-recording discard.
+- Exit with a non-empty realtime WAV before full transcription completes, relaunch,
+  start **高精度转写** from that raw history entry, and verify it reuses the same
+  session id. Interrupt it once and verify the next launch offers checkpoint resume.
+- On macOS, drag a file from a surface that does not expose an absolute path. Verify
+  no background job/history duplicate is created and the UI directs the user to
+  **Upload File**; then confirm the native picker starts the same file normally.
 - Confirm Screen Recording permission guidance and missing-helper errors are actionable.
 - Confirm a missing Microphone permission blocks Mix before startup, while a microphone
   device/converter failure after both permissions pass degrades Mix to system-only.

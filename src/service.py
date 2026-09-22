@@ -178,6 +178,12 @@ class AudioAssistService:
         meetings_dir = os.path.join(self.output_dir, "meetings")
         linked_realtime_audio = self._linked_realtime_audio_paths(meetings_dir)
         legacy_refine_jobs = set(linked_realtime_audio)
+        from .checkpoint import find_interrupted
+
+        interrupted_checkpoints = find_interrupted(self.output_dir)
+        interrupted_job_ids = {
+            checkpoint.get("job_id", "") for checkpoint in interrupted_checkpoints
+        }
 
         if os.path.isdir(meetings_dir):
             for job_id in os.listdir(meetings_dir):
@@ -210,6 +216,11 @@ class AudioAssistService:
 
                 wav_path = self._find_realtime_wav(session_dir)
                 if not wav_path:
+                    continue
+                # A full transcription started from this recovered recording and
+                # left a checkpoint. Expose the resumable job, not the raw WAV,
+                # otherwise the UI has no way to continue completed chunks.
+                if job_id in interrupted_job_ids:
                     continue
                 seen_job_ids.add(job_id)
                 meta = _read_json(os.path.join(session_dir, "meta.json"), {})
@@ -251,6 +262,8 @@ class AudioAssistService:
             job_id = os.path.splitext(os.path.basename(wav_path))[0]
             if job_id.endswith("_audio") or job_id in seen_job_ids:
                 continue
+            if job_id in interrupted_job_ids:
+                continue
             meta = _read_json(os.path.join(self.output_dir, f"{job_id}_meta.json"), {})
             if isinstance(meta, dict) and meta.get("transcribed_job_id"):
                 continue
@@ -268,9 +281,7 @@ class AudioAssistService:
                 "type": "realtime",
             })
 
-        from .checkpoint import find_interrupted
-
-        for checkpoint in find_interrupted(self.output_dir):
+        for checkpoint in interrupted_checkpoints:
             job_id = checkpoint.get("job_id", "")
             if not job_id or job_id in seen_job_ids:
                 continue
@@ -295,6 +306,25 @@ class AudioAssistService:
 
         result.sort(key=lambda item: item.get("date", ""), reverse=True)
         return result
+
+    def get_recording_audio_path(self, job_id: str) -> str:
+        """Resolve a saved raw recording by session id.
+
+        This is the trusted boundary used by the desktop recovery action. The
+        frontend supplies only a validated session id and cannot redirect a
+        transcription worker to an arbitrary or stale client-side path.
+        """
+        job_id = validate_job_id(job_id)
+        session_dir = os.path.join(self.output_dir, "meetings", job_id)
+        wav_path = self._find_realtime_wav(session_dir)
+        if wav_path and os.path.isfile(wav_path):
+            return os.path.abspath(wav_path)
+
+        legacy_path = os.path.join(self.output_dir, f"{job_id}.wav")
+        if os.path.isfile(legacy_path):
+            return os.path.abspath(legacy_path)
+
+        raise SessionNotFoundError(f"Recording audio not found: {job_id}")
 
     def get_status(self, job_id: str) -> dict:
         job_id = validate_job_id(job_id)

@@ -185,6 +185,8 @@ def test_recording_snapshots_default_before_worker_starts(tmp_path, monkeypatch,
 def test_file_transcription_snapshots_default_before_worker_starts(tmp_path, monkeypatch):
     import app
     queued = []
+    audio_path = tmp_path / "local.wav"
+    audio_path.write_bytes(b"RIFF")
     path = str(tmp_path / "config.json")
     prefs.update_config(path, lambda data: data.update(qwen_backend="pytorch-mps"))
     monkeypatch.setattr(app, "CONFIG_PATH", path)
@@ -194,7 +196,7 @@ def test_file_transcription_snapshots_default_before_worker_starts(tmp_path, mon
     service = MagicMock()
     service.transcribe.side_effect = RuntimeError("stop after observing call")
     monkeypatch.setattr(app, "_service", lambda: service)
-    app.API().transcribe("/audio/local.wav", {}, job_id="snapshot-test")
+    app.API().transcribe(str(audio_path), {}, job_id="snapshot-test")
     prefs.update_config(path, lambda data: data.update(qwen_backend="mlx"))
     queued[0]()
     assert service.transcribe.call_args.kwargs["qwen_backend"] == "pytorch-mps"

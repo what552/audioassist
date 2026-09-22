@@ -101,6 +101,10 @@
         qwen_backend: state.qwenBackend,
       };
     },
+    transcribe_recording: async function (jobId) {
+      record('transcribe_recording', arguments);
+      return { job_id: jobId, qwen_backend: state.qwenBackend };
+    },
     cancel_transcription: async function () { record('cancel_transcription', arguments); return true; },
     resume_transcription: async function (jobId) { record('resume_transcription', arguments); return { job_id: jobId }; },
     refine: async function (jobId) { record('refine', arguments); return { job_id: jobId }; },

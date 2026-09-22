@@ -42,8 +42,9 @@ class _UIHandler(http.server.SimpleHTTPRequestHandler):
         pass  # suppress output during tests
 
 
-class _ReuseServer(socketserver.TCPServer):
+class _ReuseServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 @pytest.fixture(scope="module")
@@ -60,14 +61,24 @@ def ui_base_url():
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _inject_and_navigate(page: Page, base_url: str, config: dict | None = None) -> None:
-    """Inject mock API, navigate to index.html, then fire pywebviewready."""
+    """Inject the mock API, load all scripts, then initialize the app directly.
+
+    The production bootstrap waits for PyWebView's asynchronous ready event. In
+    browser tests the API is already injected before navigation, so calling the
+    documented test entry point directly avoids losing a synthetic event while
+    Chromium is still finishing script evaluation on a busy host.
+    """
     if config is not None:
         page.add_init_script(
             script=f"window.__AUDIOASSIST_TEST_CONFIG = {json.dumps(config)};"
         )
     page.add_init_script(path=_MOCK)
-    page.goto(f"{base_url}/index.html", wait_until="domcontentloaded")
-    page.evaluate("window._mockApi.dispatchReady()")
+    page.goto(f"{base_url}/index.html", wait_until="networkidle")
+    page.wait_for_function(
+        "typeof App !== 'undefined' && typeof App.init === 'function' && "
+        "typeof History !== 'undefined' && typeof History.init === 'function'"
+    )
+    page.evaluate("App.init()")
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
@@ -149,6 +160,52 @@ def test_high_accuracy_action_restores_from_history_and_remains_retryable(
         ".history-item-body"
     ).click()
     expect(page.locator("#btn-high-accuracy")).to_be_hidden()
+
+
+def test_recovered_raw_recording_can_start_full_transcription_by_session_id(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "recovered-job", "filename": "Recovered recording",
+            "type": "realtime", "date": "2026-09-22T10:00:00",
+            "audio_path": "/audio/realtime_recording_recovered-job.wav",
+        }],
+    })
+
+    page.locator(".history-item-body").click()
+    expect(page.locator("#btn-transcribe-recording")).to_be_visible()
+    page.locator("#btn-transcribe-recording").click()
+    page.wait_for_function("_mockApi.calls('transcribe_recording').length === 1")
+
+    assert page.evaluate("_mockApi.calls('transcribe_recording')")[0]["args"] == [
+        "recovered-job", {"model_id": "qwen3-asr-1.7b", "hf_token": None, "num_speakers": None},
+    ]
+    expect(page.locator("#progress-panel")).to_be_visible()
+    expect(page.locator("#progress-filename")).to_have_text("Recovered recording")
+
+
+def test_recovered_recording_start_failure_remains_retryable(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{
+            "job_id": "recovered-job", "filename": "Recovered recording",
+            "type": "realtime", "date": "2026-09-22T10:00:00",
+            "audio_path": "/audio/realtime_recording_recovered-job.wav",
+        }],
+    })
+    page.evaluate(
+        "window.pywebview.api.transcribe_recording = async () => "
+        "({error: 'Recording audio not found', code: 'session_not_found'})"
+    )
+
+    page.locator(".history-item-body").click()
+    page.locator("#btn-transcribe-recording").click()
+    page.wait_for_function("document.querySelector('#toast').textContent.includes('not found')")
+
+    expect(page.locator("#btn-transcribe-recording")).to_be_visible()
+    expect(page.locator(".history-item")).to_have_count(1)
 
 
 def test_high_accuracy_cancel_keeps_draft_visible_and_retryable(
@@ -1218,21 +1275,44 @@ def test_drag_drop_queue_runs_one_file_at_a_time(page: Page, ui_base_url: str) -
     page.evaluate(
         """
         const transfer = new DataTransfer();
-        transfer.items.add(new File(['one'], 'first.wav', {type: 'audio/wav'}));
-        transfer.items.add(new File(['two'], 'second.mp3', {type: 'audio/mpeg'}));
+        const first = new File(['one'], 'first.wav', {type: 'audio/wav'});
+        const second = new File(['two'], 'second.mp3', {type: 'audio/mpeg'});
+        Object.defineProperty(first, 'path', {value: '/tmp/first.wav'});
+        Object.defineProperty(second, 'path', {value: '/tmp/second.mp3'});
+        transfer.items.add(first);
+        transfer.items.add(second);
         document.querySelector('#center-panel').dispatchEvent(
           new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: transfer})
         );
         """
     )
     page.wait_for_function("_mockApi.calls('transcribe').length === 1")
-    assert page.evaluate("_mockApi.calls('transcribe')")[0]["args"][0] == "first.wav"
+    assert page.evaluate("_mockApi.calls('transcribe')")[0]["args"][0] == "/tmp/first.wav"
     assert not page.locator("#center-panel").evaluate("el => el.classList.contains('drag-over')")
 
     page.evaluate("onTranscribeComplete('drop-1', '/mock/transcript.json', false)")
     page.wait_for_function("_mockApi.calls('transcribe').length === 2")
-    assert page.evaluate("_mockApi.calls('transcribe')")[1]["args"][0] == "second.mp3"
+    assert page.evaluate("_mockApi.calls('transcribe')")[1]["args"][0] == "/tmp/second.mp3"
     assert page.locator(".history-item").count() == 2
+
+
+def test_drag_drop_without_absolute_paths_directs_user_to_upload_file(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, {"history": []})
+
+    page.evaluate(
+        """
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(['one'], 'first.wav', {type: 'audio/wav'}));
+        document.querySelector('#center-panel').dispatchEvent(
+          new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: transfer})
+        );
+        """
+    )
+
+    page.wait_for_function("document.querySelector('#toast').textContent.includes('Upload File')")
+    assert page.evaluate("_mockApi.calls('transcribe').length") == 0
 
 
 def test_summary_agent_stream_tool_error_recovery_and_clear(page: Page, ui_base_url: str) -> None:

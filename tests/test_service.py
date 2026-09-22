@@ -308,6 +308,55 @@ def test_legacy_realtime_wav_is_discovered(tmp_path):
     assert sessions[0]["audio_path"] == str(wav)
 
 
+def test_get_recording_audio_path_resolves_canonical_and_legacy_recordings(tmp_path):
+    canonical_dir = tmp_path / "meetings" / "canonical-job"
+    canonical_dir.mkdir(parents=True)
+    canonical = canonical_dir / "realtime_recording_canonical-job.wav"
+    canonical.write_bytes(b"RIFF")
+    legacy = tmp_path / "legacy-job.wav"
+    legacy.write_bytes(b"RIFF")
+    service = AudioAssistService(str(tmp_path))
+
+    assert service.get_recording_audio_path("canonical-job") == str(canonical)
+    assert service.get_recording_audio_path("legacy-job") == str(legacy)
+
+
+def test_get_recording_audio_path_rejects_missing_and_invalid_jobs(tmp_path):
+    service = AudioAssistService(str(tmp_path))
+
+    with pytest.raises(SessionNotFoundError):
+        service.get_recording_audio_path("missing-job")
+    with pytest.raises(InvalidJobIdError):
+        service.get_recording_audio_path("../escape")
+
+
+def test_interrupted_checkpoint_takes_priority_over_raw_recording(tmp_path):
+    session_dir = tmp_path / "meetings" / "recording-job"
+    session_dir.mkdir(parents=True)
+    recording = session_dir / "realtime_recording_recording-job.wav"
+    recording.write_bytes(b"RIFF")
+    (session_dir / "transcription_task.json").write_text(
+        json.dumps({
+            "job_id": "recording-job",
+            "source_audio": str(recording),
+            "status": "interrupted",
+            "completed_chunks": 2,
+            "total_chunks": 5,
+            "updated_at": "2026-09-22T10:00:00",
+            "qwen_backend": "mlx",
+        }),
+        encoding="utf-8",
+    )
+
+    sessions = AudioAssistService(str(tmp_path)).list_sessions()
+
+    assert len(sessions) == 1
+    assert sessions[0]["job_id"] == "recording-job"
+    assert sessions[0]["type"] == "file"
+    assert sessions[0]["status"] == "interrupted"
+    assert sessions[0]["audio_path"] == str(recording)
+
+
 def test_completed_transcript_takes_priority_over_checkpoint(tmp_path):
     _write_transcript(tmp_path, "job-1")
     checkpoint = tmp_path / "meetings" / "job-1" / "transcription_task.json"
