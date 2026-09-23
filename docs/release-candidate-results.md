@@ -1,6 +1,28 @@
 # REL-01 Release Candidate Record
 
-Updated: 2026-09-09
+Updated: 2026-09-23
+
+## 2.1.1 recovered-recording candidate
+
+- Source baseline: recovery implementation `5f6435f`, concurrency corrections
+  `fbba108` and `5da63c4`, and status integration `7c9df63`. Independent review
+  found no remaining code blocker. The complete suite passed **1119 tests**.
+- Build: `DEVELOPER_DIR=/Library/Developer/CommandLineTools bash scripts/build_dmg.sh`
+  refreshed editable package metadata from 2.1.0 to 2.1.1, rebuilt the Swift
+  capture helper and PyInstaller App, then signed and packaged the DMG.
+- Version: `2.1.1`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- App: `dist/AudioAssist.app`; DMG: `dist/AudioAssist-2.1.1.dmg`.
+- DMG SHA-256:
+  `f593a54bdc108cc21cdf1f92517a4fbdefffdb7ee99cdda6fa21d662a5c483d5`.
+- App CDHash: `1bf9e0aee1cc8b9427f6f144b8f7b434f3ee899d`.
+- `dist/release-verification-2.1.1.json`: PASS, including 491 Mach-O files,
+  584 symlinks, required Qwen/MLX assets, matching source/App/DMG version metadata,
+  and a matching read-only mounted DMG payload.
+- Pending installed acceptance: recover a real raw recording by session ID, cancel
+  and resume an interrupted long transcription, test the native file picker and
+  pathless macOS drag/drop guidance, then verify Mic/System/Mix capture under the
+  new ad-hoc identity. Existing recording permissions may need reauthorization.
+- This is a local ad-hoc test candidate, not a distributable signed upgrade.
 
 ## 2.1.0 transcription workspace candidate
 

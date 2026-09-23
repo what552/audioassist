@@ -514,7 +514,7 @@ def test_settings_show_runtime_version_and_app_path(page: Page, ui_base_url: str
     page.locator('#btn-summary-config').click()
 
     identity = page.locator('#cfg-runtime-identity')
-    expect(identity).to_contain_text('Version 2.1.0')
+    expect(identity).to_contain_text('Version 2.1.1')
     expect(identity).to_contain_text('packaged-app')
     expect(identity).to_contain_text('/mock/AudioAssist.app')
 

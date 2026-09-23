@@ -14,13 +14,14 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
 
-The current packaged baseline is AudioAssist 2.1.0. The 2.1.1 P0 source work adds a
+The current packaged baseline is AudioAssist 2.1.1. Its P0 source work adds a
 session-owned recovery path for valid realtime WAV files that outlive an interrupted
 or exited recording session. Raw recordings now expose a full-transcription action;
 the backend resolves their path by validated session id, invalid drag/drop paths are
 rejected before worker creation, and an interrupted full-transcription checkpoint is
 shown as resumable instead of being hidden by the raw WAV entry. Source verification
-and independent review are complete; packaging and release manual gates remain pending.
+and independent review are complete. The 2.1.1 ad-hoc App and DMG pass mechanical
+release verification; installed recording and recovery acceptance remain pending.
 The automated source gate currently passes **1119 tests** (including **54 browser
 tests**); real recovered-recording and packaged-app acceptance remain release gates.
 
