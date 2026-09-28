@@ -1,6 +1,6 @@
 # Development Status
 
-Updated: 2026-09-22
+Updated: 2026-09-28
 
 ## Current baseline
 
@@ -14,14 +14,18 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and nine-tool stdio MCP adapter |
 
-LIVE-AGENT-01 passes source tests. Realtime Mic/System/Mix ASR utterances
+LIVE-AGENT-01 passes source tests and the 2.2.0 ad-hoc candidate passed mechanical
+App/DMG verification. Realtime Mic/System/Mix ASR utterances
 are appended to a provisional per-session journal as they reach the UI. The shared
 service, CLI, and MCP adapter can page these utterances by sequence cursor while the
 desktop app continues recording. This is a read-only draft without speaker labels;
 the final diarized transcript remains authoritative. Long packaged recording and
-permission checks are pending release gates, not source-test claims.
+permission checks are pending release gates, not source-test claims. The complete
+automated suite passes **1160 tests**, including **54 frontend tests**. Independent
+review of the final concurrency/storage change found no integration blocker.
 
-The current packaged baseline is AudioAssist 2.1.1. Its P0 source work adds a
+The current packaged baseline is AudioAssist 2.2.0. The prior 2.1.1 candidate's
+P0 source work adds a
 session-owned recovery path for valid realtime WAV files that outlive an interrupted
 or exited recording session. Raw recordings now expose a full-transcription action;
 the backend resolves their path by validated session id, invalid drag/drop paths are

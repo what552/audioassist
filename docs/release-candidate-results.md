@@ -1,6 +1,30 @@
 # REL-01 Release Candidate Record
 
-Updated: 2026-09-23
+Updated: 2026-09-28
+
+## 2.2.0 live Agent recording-draft candidate
+
+- Source: append-only per-session realtime draft, paged CLI/MCP read, bounded async
+  writer queue, explicit incomplete/failed status, and Stop/Shutdown flush. The
+  exact concurrency/storage commit `b669f09` passed independent review without
+  an integration blocker; the versioned full suite passed **1160 tests**, and the
+  dedicated frontend suite passed **54 tests**.
+- Build: `DEVELOPER_DIR=/Library/Developer/CommandLineTools bash scripts/build_dmg.sh`
+  refreshed editable package metadata to 2.2.0 and completed the Swift helper,
+  PyInstaller App, ad-hoc signing, DMG creation, and release verification.
+- Version: `2.2.0`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- App: `dist/AudioAssist.app`; DMG: `dist/AudioAssist-2.2.0.dmg`.
+- DMG SHA-256:
+  `948427134df868f433b2b118a5df82e0f7fc757dfe1fe35f2967b214d61527e0`.
+- App CDHash: `668e39627d5a4f0d5609ce990a063fa4d41bbb3c`.
+- `dist/release-verification-2.2.0.json`: PASS, including 491 Mach-O files,
+  584 symlinks, required Qwen/MLX assets, matching source/App/DMG version metadata,
+  and a matching read-only mounted DMG payload.
+- Pending installed acceptance: start a real Mic/System/Mix recording, read the
+  provisional transcript at successive cursors while capture continues, summarize
+  a partial long meeting, then verify Stop/relaunch and final diarized transcript.
+  Ad-hoc signing may require reauthorization of recording permissions.
+- This is a local test candidate, not a distributable signed upgrade.
 
 ## 2.1.1 recovered-recording candidate
 
