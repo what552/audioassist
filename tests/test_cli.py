@@ -9,6 +9,7 @@ import sys
 import pytest
 
 from src import cli
+from src.live_transcript import LiveTranscriptWriter
 from src.service import ConfigurationError
 
 
@@ -113,6 +114,68 @@ def test_transcribe_json_keeps_progress_on_stderr(tmp_path, capsys, monkeypatch)
     assert exit_code == cli.EXIT_OK
     assert payload["data"]["job_id"] == "job-new"
     assert "Working" in captured.err
+
+
+def test_recording_transcript_reads_active_draft_without_stopping(tmp_path, capsys, monkeypatch):
+    writer = LiveTranscriptWriter(str(tmp_path / "meetings" / "live-1"))
+    writer.append({"text": "已讨论预算", "start": 2398, "end": 2401})
+    monkeypatch.setattr(cli, "request_desktop", lambda *args, **kwargs: {
+        "state": "recording", "session_id": "live-1", "capture_mode": "mix"
+    })
+
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path), "recording", "transcript",
+        "--active", "--after-seq", "0",
+    ])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_OK
+    assert payload["data"]["segments"][0]["text"] == "已讨论预算"
+    assert payload["data"]["next_cursor"] == 1
+    assert payload["data"]["provisional"] is True
+
+
+def test_recording_transcript_can_read_stopped_session_by_id(tmp_path, capsys):
+    writer = LiveTranscriptWriter(str(tmp_path / "meetings" / "live-1"))
+    writer.append("历史草稿")
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path), "recording", "transcript", "live-1"
+    ])
+    assert exit_code == cli.EXIT_OK
+    assert json.loads(capsys.readouterr().out)["data"]["segments"][0]["text"] == "历史草稿"
+
+
+def test_recording_status_uses_visible_app(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "request_desktop", lambda *args, **kwargs: {
+        "state": "recording", "session_id": "live-1", "capture_mode": "mic"
+    })
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path), "recording", "status"
+    ])
+    assert exit_code == cli.EXIT_OK
+    assert json.loads(capsys.readouterr().out)["data"]["session_id"] == "live-1"
+
+
+def test_active_draft_write_failure_is_not_silent(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "request_desktop", lambda *args, **kwargs: {
+        "state": "recording", "session_id": "live-1",
+        "live_transcript_warning": "Live transcript saving failed; recording continues",
+    })
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path),
+        "recording", "transcript", "--active",
+    ])
+    assert exit_code == cli.EXIT_PROCESSING
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "live_transcript_unavailable"
+
+
+@pytest.mark.parametrize("extra", [[], ["live-1", "--active"]])
+def test_recording_transcript_requires_one_session_selector(tmp_path, capsys, extra):
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path), "recording", "transcript", *extra
+    ])
+    assert exit_code == cli.EXIT_USAGE
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "invalid_arguments"
 
 
 def test_summarize_saves_version(tmp_path, capsys, monkeypatch):

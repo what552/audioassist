@@ -45,8 +45,8 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **Settings modal** — toolbar ⚙ button opens a modal for API config (base URL, key, model), template management, and Obsidian vault sync configuration
 - **Summary toggle** — toolbar "Summary" button shows/hides the summary panel
 - **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
-- **Agent-callable local CLI (R03-a)** — session listing/detail/status, synchronous file transcription, and summary generation are available through `python -m src.cli` or the installed `audioassist` command; `--json` provides a stable response envelope while progress stays on stderr
-- **Bounded local HTTP/MCP (R03-b)** — the visible app owns an authenticated loopback recording API; `audioassist serve --read-only` provides foreground session reads while the app is closed; `audioassist-mcp` exposes eight stdio tools without adding a daemon or background inference queue
+- **Agent-callable local CLI (R03-a)** — session listing/detail/status, synchronous file transcription, live recording draft reads, and summary generation are available through `python -m src.cli` or the installed `audioassist` command; `--json` provides a stable response envelope while progress stays on stderr
+- **Bounded local HTTP/MCP (R03-b)** — the visible app owns an authenticated loopback recording API; `audioassist serve --read-only` provides foreground session reads while the app is closed; `audioassist-mcp` exposes nine stdio tools without adding a daemon or background inference queue
 - **Local-only realtime inference** — microphone, system, and mix capture resolve the selected Qwen or Whisper model through `ModelManager` and pass its validated local directory to the backend; recording never downloads model weights
 
 ## Development status
@@ -146,6 +146,9 @@ Recording permission.
 .venv/bin/audioassist --json sessions list
 .venv/bin/audioassist --json sessions show JOB_ID
 .venv/bin/audioassist --json status JOB_ID
+.venv/bin/audioassist --json recording status
+.venv/bin/audioassist --json recording transcript --active --after-seq 0
+.venv/bin/audioassist --json recording transcript SESSION_ID --after-seq 100
 .venv/bin/audioassist --json transcribe /path/to/audio.m4a
 .venv/bin/audioassist --json transcribe /path/to/audio.m4a --qwen-backend mlx
 .venv/bin/audioassist --json summarize JOB_ID
@@ -182,6 +185,7 @@ Files written inside the data directory:
 | `output/meetings/<job_id>/agent_chat.json` | Summary Agent conversation history |
 | `output/meetings/<job_id>/source_audio.*` | Copy of the original audio file |
 | `output/meetings/<job_id>/realtime_recording.wav` | Full WAV from a realtime session |
+| `output/meetings/<job_id>/realtime_draft.jsonl` | Append-only provisional utterances readable during Mic/System/Mix recording; not the final speaker-labelled transcript |
 | `output/meetings/<job_id>/transcription_task.json` | Checkpoint file (present while transcription is running or interrupted) |
 | `models/` | Downloaded ASR and diarization model weights |
 

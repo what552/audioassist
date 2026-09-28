@@ -12,7 +12,14 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R02-a to R02-b5 | Complete | Three-column UI, session lifecycle, model setup and management, Summary Agent, Obsidian sync, checkpoint/resume, batch queue, re-transcription |
 | R02-b6 | Complete | macOS microphone/system/mix capture, ScreenCaptureKit helper, manual high-accuracy refinement, DMG packaging |
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
-| R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and eight-tool stdio MCP adapter |
+| R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and nine-tool stdio MCP adapter |
+
+LIVE-AGENT-01 passes source tests. Realtime Mic/System/Mix ASR utterances
+are appended to a provisional per-session journal as they reach the UI. The shared
+service, CLI, and MCP adapter can page these utterances by sequence cursor while the
+desktop app continues recording. This is a read-only draft without speaker labels;
+the final diarized transcript remains authoritative. Long packaged recording and
+permission checks are pending release gates, not source-test claims.
 
 The current packaged baseline is AudioAssist 2.1.1. Its P0 source work adds a
 session-owned recovery path for valid realtime WAV files that outlive an interrupted

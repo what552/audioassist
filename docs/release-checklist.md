@@ -77,6 +77,12 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
 - Verify the permission matrix explicitly: Mic requests only Microphone, System requests
   only Screen & System Audio Recording, and Mix reports/requests both independently.
 - Verify pause, playback while paused, resume, finish, and short-recording discard.
+- During a long Mic, System, and Mix recording, use `audioassist --json recording status`
+  and `audioassist --json recording transcript --active --after-seq 0`. Confirm
+  recognized utterances appear with increasing cursors while recording continues;
+  page again after a pause/resume and verify no duplicates. Summarizing the draft
+  must not stop capture. After exit/relaunch, an explicit session ID must still read
+  complete saved draft lines, and the final diarized transcript must remain separate.
 - Exit with a non-empty realtime WAV before full transcription completes, relaunch,
   start **高精度转写** from that raw history entry, and verify it reuses the same
   session id. Interrupt it once and verify the next launch offers checkpoint resume.

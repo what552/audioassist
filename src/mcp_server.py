@@ -59,6 +59,19 @@ TOOLS = [
         "annotations": {"readOnlyHint": True},
     },
     {
+        "name": "audioassist_get_live_transcript",
+        "description": "Read paged provisional utterances recognized during a recording.",
+        "inputSchema": _object_schema(
+            {
+                "session_id": {"type": "string"},
+                "after_seq": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+            },
+            ["session_id"],
+        ),
+        "annotations": {"readOnlyHint": True},
+    },
+    {
         "name": "audioassist_start_recording",
         "description": "Ask the visible AudioAssist app to start a local recording.",
         "inputSchema": _object_schema(
@@ -188,6 +201,19 @@ class MCPServer:
         if name == "audioassist_recording_status":
             self._require_fields(arguments, set(), set())
             return request_desktop("GET", "/v1/recording", app_data_dir=self.app_data_dir)
+        if name == "audioassist_get_live_transcript":
+            self._require_fields(arguments, {"session_id", "after_seq", "limit"}, {"session_id"})
+            if not isinstance(arguments["session_id"], str):
+                raise ValueError("session_id must be a string")
+            after_seq = arguments.get("after_seq", 0)
+            limit = arguments.get("limit", 100)
+            if type(after_seq) is not int or after_seq < 0:
+                raise ValueError("after_seq must be a nonnegative integer")
+            if type(limit) is not int or not 1 <= limit <= 500:
+                raise ValueError("limit must be an integer from 1 to 500")
+            return self.service.get_live_transcript(
+                arguments["session_id"], after_seq=after_seq, limit=limit
+            )
         action = name.removeprefix("audioassist_").removesuffix("_recording")
         if action == "start":
             self._require_fields(arguments, {"capture_mode", "model_id"}, {"capture_mode"})

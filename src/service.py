@@ -56,6 +56,10 @@ class ConfigurationError(AudioAssistError):
     code = "configuration_error"
 
 
+class LiveTranscriptError(AudioAssistError):
+    code = "live_transcript_invalid"
+
+
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _REALTIME_WAV_PREFIX = "realtime_recording"
 _HIGH_ACCURACY_REFINE_KEY = "high_accuracy_refine"
@@ -376,6 +380,26 @@ class AudioAssistService:
             "transcript": self.get_transcript(job_id),
             "summary_versions": self.get_summary_versions(job_id),
         }
+
+    def get_live_transcript(
+        self, job_id: str, *, after_seq: int = 0, limit: int = 100
+    ) -> dict:
+        """Return a paged, provisional realtime ASR draft for one recording."""
+        job_id = validate_job_id(job_id)
+        if not isinstance(after_seq, int) or isinstance(after_seq, bool) or after_seq < 0:
+            raise LiveTranscriptError("after_seq must be a nonnegative integer")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise LiveTranscriptError("limit must be an integer from 1 to 500")
+        paths = get_session_paths(self.output_dir, job_id)
+        if not os.path.isdir(paths.session_dir):
+            raise SessionNotFoundError(f"Session not found: {job_id}")
+        from .live_transcript import read_page
+
+        try:
+            page = read_page(paths.session_dir, after_seq=after_seq, limit=limit)
+        except (OSError, ValueError) as error:
+            raise LiveTranscriptError(f"Unable to read realtime draft for {job_id}") from error
+        return {"session_id": job_id, "provisional": True, **page}
 
     # -- Processing use cases ---------------------------------------------
 

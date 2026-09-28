@@ -21,6 +21,7 @@ from typing import Optional
 from platformdirs import user_data_dir
 from src.service import AudioAssistError, AudioAssistService, language_instruction
 from src.session_paths import get_session_paths, resolve_transcript_path
+from src.live_transcript import LiveTranscriptWriter
 
 logger = logging.getLogger(__name__)
 
@@ -406,6 +407,7 @@ class API:
             "started_at": None,
             "error": None,
         }
+        self._live_transcript_warning: str | None = None
         # Pre-collected realtime segments keyed by wav_path — consumed by transcribe()
         self._rt_segments: dict[str, list] = {}
         # Options stored after Phase 1 (realtime), consumed by manual refine()
@@ -420,7 +422,10 @@ class API:
     def get_recording_status(self) -> dict:
         """Return a stable snapshot for the local HTTP and MCP adapters."""
         with self._recording_lock:
-            return dict(self._recording_status)
+            result = dict(self._recording_status)
+            if self._live_transcript_warning:
+                result["live_transcript_warning"] = self._live_transcript_warning
+            return result
 
     # ── File selection ─────────────────────────────────────────────────────────
 
@@ -1089,6 +1094,7 @@ class API:
             self._realtime = lease
             self._recording_generation += 1
             generation = self._recording_generation
+            self._live_transcript_warning = None
         self._caffeinate_start()
 
         self._set_recording_status(
@@ -1107,6 +1113,27 @@ class API:
                 rt_session_dir = _session_dir(session_id)
                 os.makedirs(rt_session_dir, exist_ok=True)
                 output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
+                draft_writer = LiveTranscriptWriter(rt_session_dir)
+                draft_failed = False
+
+                def publish_result(seg):
+                    nonlocal draft_failed
+                    if not draft_failed:
+                        try:
+                            draft_writer.append(seg)
+                        except (OSError, ValueError):
+                            draft_failed = True
+                            with self._recording_lock:
+                                if generation == self._recording_generation:
+                                    self._live_transcript_warning = (
+                                        "Live transcript saving failed; recording continues"
+                                    )
+                            logger.exception(
+                                "Unable to save live transcript segment for session %s",
+                                session_id,
+                            )
+                    _push(f"onRealtimeResult({json.dumps(seg)})")
+
                 logger.info(
                     "Realtime start attempt=%s stage=backend_create.begin mode=%s engine=%s model=%s qwen_backend=%s",
                     session_id,
@@ -1125,7 +1152,7 @@ class API:
                         qwen_backend=qwen_backend,
                         model_id=model_id,
                         output_path=output_path,
-                        on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
+                        on_result=publish_result,
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                     )
                 else:
@@ -1137,7 +1164,7 @@ class API:
                         model_id=model_id,
                         output_path=output_path,
                         diagnostic_id=session_id,
-                        on_result=lambda seg: _push(f"onRealtimeResult({json.dumps(seg)})"),
+                        on_result=publish_result,
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                     )
                 lease.publish_backend(rt)
@@ -1339,6 +1366,7 @@ class API:
         with self._recording_lock:
             if self._realtime is rt:
                 self._realtime = None
+            self._live_transcript_warning = None
         self._set_recording_status(
             "idle",
             session_id=None,

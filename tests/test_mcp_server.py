@@ -7,6 +7,7 @@ import subprocess
 
 from src import mcp_server
 from src.local_api import LocalAPIError
+from src.live_transcript import LiveTranscriptWriter
 from src.service import AudioAssistService
 
 
@@ -42,13 +43,14 @@ def test_requires_initialize_before_tools(tmp_path):
     assert response["error"]["code"] == -32002
 
 
-def test_lists_eight_stable_tools(tmp_path):
+def test_lists_recording_draft_read_tool(tmp_path):
     server = _initialized_server(tmp_path)
     response = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [tool["name"] for tool in response["result"]["tools"]]
     assert names == [
         "audioassist_list_sessions", "audioassist_get_session", "audioassist_get_status",
-        "audioassist_recording_status", "audioassist_start_recording",
+        "audioassist_recording_status", "audioassist_get_live_transcript",
+        "audioassist_start_recording",
         "audioassist_pause_recording", "audioassist_resume_recording",
         "audioassist_stop_recording",
     ]
@@ -64,6 +66,21 @@ def test_read_tools_work_with_desktop_closed(tmp_path):
     result = response["result"]
     assert result["isError"] is False
     assert result["structuredContent"]["session"]["job_id"] == "job-1"
+
+
+def test_live_draft_tool_reads_paged_utterances(tmp_path):
+    writer = LiveTranscriptWriter(str(tmp_path / "meetings" / "live-1"))
+    writer.append({"text": "会议进行中", "start": 12, "end": 14})
+    server = _initialized_server(tmp_path)
+    response = server.handle({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {
+            "name": "audioassist_get_live_transcript",
+            "arguments": {"session_id": "live-1", "after_seq": 0, "limit": 10},
+        },
+    })
+    assert response["result"]["isError"] is False
+    assert response["result"]["structuredContent"]["segments"][0]["text"] == "会议进行中"
 
 
 def test_missing_session_is_tool_error_not_protocol_error(tmp_path):

@@ -45,6 +45,22 @@ Priority meanings:
 | 26 | QWEN-BOUNDARY-01 | P0 | Complete: 2.0.4 installed MPS/MLX file gate passed | Clamp a final zero-duration aligner word when both start/end are within 50 ms beyond the chunk, retain strict rejection beyond that bound, and expose the actual backend in GUI failures |
 | 27 | QWEN-REALTIME-MLX-01 | P0 | Complete: 2.0.5 installed owner acceptance passed | Keep realtime ASR creation, load, inference, and close on one owner worker thread; preserve CPU/MPS behavior and verify MLX across Mic/System/Mix |
 | 28 | RECOVERY-TRANSCRIBE-01 | P0 | Complete: 2.1.1 candidate verified; installed acceptance pending | Recover saved raw recordings through a session-ID-owned full-transcription action, reject pathless macOS drops before job creation, and keep interrupted checkpoints resumable; target 2.1.1 |
+| 29 | LIVE-AGENT-01 | P1 | Source implementation; installed acceptance pending | Persist provisional Mic/System/Mix utterances per recording session and expose paged read-only CLI/MCP access for in-meeting Agent summaries, without stopping capture or treating drafts as final diarized transcripts |
+
+### LIVE-AGENT-01 acceptance
+
+- While recording continues, an agent can resolve the active session id and page
+  recognized utterances by stable sequence cursor. The 40-minute snapshot use case
+  must not stop, pause, or restart an hour-long recording.
+- Mic, System, and Mix all publish the same provisional `{seq, start, end, text}`
+  contract. A draft has no speaker labels; the final diarized transcript remains
+  authoritative after recording completes.
+- Journal reads never block the capture thread, disclose transcript text in runtime
+  logs, or require new macOS permissions. An incomplete final JSONL line from a
+  process crash is ignored; complete earlier utterances remain readable by session id.
+- Validate pagination, malformed IDs, concurrent reads/writes, repeated polling,
+  paused/resumed recording, and explicit write failures in automated tests. Verify
+  a long packaged recording manually before claiming release acceptance.
 
 ### RECOVERY-TRANSCRIBE-01 acceptance
 

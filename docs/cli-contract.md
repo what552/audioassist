@@ -41,6 +41,9 @@ configuration when it points to an existing directory, otherwise the platform de
 audioassist sessions list
 audioassist sessions show JOB_ID
 audioassist status JOB_ID
+audioassist recording status
+audioassist recording transcript SESSION_ID [--after-seq N] [--limit 1..500]
+audioassist recording transcript --active [--after-seq N] [--limit 1..500]
 audioassist transcribe FILE [--engine qwen|whisper] [--model-id ID]
                           [--qwen-backend auto|pytorch-cpu|pytorch-mps|mlx|pytorch-cuda]
 audioassist summarize JOB_ID [--prompt TEXT]
@@ -51,6 +54,23 @@ audioassist serve --read-only [--port PORT]
 fails. Progress is written to stderr, so stdout remains safe for automation. Checkpoint data
 continues to support recovery after an interruption; background submission is not part of
 R03-a.
+
+`recording status` reads the visible desktop app's recording state through its existing
+authenticated loopback API and reports the active `session_id`. `recording transcript`
+reads a **provisional live ASR draft** from that session's output directory; it does not
+start, stop, pause, or alter recording. `--active` resolves the session id from the
+visible app; an explicit `SESSION_ID` can also read the draft after the app closes.
+The command does not require recording permissions because it only reads saved text.
+It must use the same configured `--output-dir` as the desktop app.
+
+Each recognized utterance has a stable `seq`, `start`, `end`, and `text`. `--after-seq`
+returns only later utterances and `--limit` bounds one response (default 100). The JSON
+data also contains `session_id`, `provisional: true`, `next_cursor`, and `has_more`.
+For example, an agent can request a snapshot during a meeting, then pass the returned
+`next_cursor` to the next call. Empty `segments` means no new utterance has finished
+recognition yet, not that the meeting was silent. The draft has no speaker labels and
+is never a replacement for the final diarized transcript. The visible app continues
+to own capture and its macOS permissions.
 
 `--qwen-backend` selects the inference backend for one Qwen job without changing the
 saved desktop preference. An explicit command-line value takes precedence over the

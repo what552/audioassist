@@ -243,14 +243,17 @@ stdout content; logs go to stderr. Initial tools are:
 | `audioassist_get_session` | Direct `AudioAssistService.get_session(job_id)` |
 | `audioassist_get_status` | Direct `AudioAssistService.get_status(job_id)` |
 | `audioassist_recording_status` | Authenticated desktop HTTP request |
+| `audioassist_get_live_transcript` | Direct paged read of the provisional per-recording draft through `AudioAssistService.get_live_transcript(session_id, after_seq, limit)` |
 | `audioassist_start_recording` | Authenticated desktop HTTP request |
 | `audioassist_pause_recording` | Authenticated desktop HTTP request |
 | `audioassist_resume_recording` | Authenticated desktop HTTP request |
 | `audioassist_stop_recording` | Authenticated desktop HTTP request |
 
 The adapter never fabricates success when discovery or health validation fails. Read
-tools do not require a running HTTP server. Recording tools require discovery mode
-`desktop` and otherwise return the stable `app_unavailable` error.
+tools, including the live draft read by explicit session id, do not require a running
+HTTP server. Recording state and control tools require discovery mode `desktop` and
+otherwise return the stable `app_unavailable` error. Draft reads never control capture
+or treat provisional text as the final speaker-labelled transcript.
 
 ## R03-B2 acceptance gates
 

@@ -215,6 +215,63 @@ class TestJSEvents:
         assert any("onRealtimeResult" in c for c in js_calls)
         assert any("Hello world" in c for c in js_calls)
 
+    @pytest.mark.parametrize("capture_mode", ["mic", "system", "mix"])
+    def test_live_utterance_is_saved_while_recording(self, capture_mode, tmp_path):
+        from src.service import AudioAssistService
+
+        api = API()
+        callbacks = {}
+
+        def create_backend(*args, **kwargs):
+            callbacks["on_result"] = kwargs["on_result"]
+            backend = MagicMock()
+            backend.start.return_value = None
+            return backend
+
+        with patch("src.realtime.RealtimeTranscriber", side_effect=create_backend), \
+             patch("src.native_capture.NativeCaptureHelper", side_effect=create_backend), \
+             patch.object(app_module, "_push"):
+            assert api.start_realtime({"capture_mode": capture_mode})["status"] == "started"
+            deadline = time.monotonic() + 2
+            while api.get_recording_status()["state"] != "recording" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            session_id = api.get_recording_status()["session_id"]
+            assert session_id
+            callbacks["on_result"]({"text": "第 40 分钟的讨论", "start": 2400, "end": 2403})
+            draft = AudioAssistService(str(tmp_path)).get_live_transcript(session_id)
+
+        assert draft["segments"] == [
+            {"seq": 1, "start": 2400, "end": 2403, "text": "第 40 分钟的讨论"}
+        ]
+        assert api.get_recording_status()["state"] == "recording"
+
+    def test_live_draft_write_error_warns_agent_but_keeps_recording(self):
+        api = API()
+        callbacks = {}
+
+        def create_backend(*args, **kwargs):
+            callbacks["on_result"] = kwargs["on_result"]
+            backend = MagicMock()
+            backend.start.return_value = None
+            return backend
+
+        pushed = []
+        with patch("src.realtime.RealtimeTranscriber", side_effect=create_backend), \
+             patch.object(app_module, "_push", side_effect=pushed.append), \
+             patch.object(app_module, "LiveTranscriptWriter") as writer_class:
+            writer_class.return_value.append.side_effect = OSError("disk full")
+            api.start_realtime({"capture_mode": "mic"})
+            deadline = time.monotonic() + 2
+            while api.get_recording_status()["state"] != "recording" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            callbacks["on_result"]({"text": "still recording", "start": 1, "end": 2})
+            callbacks["on_result"]({"text": "still recording", "start": 3, "end": 4})
+
+        assert api.get_recording_status()["state"] == "recording"
+        assert api.get_recording_status()["live_transcript_warning"]
+        assert writer_class.return_value.append.call_count == 1
+        assert sum("onRealtimeResult" in call for call in pushed) == 2
+
     def test_on_error_callback_pushes_onRealtimeError(self):
         api = API()
         js_calls = []

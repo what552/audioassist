@@ -17,7 +17,7 @@ from .service import (
     ConfigurationError,
     SessionNotFoundError,
 )
-from .local_api import LocalAPIError, LocalAPIServer
+from .local_api import LocalAPIError, LocalAPIServer, request_desktop
 from .preferences import BACKENDS
 from .runtime_paths import resolve_runtime_paths
 from .runtime_identity import format_runtime_identity, get_runtime_identity
@@ -48,6 +48,20 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be nonnegative")
+    return parsed
+
+
+def _page_limit(value: str) -> int:
+    parsed = _positive_int(value)
+    if parsed > 500:
+        raise argparse.ArgumentTypeError("must be at most 500")
     return parsed
 
 
@@ -92,6 +106,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser("status", help="Read durable state for one session.")
     status.add_argument("job_id")
+
+    recording = commands.add_parser("recording", help="Read the visible recording and its live draft.")
+    recording_commands = recording.add_subparsers(dest="recording_command", required=True)
+    recording_commands.add_parser("status", help="Read the visible app's recording state.")
+    live = recording_commands.add_parser(
+        "transcript", help="Read recognized utterances from a provisional recording draft."
+    )
+    live.add_argument("session_id", nargs="?")
+    live.add_argument("--active", action="store_true", help="Use the visible app's active session.")
+    live.add_argument("--after-seq", type=_nonnegative_int, default=0)
+    live.add_argument("--limit", type=_page_limit, default=100)
 
     transcribe = commands.add_parser("transcribe", help="Synchronously transcribe one file.")
     transcribe.add_argument("file")
@@ -185,6 +210,33 @@ def _run(args: argparse.Namespace, service: AudioAssistService) -> tuple[dict, s
         text = f"{data['job_id']}\t{data['status']}\t{data['progress']:.0%}"
         return _success(data), text
 
+    if args.command == "recording":
+        if args.recording_command == "status" or args.active:
+            app_data_dir = os.path.dirname(service.config_path or "") or None
+            state = request_desktop(
+                "GET", "/v1/recording", app_data_dir=app_data_dir
+            )
+            if args.recording_command == "status":
+                return _success(state), json.dumps(state, ensure_ascii=False, indent=2)
+            if isinstance(state, dict) and state.get("live_transcript_warning"):
+                raise LocalAPIError(
+                    "live_transcript_unavailable", state["live_transcript_warning"], 503
+                )
+            session_id = state.get("session_id") if isinstance(state, dict) else None
+            if not session_id:
+                raise LocalAPIError("not_recording", "No active recording session", 409)
+        else:
+            session_id = args.session_id
+        data = service.get_live_transcript(
+            session_id, after_seq=args.after_seq, limit=args.limit
+        )
+        lines = [
+            f"[{segment['start']:.1f}s] {segment['text']}"
+            if segment["start"] is not None else segment["text"]
+            for segment in data["segments"]
+        ]
+        return _success(data), "\n".join(lines) or "No recognized utterances yet."
+
     if args.command == "transcribe":
         def progress(percent: float, message: str) -> None:
             if not args.quiet:
@@ -273,6 +325,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             and AudioAssistService._engine_for_model(args.model_id, args.engine) != "qwen"
         ):
             raise CLIUsageError("--qwen-backend can only be used with a Qwen ASR model")
+        if args.command == "recording" and args.recording_command == "transcript":
+            if bool(args.session_id) == bool(args.active):
+                raise CLIUsageError("provide exactly one of SESSION_ID or --active")
     except CLIUsageError as error:
         _emit_error(
             _failure("invalid_arguments", str(error)),
