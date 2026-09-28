@@ -66,6 +66,14 @@ It must use the same configured `--output-dir` as the desktop app.
 Each recognized utterance has a stable `seq`, `start`, `end`, and `text`. `--after-seq`
 returns only later utterances and `--limit` bounds one response (default 100). The JSON
 data also contains `session_id`, `provisional: true`, `next_cursor`, and `has_more`.
+`has_more` describes pagination only. `draft_status` is `incomplete` during recording
+or after an interrupted writer, `failed` after a detected queue failure, `closed`
+after a clean stop, or `missing` when no draft file exists. `draft_complete` is true
+only for a cleanly closed journal; it does **not** mean the speaker-labelled final
+transcript is ready. An incomplete page includes `draft_warning`. When `--active`
+is used, `live_writer` reports accepted and persisted sequence numbers from the app;
+a write failure returns `live_transcript_unavailable` instead of a silent partial
+summary. A damaged/unreadable journal uses exit code 5, not argument-error code 2.
 For example, an agent can request a snapshot during a meeting, then pass the returned
 `next_cursor` to the next call. Empty `segments` means no new utterance has finished
 recognition yet, not that the meeting was silent. The draft has no speaker labels and

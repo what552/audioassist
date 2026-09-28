@@ -15,6 +15,7 @@ from .service import (
     AudioAssistError,
     AudioAssistService,
     ConfigurationError,
+    LiveTranscriptReadError,
     SessionNotFoundError,
 )
 from .local_api import LocalAPIError, LocalAPIServer, request_desktop
@@ -222,6 +223,11 @@ def _run(args: argparse.Namespace, service: AudioAssistService) -> tuple[dict, s
                 raise LocalAPIError(
                     "live_transcript_unavailable", state["live_transcript_warning"], 503
                 )
+            if isinstance(state, dict) and isinstance(state.get("live_transcript"), dict):
+                if state["live_transcript"].get("state") == "failed":
+                    raise LocalAPIError(
+                        "live_transcript_unavailable", "Live transcript saving failed", 503
+                    )
             session_id = state.get("session_id") if isinstance(state, dict) else None
             if not session_id:
                 raise LocalAPIError("not_recording", "No active recording session", 409)
@@ -230,6 +236,16 @@ def _run(args: argparse.Namespace, service: AudioAssistService) -> tuple[dict, s
         data = service.get_live_transcript(
             session_id, after_seq=args.after_seq, limit=args.limit
         )
+        if args.active and isinstance(state, dict):
+            writer_state = state.get("live_transcript")
+            data["live_writer"] = writer_state
+            if isinstance(writer_state, dict):
+                accepted = writer_state.get("accepted_seq")
+                persisted = writer_state.get("persisted_seq")
+                if type(accepted) is int and type(persisted) is int and accepted > persisted:
+                    data["draft_warning"] = (
+                        f"{accepted - persisted} recognized utterance(s) are not yet persisted; retry shortly"
+                    )
         lines = [
             f"[{segment['start']:.1f}s] {segment['text']}"
             if segment["start"] is not None else segment["text"]
@@ -385,6 +401,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             human_text=f"Error: {error}",
         )
         return EXIT_NOT_READY
+    except LiveTranscriptReadError as error:
+        _emit_error(
+            _failure(error.code, str(error)),
+            json_output=args.json_output,
+            human_text=f"Error: {error}",
+        )
+        return EXIT_PROCESSING
     except AudioAssistError as error:
         _emit_error(
             _failure(error.code, str(error)),

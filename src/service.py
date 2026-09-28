@@ -60,6 +60,10 @@ class LiveTranscriptError(AudioAssistError):
     code = "live_transcript_invalid"
 
 
+class LiveTranscriptReadError(AudioAssistError):
+    code = "live_transcript_read_failed"
+
+
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _REALTIME_WAV_PREFIX = "realtime_recording"
 _HIGH_ACCURACY_REFINE_KEY = "high_accuracy_refine"
@@ -398,7 +402,11 @@ class AudioAssistService:
         try:
             page = read_page(paths.session_dir, after_seq=after_seq, limit=limit)
         except (OSError, ValueError) as error:
-            raise LiveTranscriptError(f"Unable to read realtime draft for {job_id}") from error
+            raise LiveTranscriptReadError(f"Unable to read realtime draft for {job_id}") from error
+        if not page["draft_complete"]:
+            page["draft_warning"] = (
+                "Draft is not confirmed complete; only persisted utterances are shown"
+            )
         return {"session_id": job_id, "provisional": True, **page}
 
     # -- Processing use cases ---------------------------------------------

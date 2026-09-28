@@ -211,6 +211,8 @@ class TestJSEvents:
             # Simulate a transcription result arriving — _push mock still active here
             if captured_callbacks.get("on_result"):
                 captured_callbacks["on_result"]("Hello world")
+            api.stop_realtime()
+            _wait(0.2)
 
         assert any("onRealtimeResult" in c for c in js_calls)
         assert any("Hello world" in c for c in js_calls)
@@ -238,12 +240,21 @@ class TestJSEvents:
             session_id = api.get_recording_status()["session_id"]
             assert session_id
             callbacks["on_result"]({"text": "第 40 分钟的讨论", "start": 2400, "end": 2403})
-            draft = AudioAssistService(str(tmp_path)).get_live_transcript(session_id)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                draft = AudioAssistService(str(tmp_path)).get_live_transcript(session_id)
+                if draft["segments"]:
+                    break
+                time.sleep(0.005)
 
         assert draft["segments"] == [
             {"seq": 1, "start": 2400, "end": 2403, "text": "第 40 分钟的讨论"}
         ]
         assert api.get_recording_status()["state"] == "recording"
+        api.stop_realtime()
+        deadline = time.monotonic() + 2
+        while api.get_recording_status()["state"] != "idle" and time.monotonic() < deadline:
+            time.sleep(0.01)
 
     def test_live_draft_write_error_warns_agent_but_keeps_recording(self):
         api = API()
@@ -258,8 +269,7 @@ class TestJSEvents:
         pushed = []
         with patch("src.realtime.RealtimeTranscriber", side_effect=create_backend), \
              patch.object(app_module, "_push", side_effect=pushed.append), \
-             patch.object(app_module, "LiveTranscriptWriter") as writer_class:
-            writer_class.return_value.append.side_effect = OSError("disk full")
+             patch.object(app_module.LiveTranscriptWriter, "append", side_effect=OSError("disk full")) as append:
             api.start_realtime({"capture_mode": "mic"})
             deadline = time.monotonic() + 2
             while api.get_recording_status()["state"] != "recording" and time.monotonic() < deadline:
@@ -269,8 +279,22 @@ class TestJSEvents:
 
         assert api.get_recording_status()["state"] == "recording"
         assert api.get_recording_status()["live_transcript_warning"]
-        assert writer_class.return_value.append.call_count == 1
+        assert append.call_count == 1
         assert sum("onRealtimeResult" in call for call in pushed) == 2
+
+    def test_live_draft_init_failure_does_not_block_audio_capture(self):
+        api = API()
+        backend = MagicMock()
+        backend.start.return_value = None
+        with patch("src.realtime.RealtimeTranscriber", return_value=backend), \
+             patch.object(app_module.LiveTranscriptWriter, "__init__", side_effect=OSError("disk full")), \
+             patch.object(app_module, "_push"):
+            assert api.start_realtime({"capture_mode": "mic"})["status"] == "started"
+            deadline = time.monotonic() + 2
+            while api.get_recording_status()["state"] != "recording" and time.monotonic() < deadline:
+                time.sleep(0.01)
+        assert api.get_recording_status()["state"] == "recording"
+        assert api.get_recording_status()["live_transcript_warning"]
 
     def test_on_error_callback_pushes_onRealtimeError(self):
         api = API()

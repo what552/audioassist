@@ -71,6 +71,7 @@ def test_read_tools_work_with_desktop_closed(tmp_path):
 def test_live_draft_tool_reads_paged_utterances(tmp_path):
     writer = LiveTranscriptWriter(str(tmp_path / "meetings" / "live-1"))
     writer.append({"text": "会议进行中", "start": 12, "end": 14})
+    assert writer.close()
     server = _initialized_server(tmp_path)
     response = server.handle({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",

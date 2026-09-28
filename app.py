@@ -371,6 +371,7 @@ class _RealtimeStartupLease:
         self.backend_ready = threading.Event()
         self._lock = threading.Lock()
         self._backend = None
+        self.live_draft_writer: LiveTranscriptWriter | None = None
 
     def publish_backend(self, backend) -> None:
         with self._lock:
@@ -425,6 +426,9 @@ class API:
             result = dict(self._recording_status)
             if self._live_transcript_warning:
                 result["live_transcript_warning"] = self._live_transcript_warning
+            writer = getattr(self._realtime, "live_draft_writer", None)
+            if isinstance(writer, LiveTranscriptWriter):
+                result["live_transcript"] = writer.snapshot()
             return result
 
     # ── File selection ─────────────────────────────────────────────────────────
@@ -1113,12 +1117,24 @@ class API:
                 rt_session_dir = _session_dir(session_id)
                 os.makedirs(rt_session_dir, exist_ok=True)
                 output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
-                draft_writer = LiveTranscriptWriter(rt_session_dir)
+                try:
+                    draft_writer = LiveTranscriptWriter(rt_session_dir)
+                except OSError:
+                    draft_writer = None
+                    with self._recording_lock:
+                        if generation == self._recording_generation:
+                            self._live_transcript_warning = (
+                                "Live transcript saving failed; recording continues"
+                            )
+                    logger.exception(
+                        "Unable to initialize live transcript for session %s", session_id
+                    )
+                lease.live_draft_writer = draft_writer
                 draft_failed = False
 
                 def publish_result(seg):
                     nonlocal draft_failed
-                    if not draft_failed:
+                    if draft_writer is not None and not draft_failed:
                         try:
                             draft_writer.append(seg)
                         except (OSError, ValueError):
@@ -1167,6 +1183,7 @@ class API:
                         on_result=publish_result,
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                     )
+                rt.live_draft_writer = draft_writer
                 lease.publish_backend(rt)
                 logger.info(
                     "Realtime start attempt=%s stage=backend_create.done backend=%s",
@@ -1175,6 +1192,8 @@ class API:
                     extra={"audioassist_diagnostic": True},
                 )
                 if lease.cancelled.is_set():
+                    if draft_writer is not None:
+                        draft_writer.abort()
                     return
                 rt.start()
                 with self._recording_lock:
@@ -1186,6 +1205,8 @@ class API:
                     if not cancelled:
                         self._realtime = rt
                 if cancelled:
+                    if draft_writer is not None:
+                        draft_writer.abort()
                     return
                 self._set_recording_status(
                     "recording",
@@ -1209,6 +1230,7 @@ class API:
                 )
                 logger.exception("Realtime start failed")
                 lease.publish_failure()
+                draft_writer = locals().get("draft_writer")
                 with self._recording_lock:
                     cancelled = (
                         lease.cancelled.is_set()
@@ -1233,6 +1255,8 @@ class API:
                 with self._recording_lock:
                     if self._realtime is lease:
                         self._realtime = None
+                if isinstance(draft_writer, LiveTranscriptWriter):
+                    draft_writer.abort()
                 self._set_recording_status("error", error=str(e))
                 self._caffeinate_stop()
                 _push(f"onRealtimeError({json.dumps(str(e))})")
@@ -1363,6 +1387,12 @@ class API:
 
     def _finish_realtime_stop(self, rt) -> None:
         """Release the global lease only after its owner worker has exited."""
+        writer = getattr(rt, "live_draft_writer", None)
+        if isinstance(writer, LiveTranscriptWriter):
+            if isinstance(rt, _RealtimeStartupLease) and rt.cancelled.is_set():
+                writer.abort()
+            elif not writer.close():
+                logger.warning("Live transcript draft did not finish flushing on stop")
         with self._recording_lock:
             if self._realtime is rt:
                 self._realtime = None
@@ -1403,6 +1433,12 @@ class API:
                     cleanup_error = error
                     logger.exception("Realtime shutdown failed")
         if cleanup_error is None:
+            writer = getattr(rt, "live_draft_writer", None)
+            if isinstance(writer, LiveTranscriptWriter):
+                if isinstance(rt, _RealtimeStartupLease) and rt.cancelled.is_set():
+                    writer.abort()
+                elif not writer.close():
+                    logger.warning("Live transcript draft did not finish flushing on shutdown")
             with self._recording_lock:
                 if self._realtime is rt:
                     self._realtime = None

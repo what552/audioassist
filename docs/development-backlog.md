@@ -55,9 +55,11 @@ Priority meanings:
 - Mic, System, and Mix all publish the same provisional `{seq, start, end, text}`
   contract. A draft has no speaker labels; the final diarized transcript remains
   authoritative after recording completes.
-- Journal reads never block the capture thread, disclose transcript text in runtime
-  logs, or require new macOS permissions. An incomplete final JSONL line from a
-  process crash is ignored; complete earlier utterances remain readable by session id.
+- Journal I/O runs on a bounded writer queue rather than the ASR or capture thread;
+  it never discloses transcript text in runtime logs or requires new macOS
+  permissions. A missing clean-close marker, queued backlog, failed write, or
+  incomplete final JSONL line must not be reported as a complete draft. Complete
+  earlier utterances remain readable by session id after a process crash.
 - Validate pagination, malformed IDs, concurrent reads/writes, repeated polling,
   paused/resumed recording, and explicit write failures in automated tests. Verify
   a long packaged recording manually before claiming release acceptance.
