@@ -115,6 +115,13 @@ class LiveTranscriptWriter:
 
     def abort(self, timeout: float = 1.0) -> None:
         """End a recording that never started cleanly without a success marker."""
+        self.mark_failed()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=timeout)
+
+    def mark_failed(self) -> None:
+        """Preserve queued lines but never claim a partially lost draft is complete."""
         with self._lock:
             self._failed = True
             self._closed = True
@@ -122,9 +129,6 @@ class LiveTranscriptWriter:
                 self._start_thread()
             except OSError:
                 return
-            thread = self._thread
-        assert thread is not None
-        thread.join(timeout=timeout)
 
     def _write_line(self, entry: dict[str, Any]) -> None:
         raw = (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
@@ -148,7 +152,7 @@ class LiveTranscriptWriter:
                 self._write_line(entry)
                 with self._lock:
                     self._persisted_seq = entry["seq"]
-            except OSError:
+            except Exception:
                 with self._lock:
                     self._failed = True
                 logger.exception("Realtime transcript journal write failed")
@@ -163,7 +167,7 @@ class LiveTranscriptWriter:
             self._write_line({
                 "type": "failed" if failed else "closed", "last_seq": persisted_seq
             })
-        except OSError:
+        except Exception:
             with self._lock:
                 self._failed = True
             logger.exception("Realtime transcript journal final marker failed")

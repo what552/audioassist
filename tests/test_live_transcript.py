@@ -259,3 +259,16 @@ def test_writer_thread_start_failure_does_not_interrupt_cleanup(tmp_path, monkey
     assert writer.close() is False
     writer.abort()
     assert writer.snapshot()["state"] == "failed"
+
+
+def test_unexpected_writer_exception_keeps_journal_incomplete(tmp_path, make_writer):
+    writer = make_writer(tmp_path)
+
+    def fail_write(_entry):
+        raise UnicodeError("invalid text encoding")
+
+    writer._write_line = fail_write
+    writer.append("unpersisted")
+    assert writer.close() is False
+    assert writer.snapshot()["state"] == "failed"
+    assert read_page(str(tmp_path))["draft_complete"] is False

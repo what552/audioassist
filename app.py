@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import weakref
 import datetime as dt
 from typing import Optional
@@ -409,6 +410,7 @@ class API:
             "error": None,
         }
         self._live_transcript_warning: str | None = None
+        self._pending_live_draft_writers: list[LiveTranscriptWriter] = []
         # Pre-collected realtime segments keyed by wav_path — consumed by transcribe()
         self._rt_segments: dict[str, list] = {}
         # Options stored after Phase 1 (realtime), consumed by manual refine()
@@ -1139,6 +1141,7 @@ class API:
                             draft_writer.append(seg)
                         except (OSError, ValueError):
                             draft_failed = True
+                            draft_writer.mark_failed()
                             with self._recording_lock:
                                 if generation == self._recording_generation:
                                     self._live_transcript_warning = (
@@ -1391,8 +1394,16 @@ class API:
         if isinstance(writer, LiveTranscriptWriter):
             if isinstance(rt, _RealtimeStartupLease) and rt.cancelled.is_set():
                 writer.abort()
-            elif not writer.close():
-                logger.warning("Live transcript draft did not finish flushing on stop")
+            else:
+                with self._recording_lock:
+                    self._pending_live_draft_writers.append(writer)
+                flushed = writer.close()
+                if not flushed:
+                    logger.warning("Live transcript draft did not finish flushing on stop")
+                if flushed:
+                    with self._recording_lock:
+                        if writer in self._pending_live_draft_writers:
+                            self._pending_live_draft_writers.remove(writer)
         with self._recording_lock:
             if self._realtime is rt:
                 self._realtime = None
@@ -1434,11 +1445,19 @@ class API:
                     logger.exception("Realtime shutdown failed")
         if cleanup_error is None:
             writer = getattr(rt, "live_draft_writer", None)
-            if isinstance(writer, LiveTranscriptWriter):
+            with self._recording_lock:
+                pending_writers = list(self._pending_live_draft_writers)
+            if isinstance(writer, LiveTranscriptWriter) and writer not in pending_writers:
                 if isinstance(rt, _RealtimeStartupLease) and rt.cancelled.is_set():
                     writer.abort()
-                elif not writer.close(timeout=5.0):
+                else:
+                    pending_writers.append(writer)
+            deadline = time.monotonic() + 5.0
+            for pending_writer in pending_writers:
+                if not pending_writer.close(timeout=max(0.0, deadline - time.monotonic())):
                     logger.warning("Live transcript draft did not finish flushing on shutdown")
+            with self._recording_lock:
+                self._pending_live_draft_writers.clear()
             with self._recording_lock:
                 if self._realtime is rt:
                     self._realtime = None

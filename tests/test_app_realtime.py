@@ -282,6 +282,57 @@ class TestJSEvents:
         assert append.call_count == 1
         assert sum("onRealtimeResult" in call for call in pushed) == 2
 
+    def test_invalid_utterance_never_closes_incomplete_draft_as_complete(self, tmp_path):
+        from src.service import AudioAssistService
+
+        api = API()
+        callbacks = {}
+
+        def create_backend(*args, **kwargs):
+            callbacks["on_result"] = kwargs["on_result"]
+            backend = MagicMock()
+            backend.start.return_value = None
+            return backend
+
+        with patch("src.realtime.RealtimeTranscriber", side_effect=create_backend), \
+             patch.object(app_module, "_push"):
+            assert api.start_realtime({"capture_mode": "mic"})["status"] == "started"
+            deadline = time.monotonic() + 2
+            while api.get_recording_status()["state"] != "recording" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            session_id = api.get_recording_status()["session_id"]
+            callbacks["on_result"]({"text": "已保存", "start": 1, "end": 2})
+            callbacks["on_result"]({"text": "异常时间", "start": -1, "end": 3})
+            callbacks["on_result"]({"text": "不会误报完整", "start": 4, "end": 5})
+            assert api.get_recording_status()["state"] == "recording"
+            assert api.get_recording_status()["live_transcript"]["state"] == "failed"
+            api.stop_realtime()
+            deadline = time.monotonic() + 2
+            while api.get_recording_status()["state"] != "idle" and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        page = AudioAssistService(str(tmp_path)).get_live_transcript(session_id)
+        assert [item["text"] for item in page["segments"]] == ["已保存"]
+        assert page["draft_status"] == "failed"
+        assert page["draft_complete"] is False
+
+    def test_shutdown_flushes_writer_left_pending_after_stop(self, tmp_path):
+        from src.live_transcript import LiveTranscriptWriter
+
+        api = API()
+        writer = LiveTranscriptWriter(str(tmp_path / "pending"))
+        rt = MagicMock()
+        rt.live_draft_writer = writer
+        api._realtime = rt
+        with patch.object(writer, "close", side_effect=[False, True]) as close, \
+             patch.object(app_module, "_push"):
+            api._finish_realtime_stop(rt)
+            assert api.get_recording_status()["state"] == "idle"
+            assert api._pending_live_draft_writers == [writer]
+            api.shutdown()
+            assert close.call_count == 2
+            assert api._pending_live_draft_writers == []
+
     def test_live_draft_init_failure_does_not_block_audio_capture(self):
         api = API()
         backend = MagicMock()
