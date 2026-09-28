@@ -19,6 +19,7 @@ from .service import (
     SessionNotFoundError,
 )
 from .local_api import LocalAPIError, LocalAPIServer, request_desktop
+from .live_transcript import merge_live_writer_state
 from .preferences import BACKENDS
 from .runtime_paths import resolve_runtime_paths
 from .runtime_identity import format_runtime_identity, get_runtime_identity
@@ -212,8 +213,9 @@ def _run(args: argparse.Namespace, service: AudioAssistService) -> tuple[dict, s
         return _success(data), text
 
     if args.command == "recording":
+        app_data_dir = os.path.dirname(service.config_path or "") or None
+        state = None
         if args.recording_command == "status" or args.active:
-            app_data_dir = os.path.dirname(service.config_path or "") or None
             state = request_desktop(
                 "GET", "/v1/recording", app_data_dir=app_data_dir
             )
@@ -236,16 +238,14 @@ def _run(args: argparse.Namespace, service: AudioAssistService) -> tuple[dict, s
         data = service.get_live_transcript(
             session_id, after_seq=args.after_seq, limit=args.limit
         )
-        if args.active and isinstance(state, dict):
-            writer_state = state.get("live_transcript")
-            data["live_writer"] = writer_state
-            if isinstance(writer_state, dict):
-                accepted = writer_state.get("accepted_seq")
-                persisted = writer_state.get("persisted_seq")
-                if type(accepted) is int and type(persisted) is int and accepted > persisted:
-                    data["draft_warning"] = (
-                        f"{accepted - persisted} recognized utterance(s) are not yet persisted; retry shortly"
-                    )
+        if state is None and data["draft_status"] != "closed":
+            try:
+                state = request_desktop(
+                    "GET", "/v1/recording", app_data_dir=app_data_dir, timeout=0.5
+                )
+            except LocalAPIError:
+                pass  # An interrupted or closed app still leaves a readable draft.
+        data = merge_live_writer_state(data, state)
         lines = [
             f"[{segment['start']:.1f}s] {segment['text']}"
             if segment["start"] is not None else segment["text"]

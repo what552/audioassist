@@ -248,3 +248,14 @@ def test_writer_rejects_invalid_timestamps(tmp_path, invalid, make_writer):
         make_writer(tmp_path).append({
             "text": "hello", "start": invalid, "end": 2
         })
+
+
+def test_writer_thread_start_failure_does_not_interrupt_cleanup(tmp_path, monkeypatch):
+    writer = LiveTranscriptWriter(str(tmp_path))
+    def fail_start():
+        raise OSError("thread unavailable")
+
+    monkeypatch.setattr(writer, "_start_thread", fail_start)
+    assert writer.close() is False
+    writer.abort()
+    assert writer.snapshot()["state"] == "failed"

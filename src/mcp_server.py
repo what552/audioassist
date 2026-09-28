@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import Any, TextIO
 
 from .local_api import LocalAPIError, request_desktop, validate_model_id
+from .live_transcript import merge_live_writer_state
 from .runtime_paths import resolve_runtime_paths
 from .service import AudioAssistError, AudioAssistService
 
@@ -211,9 +212,19 @@ class MCPServer:
                 raise ValueError("after_seq must be a nonnegative integer")
             if type(limit) is not int or not 1 <= limit <= 500:
                 raise ValueError("limit must be an integer from 1 to 500")
-            return self.service.get_live_transcript(
+            page = self.service.get_live_transcript(
                 arguments["session_id"], after_seq=after_seq, limit=limit
             )
+            if page["draft_status"] != "closed":
+                try:
+                    state = request_desktop(
+                        "GET", "/v1/recording", app_data_dir=self.app_data_dir,
+                        timeout=0.5,
+                    )
+                except LocalAPIError:
+                    state = None
+                page = merge_live_writer_state(page, state)
+            return page
         action = name.removeprefix("audioassist_").removesuffix("_recording")
         if action == "start":
             self._require_fields(arguments, {"capture_mode", "model_id"}, {"capture_mode"})

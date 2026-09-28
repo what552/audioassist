@@ -84,6 +84,31 @@ def test_live_draft_tool_reads_paged_utterances(tmp_path):
     assert response["result"]["structuredContent"]["segments"][0]["text"] == "会议进行中"
 
 
+def test_live_draft_tool_reports_active_writer_failure(tmp_path, monkeypatch):
+    session = tmp_path / "meetings" / "live-1"
+    writer = LiveTranscriptWriter(str(session))
+    writer.append("已保存的部分")
+    assert writer.close()
+    (session / "realtime_draft.jsonl").write_text(
+        '{"seq":1,"start":null,"end":null,"text":"已保存的部分"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mcp_server, "request_desktop", lambda *args, **kwargs: {
+        "state": "recording", "session_id": "live-1",
+        "live_transcript": {"state": "failed", "accepted_seq": 2, "persisted_seq": 1},
+    })
+    server = _initialized_server(tmp_path)
+    response = server.handle({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "audioassist_get_live_transcript",
+                   "arguments": {"session_id": "live-1"}},
+    })
+    data = response["result"]["structuredContent"]
+    assert data["draft_status"] == "failed"
+    assert data["draft_complete"] is False
+    assert "may be missing" in data["draft_warning"]
+
+
 def test_missing_session_is_tool_error_not_protocol_error(tmp_path):
     server = _initialized_server(tmp_path)
     response = server.handle({

@@ -1437,7 +1437,7 @@ class API:
             if isinstance(writer, LiveTranscriptWriter):
                 if isinstance(rt, _RealtimeStartupLease) and rt.cancelled.is_set():
                     writer.abort()
-                elif not writer.close():
+                elif not writer.close(timeout=5.0):
                     logger.warning("Live transcript draft did not finish flushing on shutdown")
             with self._recording_lock:
                 if self._realtime is rt:

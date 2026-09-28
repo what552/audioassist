@@ -190,6 +190,49 @@ def test_active_draft_write_failure_is_not_silent(tmp_path, capsys, monkeypatch)
     assert json.loads(capsys.readouterr().out)["error"]["code"] == "live_transcript_unavailable"
 
 
+def test_explicit_draft_id_reports_active_writer_failure(tmp_path, capsys, monkeypatch):
+    writer = LiveTranscriptWriter(str(tmp_path / "meetings" / "live-1"))
+    writer.append("已保存的部分")
+    assert writer.close()
+    # A failed writer can leave prior lines on disk without a failure marker.
+    (tmp_path / "meetings" / "live-1" / "realtime_draft.jsonl").write_text(
+        '{"seq":1,"start":null,"end":null,"text":"已保存的部分"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "request_desktop", lambda *args, **kwargs: {
+        "state": "recording", "session_id": "live-1",
+        "live_transcript": {"state": "failed", "accepted_seq": 2, "persisted_seq": 1},
+    })
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path),
+        "recording", "transcript", "live-1",
+    ])
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert exit_code == cli.EXIT_OK
+    assert data["draft_status"] == "failed"
+    assert data["draft_complete"] is False
+    assert "may be missing" in data["draft_warning"]
+    assert data["live_writer"]["accepted_seq"] == 2
+
+
+def test_explicit_draft_id_ignores_other_active_session(tmp_path, capsys, monkeypatch):
+    session = tmp_path / "meetings" / "live-1"
+    session.mkdir(parents=True)
+    (session / "realtime_draft.jsonl").touch()
+    monkeypatch.setattr(cli, "request_desktop", lambda *args, **kwargs: {
+        "state": "recording", "session_id": "live-2",
+        "live_transcript": {"state": "failed", "accepted_seq": 2, "persisted_seq": 1},
+    })
+    exit_code = cli.main([
+        "--json", "--output-dir", str(tmp_path),
+        "recording", "transcript", "live-1",
+    ])
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert exit_code == cli.EXIT_OK
+    assert data["draft_status"] == "incomplete"
+    assert "live_writer" not in data
+
+
 def test_corrupt_draft_uses_processing_exit_code(tmp_path, capsys):
     session = tmp_path / "meetings" / "live-1"
     session.mkdir(parents=True)

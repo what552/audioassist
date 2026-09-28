@@ -1,8 +1,8 @@
 """Append-only, per-recording draft transcript shared with local readers.
 
-The ASR worker is the sole writer for a recording. A complete JSON line becomes
-visible to another process immediately; a truncated final line after a crash is
-ignored. This is a draft, not the diarized/final transcript.
+The ASR worker only enqueues utterances; a dedicated worker writes the journal.
+Complete JSON lines are visible across processes, while a truncated crash tail is
+ignored. This draft is not the diarized/final transcript.
 """
 from __future__ import annotations
 
@@ -103,7 +103,10 @@ class LiveTranscriptWriter:
         """Request a bounded flush after ASR stops; never hang recording shutdown."""
         with self._lock:
             self._closed = True
-            self._start_thread()
+            try:
+                self._start_thread()
+            except OSError:
+                return False
             thread = self._thread
         assert thread is not None
         thread.join(timeout=timeout)
@@ -115,7 +118,10 @@ class LiveTranscriptWriter:
         with self._lock:
             self._failed = True
             self._closed = True
-            self._start_thread()
+            try:
+                self._start_thread()
+            except OSError:
+                return
             thread = self._thread
         assert thread is not None
         thread.join(timeout=timeout)
@@ -224,3 +230,29 @@ def read_page(session_dir: str, *, after_seq: int = 0, limit: int = 100) -> dict
         "segments": entries, "next_cursor": cursor, "has_more": has_more,
         "draft_status": draft_status, "draft_complete": draft_status == "closed",
     }
+
+
+def merge_live_writer_state(page: dict[str, Any], state: Any) -> dict[str, Any]:
+    """Annotate a durable page with current writer health for the same session."""
+    if not isinstance(state, dict) or state.get("session_id") != page.get("session_id"):
+        return page
+    result = dict(page)
+    writer = state.get("live_transcript")
+    if isinstance(writer, dict):
+        result["live_writer"] = writer
+    if state.get("live_transcript_warning") or (
+        isinstance(writer, dict) and writer.get("state") == "failed"
+    ):
+        result["draft_status"] = "failed"
+        result["draft_complete"] = False
+        result["draft_warning"] = (
+            "Live transcript saving failed; utterances after the last persisted sequence may be missing"
+        )
+    elif isinstance(writer, dict):
+        accepted = writer.get("accepted_seq")
+        persisted = writer.get("persisted_seq")
+        if type(accepted) is int and type(persisted) is int and accepted > persisted:
+            result["draft_warning"] = (
+                f"{accepted - persisted} recognized utterance(s) are not yet persisted; retry shortly"
+            )
+    return result

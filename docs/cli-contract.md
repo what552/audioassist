@@ -73,7 +73,11 @@ only for a cleanly closed journal; it does **not** mean the speaker-labelled fin
 transcript is ready. An incomplete page includes `draft_warning`. When `--active`
 is used, `live_writer` reports accepted and persisted sequence numbers from the app;
 a write failure returns `live_transcript_unavailable` instead of a silent partial
-summary. A damaged/unreadable journal uses exit code 5, not argument-error code 2.
+summary. An explicit `SESSION_ID` read also checks the running app's writer health
+when available; matching writer failures are reported as `failed`. If the app is
+unavailable and there is no clean close marker, the draft remains `incomplete` and
+must not be treated as a complete meeting snapshot. A damaged/unreadable journal
+uses exit code 5, not argument-error code 2.
 For example, an agent can request a snapshot during a meeting, then pass the returned
 `next_cursor` to the next call. Empty `segments` means no new utterance has finished
 recognition yet, not that the meeting was silent. The draft has no speaker labels and
