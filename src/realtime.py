@@ -490,7 +490,10 @@ class RealtimeTranscriber:
                 self._diagnostic_id, start_sec, end_sec,
                 extra={"audioassist_diagnostic": True},
             )
-            self._on_segment_error(start_sec, end_sec)
+            try:
+                self._on_segment_error(start_sec, end_sec)
+            except Exception:
+                logger.exception("Could not deliver realtime segment warning")
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:

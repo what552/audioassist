@@ -1070,14 +1070,21 @@ class TestMixModeHelperCommand:
 class TestWarningEventHandling:
     """warning イベントが正しく処理されることを確認する。"""
 
-    def test_segment_failure_reports_range_without_capture_error(self):
+    @pytest.mark.parametrize("notification_fails", [False, True])
+    def test_segment_failure_reports_range_without_capture_error(self, notification_fails):
         import numpy as np
         from src.types import TranscriptResult
 
         ranges, errors, results = [], [], []
+
+        def warn(start, end):
+            ranges.append((start, end))
+            if notification_fails:
+                raise RuntimeError("window unavailable")
+
         helper = NativeCaptureHelper(
             on_result=results.append, on_error=errors.append,
-            on_segment_error=lambda start, end: ranges.append((start, end)),
+            on_segment_error=warn,
         )
         helper._asr = MagicMock()
         helper._asr.transcribe.side_effect = [

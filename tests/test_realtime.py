@@ -363,12 +363,19 @@ class TestTranscribeSegment:
         self._run(rt, chunks, "  ")
         assert rt._segments == []
 
-    def test_asr_exception_warns_and_next_segment_is_delivered(self):
+    @pytest.mark.parametrize("notification_fails", [False, True])
+    def test_asr_exception_warns_and_next_segment_is_delivered(self, notification_fails):
         from src.types import TranscriptResult
 
         warnings, errors, results = [], [], []
+
+        def warn(start, end):
+            warnings.append((start, end))
+            if notification_fails:
+                raise RuntimeError("window unavailable")
+
         rt, _ = _make_rt(on_error=errors.append, on_result=results.append,
-                         on_segment_error=lambda start, end: warnings.append((start, end)))
+                         on_segment_error=warn)
         rt._asr.transcribe.side_effect = [
             RuntimeError("MLX Qwen generation stopped without EOS"),
             TranscriptResult(text="Kept recording", language="en"),
