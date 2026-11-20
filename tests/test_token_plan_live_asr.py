@@ -312,7 +312,11 @@ def test_native_end_detects_missing_fifo_audio(tmp_path):
         wav.writeframes(bytes(32000))
     cloud = Mock()
     capture = NativeCaptureHelper(output_path=str(source), cloud_asr=cloud)
-    capture._total_samples = 8000
+    capture._pcm_samples = 16_000
+    capture._total_samples = 16_384
+    capture._check_cloud_capture_timing(pcm_drained=True)
+    cloud.mark_timing_unconfirmed.assert_not_called()
+    capture._pcm_samples -= 100
     capture._check_cloud_capture_timing(pcm_drained=True)
     cloud.mark_timing_unconfirmed.assert_called_once_with()
 

@@ -149,6 +149,7 @@ class NativeCaptureHelper:
         # Telemetry counters (populated during a session)
         self._flush_count:  int = 0
         self._chunks_read:  int = 0
+        self._pcm_samples:  int = 0
 
         # Lazy-loaded models
         self._vad = None
@@ -668,6 +669,7 @@ class NativeCaptureHelper:
 
         chunk_bytes = CHUNK_SIZE * 4  # float32 = 4 bytes/sample
         chunks_read = 0
+        pcm_samples = 0
         buf = b""
 
         while True:
@@ -694,6 +696,7 @@ class NativeCaptureHelper:
                 chunk = np.frombuffer(buf[:chunk_bytes], dtype=np.float32).copy()
                 buf = buf[chunk_bytes:]
                 chunks_read += 1
+                pcm_samples += CHUNK_SIZE
                 self._accept_pcm(chunk)
 
         # Zero-pad and process any partial tail left in buf after EOF/stop.
@@ -702,9 +705,11 @@ class NativeCaptureHelper:
             tail = buf + b"\x00" * (chunk_bytes - len(buf))
             chunk = np.frombuffer(tail, dtype=np.float32).copy()
             chunks_read += 1
+            pcm_samples += len(buf) // 4
             self._accept_pcm(chunk)
 
         self._chunks_read = chunks_read
+        self._pcm_samples = pcm_samples
         logger.debug("NativeCaptureHelper PCM reader exited (chunks_read=%d)", chunks_read)
 
     def _accept_pcm(self, chunk) -> None:
@@ -720,10 +725,9 @@ class NativeCaptureHelper:
     def _check_cloud_capture_timing(self, pcm_drained: bool) -> None:
         try:
             with wave.open(self._output_path, "rb") as captured:
-                # The PCM reader zero-pads an incomplete final frame.
-                delta = abs(captured.getnframes() - self._total_samples)
-            if pcm_drained and delta < CHUNK_SIZE:
-                return
+                # Compare decoded samples, before any final VAD-frame padding.
+                if pcm_drained and captured.getnframes() == self._pcm_samples:
+                    return
         except (OSError, EOFError, wave.Error):
             pass
         self.cloud_asr.mark_timing_unconfirmed()
