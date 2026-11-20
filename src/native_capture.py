@@ -132,7 +132,8 @@ class NativeCaptureHelper:
         self._paused  = False
         self._stop_event = threading.Event()
 
-        # VAD accumulation state (PCM thread only — no locking needed)
+        # Pause and resume share the PCM reader's VAD state.
+        self._speech_lock = threading.Lock()
         self._speech_buffer: list       = []
         self._silence_count: int        = 0
         self._in_speech:     bool       = False
@@ -318,31 +319,33 @@ class NativeCaptureHelper:
 
     def pause(self) -> None:
         """Pause capture: send SIGUSR1 to helper, flush pending speech."""
-        self._paused = True
-        proc = self._process
-        if proc is not None and proc.poll() is None:
-            try:
-                os.kill(proc.pid, signal.SIGUSR1)
-            except ProcessLookupError:
-                pass
-        if self._speech_buffer:
-            self._flush_speech()
-        if self.cloud_asr is not None:
-            self.cloud_asr.flush()
+        with self._speech_lock:
+            self._paused = True
+            proc = self._process
+            if proc is not None and proc.poll() is None:
+                try:
+                    os.kill(proc.pid, signal.SIGUSR1)
+                except ProcessLookupError:
+                    pass
+            if self._speech_buffer:
+                self._flush_speech()
+            if self.cloud_asr is not None:
+                self.cloud_asr.flush()
         logger.info("NativeCaptureHelper paused")
 
     def resume(self) -> None:
         """Resume capture: send SIGUSR2 to helper, reset VAD state."""
-        self._paused = False
-        self._speech_buffer.clear()
-        self._silence_count = 0
-        self._in_speech     = False
-        proc = self._process
-        if proc is not None and proc.poll() is None:
-            try:
-                os.kill(proc.pid, signal.SIGUSR2)
-            except ProcessLookupError:
-                pass
+        with self._speech_lock:
+            self._paused = False
+            self._speech_buffer.clear()
+            self._silence_count = 0
+            self._in_speech = False
+            proc = self._process
+            if proc is not None and proc.poll() is None:
+                try:
+                    os.kill(proc.pid, signal.SIGUSR2)
+                except ProcessLookupError:
+                    pass
         logger.info("NativeCaptureHelper resumed")
 
     def stop(self) -> None:
@@ -466,6 +469,9 @@ class NativeCaptureHelper:
                 setattr(self, attribute, None)
 
         self._running = False
+
+        if self.cloud_asr is not None:
+            self._check_cloud_capture_timing(pcm_drained)
 
         if self._worker_thread is None or not self._worker_thread.is_alive():
             self._close_asr()
@@ -688,8 +694,7 @@ class NativeCaptureHelper:
                 chunk = np.frombuffer(buf[:chunk_bytes], dtype=np.float32).copy()
                 buf = buf[chunk_bytes:]
                 chunks_read += 1
-                if not self._paused:
-                    self._process_audio_chunk(chunk)
+                self._accept_pcm(chunk)
 
         # Zero-pad and process any partial tail left in buf after EOF/stop.
         # The Swift helper's drainRemaining() may produce a non-chunk-aligned tail.
@@ -697,11 +702,31 @@ class NativeCaptureHelper:
             tail = buf + b"\x00" * (chunk_bytes - len(buf))
             chunk = np.frombuffer(tail, dtype=np.float32).copy()
             chunks_read += 1
-            if not self._paused:
-                self._process_audio_chunk(chunk)
+            self._accept_pcm(chunk)
 
         self._chunks_read = chunks_read
         logger.debug("NativeCaptureHelper PCM reader exited (chunks_read=%d)", chunks_read)
+
+    def _accept_pcm(self, chunk) -> None:
+        with self._speech_lock:
+            if not self._paused:
+                self._process_audio_chunk(chunk)
+            elif self.cloud_asr is not None:
+                # The helper halted new capture but may have flushed buffered PCM.
+                start = self._total_samples / SAMPLE_RATE
+                self._total_samples += CHUNK_SIZE
+                self.cloud_asr.note_capture_gap(start, self._total_samples / SAMPLE_RATE)
+
+    def _check_cloud_capture_timing(self, pcm_drained: bool) -> None:
+        try:
+            with wave.open(self._output_path, "rb") as captured:
+                # The PCM reader zero-pads an incomplete final frame.
+                delta = abs(captured.getnframes() - self._total_samples)
+            if pcm_drained and delta < CHUNK_SIZE:
+                return
+        except (OSError, EOFError, wave.Error):
+            pass
+        self.cloud_asr.mark_timing_unconfirmed()
 
     def _process_audio_chunk(self, chunk) -> None:
         """Run Silero VAD on one chunk; flush utterance to ASR when done."""

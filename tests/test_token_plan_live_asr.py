@@ -2,9 +2,14 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import io
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
+from types import SimpleNamespace
 import wave
+from unittest.mock import Mock
 
 import httpx
 import numpy as np
@@ -182,6 +187,36 @@ def test_permanent_quota_failure_does_not_upload_later_audio(monkeypatch):
     assert scheduler.snapshot()["missing_ranges"] == [[0, 3]]
 
 
+def test_rate_limit_cooldown_resumes_without_reordering_or_resending(monkeypatch):
+    offset = 0
+    monkeypatch.setattr(cloud_live_asr, "time", SimpleNamespace(monotonic=lambda: time.monotonic() + offset))
+    limited = threading.Event()
+
+    def respond(request_number):
+        if request_number == 1:
+            raise token_plan_asr.TokenPlanError("rate_limited", retry_after=60)
+        return "Recovered"
+
+    scheduler, sent, segments, _ = make_scheduler(monkeypatch, respond)
+    scheduler._on_warning = lambda *_args: limited.set()
+    submit(scheduler, 0, 1)
+    scheduler.flush()
+    worker = threading.Thread(target=scheduler.run)
+    worker.start()
+    try:
+        assert limited.wait(1)
+        submit(scheduler, 1, 2)
+        offset = 61
+        submit(scheduler, 2, 3)
+    finally:
+        scheduler.finish()
+        worker.join(timeout=1)
+    assert not worker.is_alive()
+    assert sent == [1, 1]
+    assert segments == [{"text": "Recovered", "start": 2, "end": 3}]
+    assert scheduler.snapshot()["missing_ranges"] == [[0, 2]]
+
+
 def test_failed_cloud_audio_does_not_hide_saved_draft(tmp_path):
     session = tmp_path / "meetings" / "token-session"
     writer = LiveTranscriptWriter(str(session))
@@ -195,6 +230,91 @@ def test_failed_cloud_audio_does_not_hide_saved_draft(tmp_path):
     assert page["draft_complete"] is False
     assert page["live_asr"] == coverage
     assert merge_live_writer_state(page, {"session_id": "another-session", "live_asr": {}}) == page
+
+
+@pytest.mark.parametrize("bad_sidecar", [None, "{", "{}"])
+def test_missing_or_corrupt_cloud_coverage_is_not_reported_as_complete(tmp_path, bad_sidecar):
+    session = tmp_path / "meetings" / "token-session"
+    writer = LiveTranscriptWriter(str(session), cloud=True)
+    writer.append({"text": "Saved earlier", "start": 0, "end": 1})
+    assert writer.close()
+    if bad_sidecar is not None:
+        (session / CLOUD_STATUS_FILENAME).write_text(bad_sidecar)
+    page = AudioAssistService(str(tmp_path)).get_live_transcript("token-session")
+    assert page["draft_status"] == "closed"
+    assert not page["draft_complete"]
+    assert page["live_asr"]["error"] == "coverage_unconfirmed"
+    assert page["segments"][0]["text"] == "Saved earlier"
+
+
+def test_development_profile_isolates_models_and_config(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "-c", """
+from pathlib import Path
+import os
+import app
+from src.model_manager import CONFIG_PATH, ModelManager
+from src.runtime_paths import resolve_runtime_paths
+
+profile = Path(os.environ['AUDIOASSIST_DEV_APP_DATA_DIR']).resolve()
+assert Path(app.APP_DATA_DIR) == profile
+assert Path(CONFIG_PATH) == profile / 'config.json'
+assert Path(ModelManager().models_dir) == profile / 'models'
+assert tuple(Path(p) for p in resolve_runtime_paths()) == (profile / 'output', profile / 'config.json', profile)
+"""], env={**os.environ, "AUDIOASSIST_DEV_APP_DATA_DIR": str(tmp_path)},
+        capture_output=True, text=True, timeout=8,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_native_pause_flushes_an_inflight_pcm_frame(monkeypatch):
+    from src.native_capture import CHUNK_SIZE, NativeCaptureHelper
+
+    cloud = Mock()
+    capture = NativeCaptureHelper(cloud_asr=cloud)
+    entered, release, paused = threading.Event(), threading.Event(), threading.Event()
+    frame = np.zeros(CHUNK_SIZE, dtype=np.float32)
+
+    def process(_frame):
+        entered.set()
+        assert release.wait(2)
+        capture._speech_buffer.extend([frame] * 5)
+        capture._total_samples += 5 * CHUNK_SIZE
+
+    def pause():
+        capture.pause()
+        paused.set()
+
+    monkeypatch.setattr(capture, "_process_audio_chunk", process)
+    reader = threading.Thread(target=capture._accept_pcm, args=(frame,))
+    reader.start()
+    assert entered.wait(1)
+    pausing = threading.Thread(target=pause)
+    pausing.start()
+    try:
+        assert not paused.wait(0.05)
+    finally:
+        release.set()
+        reader.join(1)
+        pausing.join(1)
+    assert paused.is_set()
+    assert [call[0] for call in cloud.mock_calls] == ["submit", "flush"]
+    capture._accept_pcm(frame)
+    cloud.note_capture_gap.assert_called_once_with(0.16, 0.192)
+
+
+def test_native_end_detects_missing_fifo_audio(tmp_path):
+    from src.native_capture import NativeCaptureHelper
+
+    source = tmp_path / "source.wav"
+    with wave.open(str(source), "wb") as wav:
+        wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        wav.writeframes(bytes(32000))
+    cloud = Mock()
+    capture = NativeCaptureHelper(output_path=str(source), cloud_asr=cloud)
+    capture._total_samples = 8000
+    capture._check_cloud_capture_timing(pcm_drained=True)
+    cloud.mark_timing_unconfirmed.assert_called_once_with()
 
 
 def test_local_default_does_not_read_cloud_key(monkeypatch):

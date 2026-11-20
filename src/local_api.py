@@ -17,8 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol
 from urllib.parse import unquote, urlsplit
 
-from platformdirs import user_data_dir
-
+from .runtime_paths import app_data_directory
 from .service import (
     AudioAssistError,
     AudioAssistService,
@@ -82,7 +81,7 @@ class DiscoveryRecord:
 
 
 def local_api_paths(app_data_dir: str | None = None) -> tuple[str, str]:
-    directory = app_data_dir or user_data_dir("TranscribeApp", appauthor=False)
+    directory = app_data_dir or app_data_directory()
     return (
         os.path.join(directory, LOCK_FILENAME),
         os.path.join(directory, DISCOVERY_FILENAME),

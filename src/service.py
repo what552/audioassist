@@ -397,18 +397,17 @@ class AudioAssistService:
         paths = get_session_paths(self.output_dir, job_id)
         if not os.path.isdir(paths.session_dir):
             raise SessionNotFoundError(f"Session not found: {job_id}")
-        from .live_transcript import CLOUD_STATUS_FILENAME, annotate_cloud_coverage, read_page
+        from .live_transcript import read_page
 
         try:
             page = read_page(paths.session_dir, after_seq=after_seq, limit=limit)
         except (OSError, ValueError) as error:
             raise LiveTranscriptReadError(f"Unable to read realtime draft for {job_id}") from error
         if not page["draft_complete"]:
-            page["draft_warning"] = (
+            page.setdefault("draft_warning",
                 "Draft is not confirmed complete; only persisted utterances are shown"
             )
-        coverage = _read_json(os.path.join(paths.session_dir, CLOUD_STATUS_FILENAME), None)
-        return annotate_cloud_coverage({"session_id": job_id, "provisional": True, **page}, coverage)
+        return {"session_id": job_id, "provisional": True, **page}
 
     # -- Processing use cases ---------------------------------------------
 

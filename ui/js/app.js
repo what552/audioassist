@@ -32,6 +32,7 @@ const App = (() => {
   const _renameStates = new Map();
   let _selectedId        = null;
   let _activeRealtimeId  = null;
+  let _modelsReady = true;
   let dom = {};
 
   // ── File queue (F3) ────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ const App = (() => {
     History.render(_sortedSessions(), _selectedId);
 
     const session = _selectedId ? _sessions.get(_selectedId) : null;
-    if (!session) { _setView('idle'); Summary.reset(); return; }
+    if (!session) { _setView(_modelsReady ? 'idle' : 'setup'); Summary.reset(); return; }
 
     if (session.type === 'file') {
       if (session.status === 'transcribing') {
@@ -944,17 +945,17 @@ const App = (() => {
     try {
       const status = await window.pywebview.api.get_setup_status();
       _applySetupStatus(status);
-      if (status.asr_ready && status.diarizer_ready) {
+      _modelsReady = status.asr_ready && status.diarizer_ready;
+      if (_modelsReady) {
         _setView('idle');
         _populateEngineSelector();
-        _loadHistory();
       } else {
         _setView('setup');
       }
     } catch (e) {
       console.warn('[App] _checkSetup error:', e);
-      _loadHistory();  // fail-open: if API unavailable, proceed normally
     }
+    _loadHistory();
   }
 
   function _applySetupStatus(status) {

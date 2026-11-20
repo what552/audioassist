@@ -39,6 +39,7 @@
     agentTurns: [],
     summaries: {},
     recordingDrafts: {},
+    recordingCoverage: {},
     preflight: { supported: true },
     microphonePermission: { status: 'authorized', authorized: true },
     microphonePermissionDelayMs: 0,
@@ -103,6 +104,7 @@
       return {
         segments, draft_status: 'closed', has_more: remaining.length > segments.length,
         next_cursor: segments.at(-1)?.seq || afterSeq,
+        live_asr: state.recordingCoverage[jobId],
       };
     },
     select_files: async function () { record('select_files', arguments); return state.selectedFiles.slice(); },

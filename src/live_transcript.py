@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import queue
+import tempfile
 import threading
 from typing import Any
 
@@ -20,6 +21,36 @@ CLOUD_STATUS_FILENAME = "realtime_asr.json"
 MAX_TEXT_LENGTH = 100_000
 MAX_LINE_BYTES = MAX_TEXT_LENGTH * 6 + 256
 logger = logging.getLogger(__name__)
+
+
+def write_cloud_coverage(session_dir: str, coverage: dict) -> None:
+    path = os.path.join(session_dir, CLOUD_STATUS_FILENAME)
+    fd, temporary = tempfile.mkstemp(prefix=".realtime-asr-", dir=session_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(coverage, file, ensure_ascii=False)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def read_cloud_coverage(session_dir: str, *, cloud_journal: bool = False) -> dict | None:
+    unknown = {"provider": "token-plan", "closed": False, "error": "coverage_unconfirmed",
+               "processed_through": None, "missing_count": 0, "missing_ranges": [],
+               "missing_ranges_truncated": False}
+    try:
+        with open(os.path.join(session_dir, CLOUD_STATUS_FILENAME), "rb") as file:
+            coverage = json.loads(file.read(MAX_LINE_BYTES))
+    except FileNotFoundError:
+        return unknown if cloud_journal else None
+    except (OSError, ValueError):
+        return unknown
+    if (not isinstance(coverage, dict) or coverage.get("provider") != "token-plan"
+            or type(coverage.get("closed")) is not bool or type(coverage.get("missing_count")) is not int
+            or coverage["missing_count"] < 0):
+        return unknown
+    return coverage
 
 
 def _valid_time(value: Any) -> bool:
@@ -34,12 +65,13 @@ def _valid_time(value: Any) -> bool:
 
 
 class LiveTranscriptWriter:
-    def __init__(self, session_dir: str) -> None:
+    def __init__(self, session_dir: str, *, cloud: bool = False) -> None:
         self.path = os.path.join(session_dir, FILENAME)
         self._lock = threading.Lock()
         self._next_seq = 1
         self._persisted_seq = 0
         self._closed = False
+        self._cloud = cloud
         self._failed = False
         self._queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1024)
         os.makedirs(session_dir, exist_ok=True)
@@ -165,9 +197,12 @@ class LiveTranscriptWriter:
             failed = self._failed
             persisted_seq = self._persisted_seq
         try:
-            self._write_line({
+            marker = {
                 "type": "failed" if failed else "closed", "last_seq": persisted_seq
-            })
+            }
+            if self._cloud:
+                marker["asr_provider"] = "token-plan"
+            self._write_line(marker)
         except Exception:
             with self._lock:
                 self._failed = True
@@ -184,13 +219,15 @@ def read_page(session_dir: str, *, after_seq: int = 0, limit: int = 100) -> dict
     has_more = False
     draft_status = "incomplete"
     if not os.path.isfile(path):
-        return {
+        page = {
             "segments": entries, "next_cursor": cursor, "has_more": False,
             "draft_status": "missing", "draft_complete": False,
         }
+        return annotate_cloud_coverage(page, read_cloud_coverage(session_dir))
 
     previous_seq = 0
     marker_seen = False
+    cloud_journal = False
     with open(path, "rb") as file:
         while raw := file.readline(MAX_LINE_BYTES + 1):
             if len(raw) > MAX_LINE_BYTES:
@@ -205,6 +242,7 @@ def read_page(session_dir: str, *, after_seq: int = 0, limit: int = 100) -> dict
                     if entry.get("last_seq") != previous_seq:
                         raise ValueError("Invalid realtime draft marker")
                     draft_status = entry["type"]
+                    cloud_journal = entry.get("asr_provider") == "token-plan"
                     marker_seen = True
                     continue
                 seq = entry["seq"]
@@ -231,10 +269,11 @@ def read_page(session_dir: str, *, after_seq: int = 0, limit: int = 100) -> dict
                 continue
             entries.append({"seq": seq, "start": start, "end": end, "text": text})
             cursor = seq
-    return {
+    page = {
         "segments": entries, "next_cursor": cursor, "has_more": has_more,
         "draft_status": draft_status, "draft_complete": draft_status == "closed",
     }
+    return annotate_cloud_coverage(page, read_cloud_coverage(session_dir, cloud_journal=cloud_journal))
 
 
 def merge_live_writer_state(page: dict[str, Any], state: Any) -> dict[str, Any]:

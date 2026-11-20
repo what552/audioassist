@@ -91,6 +91,14 @@ class CloudLiveASR:
             self._group += 1
             self._condition.notify()
 
+    def note_capture_gap(self, start: float, end: float) -> None:
+        with self._condition:
+            self._miss_locked(start, end, "capture_transition")
+
+    def mark_timing_unconfirmed(self) -> None:
+        with self._condition:
+            self._error = "capture_timing_unconfirmed"
+
     def finish(self) -> None:
         with self._condition:
             if self._stop_deadline is not None:

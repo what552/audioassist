@@ -17,6 +17,7 @@ const Realtime = (() => {
   let _loading = false;
   let _captureMode = 'mic';      // 'mic' | 'system' | 'mix'
   let _activeProvider = 'local';
+  let _cloudPollTimer = null;
   let _onStateChange = null;
   let _canStart = null;
   let _awaitingPermission = false;
@@ -237,9 +238,11 @@ const Realtime = (() => {
     dom.segmentWarning.textContent = '';
     dom.list.innerHTML = '';
     if (_onStateChange) _onStateChange('started', sessionId, wavPath);
+    if (_activeProvider === 'token-plan') void _pollCloudDraft(sessionId, 0);
   }
 
   function onStopped(cloudCoverage) {
+    clearTimeout(_cloudPollTimer);
     _recording = false;
     _sessionId = null;
     _loading = false;
@@ -287,8 +290,7 @@ const Realtime = (() => {
     dom.segmentWarning.hidden = false;
   }
 
-  function onCloudWarning(sessionId, code) {
-    if (!_recording || sessionId !== _sessionId) return;
+  function _showCloudWarning(code) {
     const messages = {
       quota_exhausted: 'Token Plan 额度用尽',
       access_denied: 'Token Plan 鉴权或模型权限失败',
@@ -296,6 +298,25 @@ const Realtime = (() => {
     };
     dom.segmentWarning.textContent = `${messages[code] || '部分云端音频未能转写'}。本地录音继续。`;
     dom.segmentWarning.hidden = false;
+  }
+
+  async function _pollCloudDraft(sessionId, cursor) {
+    const stillRecording = () => _recording && _sessionId === sessionId;
+    let next = cursor;
+    let delay = 1000;
+    try {
+      const page = await window.pywebview.api.get_recording_draft(sessionId, cursor);
+      if (!stillRecording()) return;
+      if (page) {
+        page.segments.forEach(onResult);
+        if (page.live_asr?.error) _showCloudWarning(page.live_asr.error);
+        next = Math.max(cursor, page.next_cursor);
+        if (page.has_more && next > cursor) delay = 0;
+      }
+    } catch (_) {
+      // The next poll can recover a transient IPC failure from the durable draft.
+    }
+    if (stillRecording()) _cloudPollTimer = setTimeout(() => _pollCloudDraft(sessionId, next), delay);
   }
 
   function onError(message) {
@@ -307,6 +328,7 @@ const Realtime = (() => {
     }
 
     // Fatal errors: reset the recording state
+    clearTimeout(_cloudPollTimer);
     _recording = false;
     _sessionId = null;
     _loading = false;
@@ -482,7 +504,7 @@ const Realtime = (() => {
   }
 
   return { init, isBusy, createTranscriptRow, onStarted, onStopped, onResult, onError,
-           onSegmentWarning, onCloudWarning, onPaused, onResumed };
+           onSegmentWarning, onPaused, onResumed };
 })();
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
@@ -491,7 +513,6 @@ function onRealtimeStarted(sessionId, wavPath, provider) { Realtime.onStarted(se
 function onRealtimeStopped(coverage)  { Realtime.onStopped(coverage); }
 function onRealtimeResult(text)       { Realtime.onResult(text); }
 function onRealtimeSegmentWarning(sessionId, start, end) { Realtime.onSegmentWarning(sessionId, start, end); }
-function onRealtimeCloudWarning(sessionId, code) { Realtime.onCloudWarning(sessionId, code); }
 function onRealtimeError(message)     { Realtime.onError(message); }
 function onRealtimePaused()           { Realtime.onPaused(); }
 function onRealtimeResumed()          { Realtime.onResumed(); }

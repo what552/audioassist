@@ -19,22 +19,20 @@ import weakref
 import datetime as dt
 from typing import Optional
 
-from platformdirs import user_data_dir
 from src.service import AudioAssistError, AudioAssistService, SessionNotFoundError, language_instruction
 from src.session_paths import get_session_paths, resolve_transcript_path
-from src.live_transcript import CLOUD_STATUS_FILENAME, LiveTranscriptWriter, merge_live_writer_state
+from src.live_transcript import (
+    LiveTranscriptWriter, merge_live_writer_state, read_cloud_coverage, write_cloud_coverage,
+)
+from src.runtime_paths import app_data_directory, development_app_data_dir
 
 logger = logging.getLogger(__name__)
 
 # Resolved at runtime after webview window is created
 _window = None
 
-APP_DATA_DIR = user_data_dir("TranscribeApp", appauthor=False)
-_DEV_APP_DATA_DIR = None
-if not getattr(sys, "frozen", False) and (dev_app_data := os.environ.get("AUDIOASSIST_DEV_APP_DATA_DIR")):
-    if not os.path.isabs(dev_app_data):
-        raise ValueError("AUDIOASSIST_DEV_APP_DATA_DIR requires an absolute path")
-    _DEV_APP_DATA_DIR = APP_DATA_DIR = os.path.realpath(dev_app_data)
+APP_DATA_DIR = app_data_directory()
+_DEV_APP_DATA_DIR = development_app_data_dir()
 _DEFAULT_OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
@@ -1168,7 +1166,7 @@ class API:
                 os.makedirs(rt_session_dir, exist_ok=True)
                 output_path = os.path.join(rt_session_dir, _realtime_wav_name(session_id))
                 try:
-                    draft_writer = LiveTranscriptWriter(rt_session_dir)
+                    draft_writer = LiveTranscriptWriter(rt_session_dir, cloud=True) if cloud_key else LiveTranscriptWriter(rt_session_dir)
                 except OSError:
                     draft_writer = None
                     with self._recording_lock:
@@ -1199,7 +1197,8 @@ class API:
                                 "Unable to save live transcript segment for session %s",
                                 session_id,
                             )
-                    _push(f"onRealtimeResult({json.dumps(seg)})")
+                    if cloud_key is None:
+                        _push(f"onRealtimeResult({json.dumps(seg)})")
 
                 def warn_segment(start: float, end: float):
                     _push(
@@ -1211,11 +1210,19 @@ class API:
                 if cloud_key is not None:
                     from src.cloud_live_asr import CloudLiveASR
 
-                    def warn_cloud(start: float, end: float, code: str):
-                        _push(f"onRealtimeCloudWarning({json.dumps(session_id)}, {json.dumps(code)})")
+                    def warn_cloud(_start: float, _end: float, _code: str):
+                        try:
+                            data = cloud.snapshot()
+                            data["processed_through"] = None
+                            write_cloud_coverage(rt_session_dir, data)
+                        except OSError:
+                            logger.warning("Unable to persist incomplete Token Plan coverage")
 
                     cloud = CloudLiveASR(cloud_key, publish_result, warn_cloud)
-                    _write_json_atomic(os.path.join(rt_session_dir, CLOUD_STATUS_FILENAME), cloud.snapshot())
+                    try:
+                        write_cloud_coverage(rt_session_dir, cloud.snapshot())
+                    except OSError:
+                        logger.warning("Unable to initialize Token Plan recording coverage")
                     capture_kwargs["cloud_asr"] = cloud
 
                 logger.info(
@@ -1505,8 +1512,11 @@ class API:
             data["closed"] = False
             data["processed_through"] = None
         try:
-            path = os.path.join(os.path.dirname(rt._output_path), CLOUD_STATUS_FILENAME)
-            _write_json_atomic(path, data)
+            session_dir = os.path.dirname(rt._output_path)
+            with _get_transcript_lock(os.path.basename(session_dir)):
+                previous = read_cloud_coverage(session_dir)
+                if data["closed"] or not (previous and previous["closed"]):
+                    write_cloud_coverage(session_dir, data)
         except OSError:
             logger.warning("Unable to persist Token Plan recording coverage")
         return data

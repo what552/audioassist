@@ -1447,6 +1447,16 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: roun
   display: flex;
   gap: 4px;
 }
+#recording-asr-provider {
+  width: 100%;
+  min-width: 0;
+  padding: 4px;
+  font-size: 11px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
 .btn-mode {
   flex: 1;
   background: var(--bg-input);

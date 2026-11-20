@@ -3,15 +3,28 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 from platformdirs import user_data_dir
+
+
+def development_app_data_dir() -> str | None:
+    if getattr(sys, "frozen", False) or not (path := os.environ.get("AUDIOASSIST_DEV_APP_DATA_DIR")):
+        return None
+    if not os.path.isabs(path):
+        raise ValueError("AUDIOASSIST_DEV_APP_DATA_DIR requires an absolute path")
+    return os.path.realpath(path)
+
+
+def app_data_directory() -> str:
+    return development_app_data_dir() or user_data_dir("TranscribeApp", appauthor=False)
 
 
 def resolve_runtime_paths(
     output_override: str | None = None,
     config_override: str | None = None,
 ) -> tuple[str, str, str]:
-    app_data_dir = user_data_dir("TranscribeApp", appauthor=False)
+    app_data_dir = app_data_directory()
     config_path = os.path.abspath(
         os.path.expanduser(config_override or os.path.join(app_data_dir, "config.json"))
     )
