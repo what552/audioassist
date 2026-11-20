@@ -185,9 +185,14 @@ Files written inside the data directory:
 | `output/meetings/<job_id>/agent_chat.json` | Summary Agent conversation history |
 | `output/meetings/<job_id>/source_audio.*` | Copy of the original audio file |
 | `output/meetings/<job_id>/realtime_recording.wav` | Full WAV from a realtime session |
-| `output/meetings/<job_id>/realtime_draft.jsonl` | Append-only provisional utterances readable during Mic/System/Mix recording; not the final speaker-labelled transcript |
+| `output/meetings/<job_id>/realtime_draft.jsonl` | Append-only provisional utterances readable during Mic/System/Mix capture and in history when the recording has no committed transcript |
 | `output/meetings/<job_id>/transcription_task.json` | Checkpoint file (present while transcription is running or interrupted) |
 | `models/` | Downloaded ASR and diarization model weights |
+
+Finishing a recording keeps its session ID through post-processing. The desktop
+reads the saved draft while the job runs and after a cancellation or failure
+when no transcript has been committed. Older sessions can still use separate
+recording and transcript directories.
 
 ### ASR engine
 

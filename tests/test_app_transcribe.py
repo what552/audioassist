@@ -142,6 +142,23 @@ class TestTranscriptionPreflight:
         }
         transcribe.assert_not_called()
 
+    def test_recovered_recording_retries_with_original_checkpoint_options(self, env):
+        from src.checkpoint import write
+
+        api, out_dir = env
+        job_id = "recovered-job"
+        session = out_dir / "meetings" / job_id
+        session.mkdir(parents=True)
+        recording = session / "realtime_recording_recovered-job.wav"
+        recording.touch()
+        options = {"engine": "qwen", "model_id": "qwen3-asr-1.7b", "qwen_backend": "mlx"}
+        write(str(session), {"source_audio": str(recording), **options})
+
+        with patch.object(api, "transcribe") as transcribe:
+            api.transcribe_recording(job_id, {"model_id": "whisper-large-v3-turbo"})
+
+        transcribe.assert_called_once_with(str(recording), options, job_id=job_id)
+
 
 # ── JSON audio field ──────────────────────────────────────────────────────────
 

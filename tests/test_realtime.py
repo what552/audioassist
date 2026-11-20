@@ -363,14 +363,22 @@ class TestTranscribeSegment:
         self._run(rt, chunks, "  ")
         assert rt._segments == []
 
-    def test_asr_exception_calls_on_error(self):
-        errors = []
-        rt, _ = _make_rt(on_error=errors.append)
-        rt._asr.transcribe.side_effect = RuntimeError("asr failed")
+    def test_asr_exception_warns_and_next_segment_is_delivered(self):
+        from src.types import TranscriptResult
+
+        warnings, errors, results = [], [], []
+        rt, _ = _make_rt(on_error=errors.append, on_result=results.append,
+                         on_segment_error=lambda start, end: warnings.append((start, end)))
+        rt._asr.transcribe.side_effect = [
+            RuntimeError("MLX Qwen generation stopped without EOS"),
+            TranscriptResult(text="Kept recording", language="en"),
+        ]
         chunks = [np.zeros(512, dtype=np.float32)] * 5
-        rt._transcribe_segment(chunks, 0.0, 1.0)
-        assert len(errors) == 1
-        assert "asr failed" in errors[0]
+        rt._transcribe_segment(chunks, 2.0, 3.0)
+        rt._transcribe_segment(chunks, 4.0, 5.0)
+        assert errors == []
+        assert warnings == [(2.0, 3.0)]
+        assert results == [{"text": "Kept recording", "start": 4.0, "end": 5.0}]
 
     def test_temp_file_cleaned_up(self):
         rt, _ = _make_rt()

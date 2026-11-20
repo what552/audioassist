@@ -8,10 +8,12 @@
  *   onRealtimeStarted(sessionId) — models loaded, capture open
  *   onRealtimeStopped()          — capture closed
  *   onRealtimeResult(text)       — one transcribed utterance
+ *   onRealtimeSegmentWarning(sessionId, start, end) — one skipped utterance
  *   onRealtimeError(message)     — error
  */
 const Realtime = (() => {
   let _recording = false;
+  let _sessionId = null;
   let _loading = false;
   let _captureMode = 'mic';      // 'mic' | 'system' | 'mix'
   let _onStateChange = null;
@@ -31,6 +33,7 @@ const Realtime = (() => {
       btnToggle:    document.getElementById('btn-start-recording'),
       statusDot:    document.getElementById('realtime-dot'),
       statusText:   document.getElementById('realtime-status'),
+      segmentWarning: document.getElementById('realtime-segment-warning'),
       list:         document.getElementById('realtime-list'),
       modeButtons:  Array.from(document.querySelectorAll('.btn-mode')),
       permNotice:   document.getElementById('capture-perm-notice'),
@@ -209,6 +212,7 @@ const Realtime = (() => {
 
   function onStarted(sessionId, wavPath) {
     _recording = true;
+    _sessionId = sessionId;
     _loading = false;
     _setLoading(false);
     _disableModeButtons(true);
@@ -216,12 +220,15 @@ const Realtime = (() => {
     dom.btnToggle.classList.add('recording');
     dom.statusDot.classList.add('active');
     _setStatus('Recording · ' + (MODE_LABELS[_captureMode] || _captureMode));
+    dom.segmentWarning.hidden = true;
+    dom.segmentWarning.textContent = '';
     dom.list.innerHTML = '';
     if (_onStateChange) _onStateChange('started', sessionId, wavPath);
   }
 
   function onStopped() {
     _recording = false;
+    _sessionId = null;
     _loading = false;
     _setLoading(false);
     _disableModeButtons(false);
@@ -232,7 +239,13 @@ const Realtime = (() => {
     if (_onStateChange) _onStateChange('stopped');
   }
 
-  function onResult(seg) {
+  function formatTime(time) {
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function createTranscriptRow(seg) {
     // seg may be a plain string (backward compat) or {text, start, end} dict
     const isObj = seg && typeof seg === 'object';
     const text  = isObj ? (seg.text || '') : String(seg);
@@ -241,15 +254,24 @@ const Realtime = (() => {
     if (isObj && typeof seg.start === 'number') {
       const ts = document.createElement('span');
       ts.className = 'realtime-ts';
-      const m = Math.floor(seg.start / 60), s = Math.floor(seg.start % 60);
-      ts.textContent = `[${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}]`;
+      ts.textContent = `[${formatTime(seg.start)}]`;
       el.appendChild(ts);
       el.appendChild(document.createTextNode(' ' + text));
     } else {
       el.textContent = text;
     }
-    dom.list.appendChild(el);
+    return el;
+  }
+
+  function onResult(seg) {
+    dom.list.appendChild(createTranscriptRow(seg));
     dom.list.scrollTop = dom.list.scrollHeight;
+  }
+
+  function onSegmentWarning(sessionId, start, end) {
+    if (!_recording || sessionId !== _sessionId) return;
+    dom.segmentWarning.textContent = `${formatTime(start)}–${formatTime(end)} 的音频片段未能识别，录音继续。`;
+    dom.segmentWarning.hidden = false;
   }
 
   function onError(message) {
@@ -262,6 +284,7 @@ const Realtime = (() => {
 
     // Fatal errors: reset the recording state
     _recording = false;
+    _sessionId = null;
     _loading = false;
     _setLoading(false);
     _disableModeButtons(false);
@@ -429,7 +452,8 @@ const Realtime = (() => {
     return _loading || _recording || _awaitingPermission;
   }
 
-  return { init, isBusy, onStarted, onStopped, onResult, onError, onPaused, onResumed };
+  return { init, isBusy, createTranscriptRow, onStarted, onStopped, onResult, onError,
+           onSegmentWarning, onPaused, onResumed };
 })();
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
@@ -437,6 +461,7 @@ const Realtime = (() => {
 function onRealtimeStarted(sessionId, wavPath) { Realtime.onStarted(sessionId, wavPath); }
 function onRealtimeStopped()          { Realtime.onStopped(); }
 function onRealtimeResult(text)       { Realtime.onResult(text); }
+function onRealtimeSegmentWarning(sessionId, start, end) { Realtime.onSegmentWarning(sessionId, start, end); }
 function onRealtimeError(message)     { Realtime.onError(message); }
 function onRealtimePaused()           { Realtime.onPaused(); }
 function onRealtimeResumed()          { Realtime.onResumed(); }

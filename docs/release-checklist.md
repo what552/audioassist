@@ -85,7 +85,10 @@ named keychain profile separately with `xcrun notarytool store-credentials`.
   complete saved draft lines, and the final diarized transcript must remain separate.
 - Exit with a non-empty realtime WAV before full transcription completes, relaunch,
   start **高精度转写** from that raw history entry, and verify it reuses the same
-  session id. Interrupt it once and verify the next launch offers checkpoint resume.
+  session id. Verify the saved utterances are visible before, during, and after a
+  cancelled or failed job, and the next launch offers resume when a checkpoint exists.
+- Verify an isolated realtime ASR segment failure shows the affected time range
+  and the timer, later utterances, and pause/stop controls remain active.
 - On macOS, drag a file from a surface that does not expose an absolute path. Verify
   no background job/history duplicate is created and the UI directs the user to
   **Upload File**; then confirm the native picker starts the same file normally.

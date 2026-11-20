@@ -1070,6 +1070,27 @@ class TestMixModeHelperCommand:
 class TestWarningEventHandling:
     """warning イベントが正しく処理されることを確認する。"""
 
+    def test_segment_failure_reports_range_without_capture_error(self):
+        import numpy as np
+        from src.types import TranscriptResult
+
+        ranges, errors, results = [], [], []
+        helper = NativeCaptureHelper(
+            on_result=results.append, on_error=errors.append,
+            on_segment_error=lambda start, end: ranges.append((start, end)),
+        )
+        helper._asr = MagicMock()
+        helper._asr.transcribe.side_effect = [
+            RuntimeError("MLX Qwen generation stopped without EOS"),
+            TranscriptResult(text="Next segment", language="en"),
+        ]
+        chunks = [np.zeros(512, dtype=np.float32)]
+        helper._transcribe_segment(chunks, 2.0, 4.0)
+        helper._transcribe_segment(chunks, 4.0, 5.0)
+        assert errors == []
+        assert ranges == [(2.0, 4.0)]
+        assert results == [{"text": "Next segment", "start": 4.0, "end": 5.0}]
+
     def _make_helper_with_cb(self):
         errors = []
         h = _helper(on_error=lambda m: errors.append(m))

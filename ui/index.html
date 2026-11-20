@@ -156,21 +156,33 @@
         </div>
       </div>
       <!-- Refine hint (shown while background high-accuracy ASR runs) -->
-      <div id="refine-hint" class="refine-hint" hidden></div>
+      <div id="refine-hint" class="refine-hint" hidden>
+        <span id="refine-progress"></span>
+        <button id="btn-cancel-refine" class="btn-link btn-sm">取消高精度转写</button>
+      </div>
 
       <div id="transcript-list" hidden></div>
 
       <!-- Realtime panel (realtime state) -->
-      <div id="realtime-panel" hidden>
-        <div id="realtime-header">
+      <div id="realtime-panel" class="recording-text-panel" hidden>
+        <div id="realtime-header" class="recording-text-header">
           <span id="realtime-dot" class="realtime-dot"></span>
           <span id="realtime-status" class="realtime-status-text">Idle</span>
         </div>
+        <p id="realtime-segment-warning" class="recording-text-notice" role="status" hidden></p>
+        <div id="realtime-list" class="recording-text-list"></div>
+      </div>
+      <div id="recording-draft-panel" class="recording-text-panel" hidden>
+        <div class="recording-text-header">
+          <span>实时转写草稿</span>
+          <span id="recording-draft-status" class="realtime-status-text"></span>
+        </div>
+        <p id="recording-task-note" class="recording-text-notice" role="status" hidden></p>
         <div id="realtime-recovery-actions" hidden>
-          <span>这段录音尚未完成转写，可从保存的原始音频继续。</span>
+          <span>可从原始录音生成带说话人的转写。</span>
           <button id="btn-transcribe-recording" class="btn-primary btn-sm">高精度转写</button>
         </div>
-        <div id="realtime-list"></div>
+        <div id="recording-draft-list" class="recording-text-list"></div>
       </div>
 
       <!-- Realtime control bar (realtime-rec / realtime-paused states) -->

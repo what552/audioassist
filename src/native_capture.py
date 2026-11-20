@@ -93,11 +93,13 @@ class NativeCaptureHelper:
         helper_path: Optional[str] = None,
         model_id: Optional[str] = None,
         qwen_backend: Optional[str] = None,
+        on_segment_error: Optional[Callable[[float, float], None]] = None,
     ) -> None:
         self._mode        = mode
         self._engine      = engine
         self._on_result   = on_result or (lambda seg: None)
         self._on_error    = on_error  or (lambda msg: None)
+        self._on_segment_error = on_segment_error or (lambda start, end: None)
         self._output_path = output_path        # WAV path written by the helper
         self._helper_path = helper_path or _default_helper_path()
         self._model_id    = model_id
@@ -782,12 +784,13 @@ class NativeCaptureHelper:
                 }
                 self._segments.append(seg)
                 self._on_result(seg)
-        except Exception as e:
+        except Exception:
             logger.exception(
-                "NativeCaptureHelper: transcribe segment failed",
+                "NativeCaptureHelper: transcribe segment failed start=%.3f end=%.3f",
+                start_sec, end_sec,
                 extra={"audioassist_diagnostic": True},
             )
-            self._on_error(str(e))
+            self._on_segment_error(start_sec, end_sec)
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:

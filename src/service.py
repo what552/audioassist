@@ -147,8 +147,8 @@ class AudioAssistService:
         result["language"] = canonical_transcript_language(
             result.get("language", ""), text
         )
-        # Realtime recording and transcription use separate session directories.
-        # Older or externally-cleaned sessions can lose the copied source_audio
+        # Older realtime recordings can use separate recording and transcript
+        # directories. Externally-cleaned sessions can lose the copied source_audio
         # while the original recording remains linked through transcribed_job_id.
         # Normalize the returned view without rewriting the historical JSON.
         resolved_audio = self._resolve_audio_path(job_id, result)

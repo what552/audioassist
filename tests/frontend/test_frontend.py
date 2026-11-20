@@ -185,6 +185,116 @@ def test_recovered_raw_recording_can_start_full_transcription_by_session_id(
     expect(page.locator("#progress-filename")).to_have_text("Recovered recording")
 
 
+def test_history_reads_all_saved_draft_pages_without_mixing_recordings(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [
+            {"job_id": "old", "filename": "Old recording", "type": "realtime",
+             "audio_path": "/audio/old.wav"},
+            {"job_id": "other", "filename": "Other recording", "type": "realtime",
+             "audio_path": "/audio/other.wav"},
+        ],
+        "recordingDrafts": {
+            "old": [
+                {"seq": i, "start": i, "end": i + 1, "text": f"旧录音第 {i} 条"}
+                for i in range(1, 503)
+            ],
+            "other": [{"seq": 1, "start": 0, "end": 1, "text": "另一场"}],
+        },
+    })
+    page.get_by_text("Old recording", exact=True).click()
+    rows = page.locator("#recording-draft-list .realtime-row")
+    expect(rows).to_have_count(502)
+    expect(rows.last).to_have_text("[08:22] 旧录音第 502 条")
+    assert [call["args"] for call in page.evaluate("_mockApi.calls('get_recording_draft')")] == [
+        ["old", 0], ["old", 500],
+    ]
+    page.get_by_text("Other recording", exact=True).click()
+    expect(rows).to_have_count(1)
+    expect(rows.first).to_have_text("[00:00] 另一场")
+    page.get_by_text("Old recording", exact=True).click()
+    expect(rows).to_have_count(502)
+
+
+@pytest.mark.parametrize("outcome", ["cancel", "error"])
+def test_stopped_recording_keeps_saved_draft_after_transcription_stops(
+    page: Page, ui_base_url: str, outcome: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [],
+        "recordingDrafts": {
+            "same-recording": [{"seq": 1, "start": 1, "end": 2, "text": "录音原稿"}],
+        },
+    })
+    page.evaluate("onRealtimeStarted('same-recording', '/audio/realtime_recording_same-recording.wav')")
+    page.evaluate("onRealtimeStopped()")
+    expect(page.locator("#progress-panel")).to_be_visible()
+    expect(page.locator("#recording-draft-list")).to_contain_text("录音原稿")
+    assert page.evaluate("_mockApi.calls('transcribe_recording')[0].args[0]") == "same-recording"
+
+    if outcome == "cancel":
+        page.locator("#btn-cancel-transcribe").click()
+        assert page.evaluate("_mockApi.calls('cancel_transcription')[0].args[0]") == "same-recording"
+        page.evaluate("onTranscribeCancel('same-recording')")
+        expect(page.locator("#recording-task-note")).to_have_text("转写已取消")
+    else:
+        page.evaluate("onTranscribeError('same-recording', 'worker failed', 'mlx')")
+        expect(page.locator("#recording-task-note")).to_contain_text("worker failed")
+
+    expect(page.locator("#progress-panel")).to_be_hidden()
+    expect(page.locator(".history-item")).to_have_count(1)
+    expect(page.locator("#recording-draft-list")).to_be_visible()
+    expect(page.locator("#recording-draft-list")).to_contain_text("录音原稿")
+    page.locator("#btn-transcribe-recording").click()
+    page.wait_for_function("_mockApi.calls('transcribe_recording').length === 2")
+    page.evaluate("onTranscribeComplete('same-recording', '/mock/transcript.json', false, false)")
+    expect(page.locator("#recording-draft-panel")).to_be_hidden()
+    expect(page.locator("#transcript-list")).to_contain_text("Hello world.")
+    expect(page.locator("#btn-high-accuracy")).to_be_hidden()
+
+
+def test_interrupted_history_offers_resume_alongside_saved_draft(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "history": [{"job_id": "saved-draft", "filename": "Interrupted recording",
+                     "type": "file", "status": "interrupted", "audio_path": "/audio/raw.wav"}],
+        "recordingDrafts": {"saved-draft": [
+            {"seq": 1, "start": 0, "end": 1, "text": "继续显示草稿"},
+        ]},
+    })
+    page.get_by_text("Interrupted recording", exact=True).click()
+    expect(page.locator("#recording-draft-list")).to_be_visible()
+    page.locator("#btn-retry").click()
+    page.wait_for_function("_mockApi.calls('resume_transcription').length === 1")
+    page.evaluate("onTranscribeError('saved-draft', 'worker failed')")
+    expect(page.locator("#error-msg")).to_contain_text("worker failed")
+    expect(page.locator("#recording-draft-list")).to_be_visible()
+    expect(page.locator("#recording-draft-list")).to_contain_text("继续显示草稿")
+
+
+def test_segment_warning_keeps_recording_controls_and_later_text(
+    page: Page, ui_base_url: str
+) -> None:
+    _inject_and_navigate(page, ui_base_url, config={"history": []})
+    page.evaluate("onRealtimeStarted('active', '/audio/active.wav')")
+    page.evaluate("onRealtimeSegmentWarning('old', 0, 1)")
+    expect(page.locator("#realtime-segment-warning")).to_be_hidden()
+
+    page.evaluate("onRealtimeResult({text: '识别失败前', start: 0, end: 1})")
+    page.evaluate("onRealtimeSegmentWarning('active', 1, 3)")
+    page.evaluate("onRealtimeResult({text: '识别失败后', start: 3, end: 4})")
+    expect(page.locator("#realtime-segment-warning")).to_contain_text("00:01–00:03")
+    expect(page.locator("#realtime-status")).to_contain_text("Recording")
+    expect(page.locator("#rc-timer")).not_to_have_text("00:00")
+    expect(page.locator("#realtime-list .realtime-row")).to_have_count(2)
+    expect(page.locator("#rc-btn-pause")).to_be_enabled()
+    expect(page.locator(".history-item")).to_have_count(1)
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('stop_realtime').length === 1")
+
+
 def test_recovered_recording_start_failure_remains_retryable(
     page: Page, ui_base_url: str
 ) -> None:
@@ -346,10 +456,13 @@ def test_high_accuracy_cancel_keeps_draft_visible_and_retryable(
     })
     page.locator(".history-item-body").click()
     page.locator("#btn-high-accuracy").click()
+    page.locator("#btn-cancel-refine").click()
+    assert page.evaluate("_mockApi.calls('cancel_transcription')[0].args[0]") == "quick-draft"
     page.evaluate("onTranscribeCancel('quick-draft')")
 
     expect(page.locator(".history-item")).to_have_count(1)
     expect(page.locator("#btn-high-accuracy")).to_be_visible()
+    expect(page.locator("#transcript-list")).to_contain_text("Hello world.")
 
 
 def test_high_accuracy_start_failure_restores_the_clicked_session_after_switch(

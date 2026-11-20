@@ -38,6 +38,7 @@
     qwenBackend: 'mlx',
     agentTurns: [],
     summaries: {},
+    recordingDrafts: {},
     preflight: { supported: true },
     microphonePermission: { status: 'authorized', authorized: true },
     microphonePermissionDelayMs: 0,
@@ -93,6 +94,17 @@
     get_history: async function () { record('get_history', arguments); return state.history.slice(); },
     get_models: async function () { record('get_models', arguments); return state.models.map(function (m) { return Object.assign({}, m); }); },
     get_transcript: async function (jobId) { record('get_transcript', arguments); return transcript(jobId); },
+    get_recording_draft: async function (jobId, afterSeq) {
+      record('get_recording_draft', arguments);
+      const draft = state.recordingDrafts[jobId];
+      if (!draft) return null;
+      const remaining = draft.filter(segment => segment.seq > afterSeq);
+      const segments = remaining.slice(0, 500);
+      return {
+        segments, draft_status: 'closed', has_more: remaining.length > segments.length,
+        next_cursor: segments.at(-1)?.seq || afterSeq,
+      };
+    },
     select_files: async function () { record('select_files', arguments); return state.selectedFiles.slice(); },
     transcribe: async function () {
       record('transcribe', arguments);

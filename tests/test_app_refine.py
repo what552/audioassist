@@ -94,7 +94,7 @@ class TestHasRefineFlag:
 
         complete_calls = [c for c in js_calls if "onTranscribeComplete" in c]
         assert len(complete_calls) == 1
-        assert "false" in complete_calls[0].lower()
+        assert complete_calls[0].endswith(", false, true)")
 
     def test_complete_false_for_file_transcription(self):
         """Regular file transcription also pushes onTranscribeComplete(..., False)."""
@@ -115,7 +115,7 @@ class TestHasRefineFlag:
 
         complete_calls = [c for c in js_calls if "onTranscribeComplete" in c]
         assert len(complete_calls) == 1
-        assert "false" in complete_calls[0].lower()
+        assert complete_calls[0].endswith(", false, false)")
 
     def test_refine_options_stored_after_rt_transcribe(self):
         """_refine_options[job_id] populated after realtime Phase 1 completes."""

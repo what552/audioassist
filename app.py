@@ -20,7 +20,7 @@ import datetime as dt
 from typing import Optional
 
 from platformdirs import user_data_dir
-from src.service import AudioAssistError, AudioAssistService, language_instruction
+from src.service import AudioAssistError, AudioAssistService, SessionNotFoundError, language_instruction
 from src.session_paths import get_session_paths, resolve_transcript_path
 from src.live_transcript import LiveTranscriptWriter
 
@@ -466,12 +466,15 @@ class API:
         ckpt = ckpt_read(_session_dir(job_id))
         if not ckpt:
             return {"error": "no_checkpoint"}
-        opts = {
+        return self.transcribe(ckpt["source_audio"], self._checkpoint_options(ckpt), job_id=job_id)
+
+    @staticmethod
+    def _checkpoint_options(ckpt: dict) -> dict:
+        return {
             "engine": ckpt.get("engine", "qwen"),
             "model_id": ckpt.get("model_id"),
             "qwen_backend": ckpt.get("qwen_backend"),
         }
-        return self.transcribe(ckpt["source_audio"], opts, job_id=job_id)
 
     def discard_checkpoint(self, job_id: str) -> bool:
         """Delete the checkpoint for a job without resuming (F2)."""
@@ -480,7 +483,7 @@ class API:
         return True
 
     def transcribe_recording(self, job_id: str, options: Optional[dict] = None) -> dict:
-        """Start full transcription for a saved raw recording.
+        """Transcribe a saved recording, reusing live segments or a checkpoint if present.
 
         Resolve the audio from the backend-owned session id so recovery does
         not depend on a browser File object's optional macOS path property.
@@ -490,6 +493,11 @@ class API:
             path = _service().get_recording_audio_path(job_id)
         except AudioAssistError as exc:
             return {"error": str(exc), "code": exc.code}
+        from src.checkpoint import read as read_checkpoint
+
+        checkpoint = read_checkpoint(_session_dir(job_id))
+        if isinstance(checkpoint, dict) and checkpoint.get("source_audio") == path:
+            options = self._checkpoint_options(checkpoint)
         return self.transcribe(path, options or {}, job_id=job_id)
 
     # ── Transcription ──────────────────────────────────────────────────────────
@@ -621,15 +629,15 @@ class API:
                 # has committed the completed session.
                 _unregister_transcription(job_id, cancel_ev)
 
-                # Notify frontend — hasRefine is always False; manual refine via refine().
-                has_refine = False
+                # Offer manual refinement only after a realtime transcript is committed.
                 _push(
                     f"onTranscribeComplete({json.dumps(job_id)}, "
-                    f"{json.dumps(json_path)}, {json.dumps(has_refine)})"
+                    f"{json.dumps(json_path)}, false, {json.dumps(bool(rt_segments))})"
                 )
 
             except _TranscriptionCancelled:
                 logger.info("Transcription cancelled: %s", job_id)
+                _unregister_transcription(job_id, cancel_ev)
                 _push(f"onTranscribeCancel({json.dumps(job_id)})")
             except Exception as e:
                 logger.exception(
@@ -660,6 +668,7 @@ class API:
                     f"onTranscribeError({json.dumps(job_id)}, {json.dumps(str(e))}, "
                     f"{json.dumps(actual_backend)})"
                 )
+                _unregister_transcription(job_id, cancel_ev)
                 _push(js)
             finally:
                 _unregister_transcription(job_id, cancel_ev)
@@ -777,10 +786,12 @@ class API:
             except _TranscriptionCancelled:
                 logger.info("Refine ASR cancelled for job %s", job_id)
                 self._refine_options[job_id] = opts
+                _unregister_transcription(job_id, cancel_ev)
                 _push(f"onTranscribeCancel({json.dumps(job_id)})")
             except Exception as exc:
                 logger.exception("Refine ASR failed for job %s", job_id)
                 self._refine_options[job_id] = opts
+                _unregister_transcription(job_id, cancel_ev)
                 _push(
                     f"onTranscribeRefineError({json.dumps(job_id)}, "
                     f"{json.dumps(str(exc))})"
@@ -808,6 +819,14 @@ class API:
     def get_transcript(self, job_id: str) -> Optional[dict]:
         """Load transcript JSON for a given job_id."""
         return _service().get_transcript(job_id)
+
+    def get_recording_draft(self, job_id: str, after_seq: int = 0) -> Optional[dict]:
+        """Page through the same saved realtime draft used by the CLI."""
+        try:
+            return _service().get_live_transcript(job_id, after_seq=after_seq, limit=500)
+        except SessionNotFoundError:
+            # Legacy recordings can have a WAV without a session directory.
+            return None
 
     def save_transcript(self, job_id: str, edits: list[dict]) -> bool:
         """
@@ -1059,7 +1078,8 @@ class API:
         Model loading happens asynchronously; pushes JS events when ready:
           onRealtimeStarted()            — models loaded, microphone open
           onRealtimeResult(text)         — each transcribed utterance
-          onRealtimeError(message)       — error during load or transcription
+          onRealtimeError(message)       — capture or startup error
+          onRealtimeSegmentWarning(sessionId, start, end) — a skipped utterance
 
         Returns: {"status": "started"} or {"status": "already_running"}
         """
@@ -1153,6 +1173,12 @@ class API:
                             )
                     _push(f"onRealtimeResult({json.dumps(seg)})")
 
+                def warn_segment(start: float, end: float):
+                    _push(
+                        f"onRealtimeSegmentWarning({json.dumps(session_id)}, "
+                        f"{json.dumps(start)}, {json.dumps(end)})"
+                    )
+
                 logger.info(
                     "Realtime start attempt=%s stage=backend_create.begin mode=%s engine=%s model=%s qwen_backend=%s",
                     session_id,
@@ -1173,6 +1199,7 @@ class API:
                         output_path=output_path,
                         on_result=publish_result,
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
+                        on_segment_error=warn_segment,
                     )
                 else:
                     # Default: mic mode — existing sounddevice path unchanged
@@ -1185,6 +1212,7 @@ class API:
                         diagnostic_id=session_id,
                         on_result=publish_result,
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
+                        on_segment_error=warn_segment,
                     )
                 rt.live_draft_writer = draft_writer
                 lease.publish_backend(rt)

@@ -126,6 +126,9 @@ const App = (() => {
       if (session.status === 'transcribing') {
         _setView('transcribing');
         dom.progressFilename.textContent = session.filename;
+        if (session.recordingSource || _resumingIds.has(session.id)) {
+          _showRecordingDraft(session, session.recordingSource);
+        }
         Summary.reset();
       } else if (session.status === 'queued') {
         _setView('transcribing');
@@ -143,11 +146,12 @@ const App = (() => {
           errorMessage = `${backendPrefix}\n${errorMessage}`;
         }
         dom.errorMsg.textContent = errorMessage;
+        if (session.status === 'interrupted') _showRecordingDraft(session);
         Summary.reset();
       } else if (session.status === 'refining') {
         _setView('file-done');
         dom.refineHint.hidden = false;
-        dom.refineHint.textContent = '正在进行高精度转写…';
+        dom.refineProgress.textContent = '正在进行高精度转写…';
         dom.btnHighAccuracy.hidden = true;
         if (session._data) {
           _showFileDone(session);
@@ -174,12 +178,69 @@ const App = (() => {
         Summary.reset();
       } else { // done
         _setView('realtime-done');
+        _showRecordingDraft(session, true);
         dom.realtimeRecoveryActions.hidden = false;
         Player.load(session.audioPath || '');
         dom.playerFilename.textContent = session.filename;
         Summary.showForJob(session.id);
       }
     }
+  }
+
+  function _showRecordingDraft(session, alwaysShow = false) {
+    if (!session._recordingDraft) {
+      session._recordingDraft = { segments: [], status: 'loading' };
+      void _loadRecordingDraft(session);
+    }
+    const draft = session._recordingDraft;
+    if (!alwaysShow && draft.segments.length === 0) return;
+    dom.recordingDraftPanel.hidden = false;
+
+    if (dom.recordingDraftList.dataset.sessionId !== session.id) {
+      dom.recordingDraftList.replaceChildren();
+      dom.recordingDraftList.dataset.sessionId = session.id;
+    }
+    const rows = document.createDocumentFragment();
+    for (const segment of draft.segments.slice(dom.recordingDraftList.childElementCount)) {
+      rows.appendChild(Realtime.createTranscriptRow(segment));
+    }
+    dom.recordingDraftList.appendChild(rows);
+
+    const count = draft.segments.length;
+    let status = `已保存 ${count} 条`;
+    if (draft.status === 'loading') status = '正在读取草稿…';
+    else if (draft.status === 'unreadable') status = '草稿读取失败';
+    else if (draft.status === 'missing' || (draft.status === 'closed' && !count)) {
+      status = '没有已保存的实时转写';
+    } else if (draft.status !== 'closed') {
+      status += ' · 草稿可能不完整';
+    }
+    dom.recordingDraftStatus.textContent = status;
+    dom.recordingTaskNote.textContent = session.recordingTaskNote || '';
+    dom.recordingTaskNote.hidden = !session.recordingTaskNote;
+  }
+
+  async function _loadRecordingDraft(session) {
+    const draft = session._recordingDraft;
+    let cursor = 0;
+    try {
+      for (;;) {
+        const page = await window.pywebview.api.get_recording_draft(session.id, cursor);
+        if (!page) {
+          draft.status = 'missing';
+          break;
+        }
+        draft.segments.push(...page.segments);
+        draft.status = page.draft_status;
+        if (!page.has_more) break;
+        if (page.next_cursor <= cursor) throw new Error('Invalid draft cursor');
+        cursor = page.next_cursor;
+      }
+    } catch (err) {
+      console.warn('[App] Unable to read recording draft:', err);
+      draft.status = 'unreadable';
+    }
+    if (_selectedId === session.id && _sessions.get(session.id) === session) _render();
   }
 
   async function _loadTranscriptData(session) {
@@ -216,8 +277,8 @@ const App = (() => {
     dom.btnHighAccuracy.hidden    = true;  // controlled separately per render
     dom.refineHint.hidden         = true;  // controlled separately per render
     dom.transcriptList.hidden     = state !== 'file-done';
-    dom.realtimePanel.hidden      =
-      !['realtime-rec','realtime-paused','realtime-done'].includes(state);
+    dom.realtimePanel.hidden      = !['realtime-rec', 'realtime-paused'].includes(state);
+    dom.recordingDraftPanel.hidden = true;
     dom.realtimeRecoveryActions.hidden = true;
     dom.playerBar.hidden          =
       !['file-done','realtime-done'].includes(state);
@@ -287,21 +348,17 @@ const App = (() => {
       _updateSession(_activeRealtimeId, { status: 'recording' });
       _startTimer();
     } else if (state === 'stopped') {
-      const rtSession = _sessions.get(_activeRealtimeId);
-      const wavPath   = rtSession?.audioPath;
-      const rtName    = rtSession?.filename;
-      const discard   = rtSession?.discarding;
-      const rtId      = _activeRealtimeId;
-      _sessions.delete(_activeRealtimeId);
-      if (_selectedId === _activeRealtimeId) _selectSession(null);
+      const rtId = _activeRealtimeId;
+      const rtSession = _sessions.get(rtId);
       _activeRealtimeId = null;
       _resetTimer();
-      if (discard) {
-        if (rtId) window.pywebview.api.delete_session(rtId).catch(() => {});
-        _render();
-      } else if (wavPath) {
-        (async () => { await _startTranscription(wavPath, rtName, { refineAvailable: true }); })();
+      if (rtSession?.audioPath && !rtSession.discarding) {
+        _updateSession(rtId, { status: 'done' });
+        void _startRecoveredRecording(rtId);
       } else {
+        _sessions.delete(rtId);
+        if (_selectedId === rtId) _selectSession(null);
+        if (rtSession?.discarding) window.pywebview.api.delete_session(rtId).catch(() => {});
         _render();
       }
     } else if (state === 'error') {
@@ -316,6 +373,10 @@ const App = (() => {
   // ── History ────────────────────────────────────────────────────────────────
 
   function _onHistorySelect(id) {
+    const session = _sessions.get(id);
+    if (session?._recordingDraft?.status === 'incomplete') {
+      session._recordingDraft = null;
+    }
     _selectSession(id);
     _render();
   }
@@ -431,7 +492,7 @@ const App = (() => {
     }
   }
 
-  async function _startTranscription(filePath, displayName, opts = {}) {
+  async function _startTranscription(filePath, displayName) {
     if (_activeRealtimeId !== null) {
       showToast('A recording is in progress. Please finish it before uploading a file.', 4000);
       return;
@@ -451,7 +512,7 @@ const App = (() => {
         id: job_id, type: 'file', status: 'transcribing',
         filename, created_at: _now(), audioPath: filePath,
         qwenBackend: result.qwen_backend || null,
-        refineAvailable: opts.refineAvailable || false,
+        refineAvailable: false,
       });
       _selectSession(job_id);
       _setProgress(0, 'Starting…');
@@ -480,6 +541,7 @@ const App = (() => {
       type: 'file',
       status: 'transcribing',
       recordingSource: true,
+      recordingTaskNote: null,
       errorMsg: null,
     });
     _selectSession(jobId);
@@ -497,12 +559,7 @@ const App = (() => {
       _updateSession(jobId, { qwenBackend: result.qwen_backend || null });
     } catch (err) {
       console.error('[App] transcribe_recording error:', err);
-      _updateSession(jobId, {
-        type: 'realtime',
-        status: 'done',
-        recordingSource: false,
-        errorMsg: null,
-      });
+      _restoreRecordingDraft(jobId, `转写未启动：${String(err)}`);
       showToast(`高精度转写未启动：${String(err)}`, 5000);
     }
   }
@@ -584,17 +641,21 @@ const App = (() => {
     if (!s) return;
     if (s.status === 'refining') {
       const percent = Math.max(0, Math.min(100, Math.round(pct * 100)));
-      dom.refineHint.textContent = `高精度转写 ${percent}% · ${message}`;
+      dom.refineProgress.textContent = `高精度转写 ${percent}% · ${message}`;
       return;
     }
     if (s.status !== 'transcribing') return;
     _setProgress(pct, message);
   }
 
-  function onTranscribeComplete(jobId, _jsonPath, hasRefine) {
+  function onTranscribeComplete(jobId, _jsonPath, hasRefine, refineAvailable = false) {
     _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
-    _updateSession(jobId, { status: hasRefine ? 'refining' : 'done' });
+    _updateSession(jobId, {
+      status: hasRefine ? 'refining' : 'done',
+      recordingSource: false,
+      refineAvailable,
+    });
     _processQueue();
   }
 
@@ -613,7 +674,13 @@ const App = (() => {
 
   function onTranscribeError(jobId, message, qwenBackend = null) {
     const wasResuming = _resumingIds.delete(jobId);
-    if (!_sessions.has(jobId)) return;
+    const session = _sessions.get(jobId);
+    if (!session) return;
+    if (session.recordingSource) {
+      _restoreRecordingDraft(jobId, `转写失败：${message}`);
+      _processQueue();
+      return;
+    }
     const failure = { errorMsg: message };
     if (qwenBackend) failure.qwenBackend = qwenBackend;
     if (wasResuming) {
@@ -625,6 +692,13 @@ const App = (() => {
     _processQueue();
   }
 
+  function _restoreRecordingDraft(jobId, message) {
+    _updateSession(jobId, {
+      type: 'realtime', status: 'done', recordingSource: false,
+      recordingTaskNote: message, errorMsg: null,
+    });
+  }
+
   function onTranscribeCancel(jobId) {
     const wasResuming = _resumingIds.delete(jobId);
     if (!_sessions.has(jobId)) return;
@@ -632,9 +706,8 @@ const App = (() => {
     // A raw recording remains a valid recovery source even if cancellation
     // happened before the first resumable checkpoint was written.
     if (s.recordingSource) {
-      _updateSession(jobId, {
-        type: 'realtime', status: 'done', recordingSource: false, errorMsg: null,
-      });
+      _restoreRecordingDraft(jobId, '转写已取消');
+      _processQueue();
       return;
     }
     if (wasResuming) {
@@ -693,8 +766,14 @@ const App = (() => {
       transcriptMeta:     document.getElementById('transcript-meta'),
       btnHighAccuracy:    document.getElementById('btn-high-accuracy'),
       refineHint:         document.getElementById('refine-hint'),
+      refineProgress:     document.getElementById('refine-progress'),
+      btnCancelRefine:    document.getElementById('btn-cancel-refine'),
       transcriptList:     document.getElementById('transcript-list'),
       realtimePanel:      document.getElementById('realtime-panel'),
+      recordingDraftPanel: document.getElementById('recording-draft-panel'),
+      recordingDraftList:  document.getElementById('recording-draft-list'),
+      recordingDraftStatus: document.getElementById('recording-draft-status'),
+      recordingTaskNote:  document.getElementById('recording-task-note'),
       realtimeRecoveryActions: document.getElementById('realtime-recovery-actions'),
       btnTranscribeRecording: document.getElementById('btn-transcribe-recording'),
       realtimeControlBar: document.getElementById('realtime-control-bar'),
@@ -794,15 +873,19 @@ const App = (() => {
     dom.btnCancelTranscribe.addEventListener('click', () => {
       if (_selectedId) window.pywebview.api.cancel_transcription(_selectedId);
     });
+    dom.btnCancelRefine.addEventListener('click', () => {
+      if (_selectedId) window.pywebview.api.cancel_transcription(_selectedId);
+    });
 
     // Retry failed transcription
     dom.btnRetry.addEventListener('click', () => {
       const s = _selectedId ? _sessions.get(_selectedId) : null;
-      if (!s || s.status !== 'error' || !s.audioPath) return;
-      if (s.recordingSource) {
-        void _startRecoveredRecording(s.id);
+      if (!s || !s.audioPath) return;
+      if (s.status === 'interrupted') {
+        void _onRetranscribe(s.id);
         return;
       }
+      if (s.status !== 'error') return;
       const filePath    = s.audioPath;
       const displayName = s.filename;
       _sessions.delete(_selectedId);
@@ -1128,8 +1211,10 @@ const App = (() => {
 // ── Global event handlers (called by Python via evaluate_js) ──────────────────
 
 function onTranscribeProgress(jobId, pct, message) { App.onTranscribeProgress(jobId, pct, message); }
-function onTranscribeComplete(jobId, jsonPath, hasRefine) { App.onTranscribeComplete(jobId, jsonPath, hasRefine); }
-function onTranscribeError(jobId, message)          { App.onTranscribeError(jobId, message); }
+function onTranscribeComplete(jobId, jsonPath, hasRefine, refineAvailable) {
+  App.onTranscribeComplete(jobId, jsonPath, hasRefine, refineAvailable);
+}
+function onTranscribeError(jobId, message, qwenBackend) { App.onTranscribeError(jobId, message, qwenBackend); }
 function onTranscribeCancel(jobId)                  { App.onTranscribeCancel(jobId); }
 function onTranscribeRefined(jobId)                 { App.onTranscribeRefined(jobId); }
 function onTranscribeRefineError(jobId, message)    { App.onTranscribeRefineError(jobId, message); }

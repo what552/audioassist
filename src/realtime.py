@@ -53,10 +53,12 @@ class RealtimeTranscriber:
         model_id: Optional[str] = None,
         diagnostic_id: Optional[str] = None,
         qwen_backend: Optional[str] = None,
+        on_segment_error: Optional[Callable[[float, float], None]] = None,
     ):
         self._engine      = engine
         self._on_result   = on_result or (lambda text: None)
         self._on_error    = on_error  or (lambda msg: None)
+        self._on_segment_error = on_segment_error or (lambda start, end: None)
         self._output_path = output_path
         self._model_id    = model_id
         self._qwen_backend = qwen_backend
@@ -482,12 +484,13 @@ class RealtimeTranscriber:
                 }
                 self._segments.append(seg)
                 self._on_result(seg)
-        except Exception as e:
+        except Exception:
             logger.exception(
-                "Realtime: transcribe segment failed",
+                "Realtime: transcribe segment failed session=%s start=%.3f end=%.3f",
+                self._diagnostic_id, start_sec, end_sec,
                 extra={"audioassist_diagnostic": True},
             )
-            self._on_error(str(e))
+            self._on_segment_error(start_sec, end_sec)
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:

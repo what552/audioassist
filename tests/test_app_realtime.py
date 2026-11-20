@@ -218,31 +218,32 @@ class TestJSEvents:
         assert any("Hello world" in c for c in js_calls)
 
     @pytest.mark.parametrize("capture_mode", ["mic", "system", "mix"])
-    def test_live_utterance_is_saved_while_recording(self, capture_mode, tmp_path):
-        from src.service import AudioAssistService
-
+    def test_live_utterance_is_saved_while_recording(self, capture_mode):
         api = API()
         callbacks = {}
 
         def create_backend(*args, **kwargs):
             callbacks["on_result"] = kwargs["on_result"]
+            callbacks["on_segment_error"] = kwargs["on_segment_error"]
             backend = MagicMock()
             backend.start.return_value = None
             return backend
 
         with patch("src.realtime.RealtimeTranscriber", side_effect=create_backend), \
              patch("src.native_capture.NativeCaptureHelper", side_effect=create_backend), \
-             patch.object(app_module, "_push"):
+             patch.object(app_module, "_push") as push:
             assert api.start_realtime({"capture_mode": capture_mode})["status"] == "started"
             deadline = time.monotonic() + 2
             while api.get_recording_status()["state"] != "recording" and time.monotonic() < deadline:
                 time.sleep(0.01)
             session_id = api.get_recording_status()["session_id"]
             assert session_id
+            callbacks["on_segment_error"](2396.0, 2399.0)
+            push.assert_any_call(f'onRealtimeSegmentWarning("{session_id}", 2396.0, 2399.0)')
             callbacks["on_result"]({"text": "第 40 分钟的讨论", "start": 2400, "end": 2403})
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
-                draft = AudioAssistService(str(tmp_path)).get_live_transcript(session_id)
+                draft = api.get_recording_draft(session_id)
                 if draft["segments"]:
                     break
                 time.sleep(0.005)
@@ -255,6 +256,8 @@ class TestJSEvents:
         deadline = time.monotonic() + 2
         while api.get_recording_status()["state"] != "idle" and time.monotonic() < deadline:
             time.sleep(0.01)
+        saved_draft = API().get_recording_draft(session_id)
+        assert saved_draft["segments"] == draft["segments"]
 
     def test_live_draft_write_error_warns_agent_but_keeps_recording(self):
         api = API()
