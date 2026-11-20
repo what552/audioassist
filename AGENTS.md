@@ -24,8 +24,9 @@ permanent builder/researcher/reviewer worktree workflow.
   PyWebView, browser code, or other presentation-layer dependencies.
 - Preserve the session-per-directory layout and legacy read compatibility documented in
   `README.dev.md`.
-- Transcription must remain local-only at runtime: never auto-download a model during a
-  transcription job.
+- Transcription is local by default. Only an explicitly selected cloud mode may send
+  audio for that session to its documented provider. Never auto-download local models
+  during a transcription job or automatically switch from local to cloud.
 - Agent-facing interfaces must keep stdout machine-readable, send progress to stderr,
   use documented exit codes, and avoid silent response-schema changes.
 - Do not add a daemon or claim asynchronous cross-process jobs without an explicit

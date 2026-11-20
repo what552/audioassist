@@ -1,6 +1,6 @@
 # AudioAssist Development Backlog
 
-Updated: 2026-09-28
+Updated: 2026-11-20
 
 This is the authoritative development task list. `agentops/TODO.md` and the
 older roadmap/report files are historical inputs; an unchecked box in those
@@ -46,6 +46,7 @@ Priority meanings:
 | 27 | QWEN-REALTIME-MLX-01 | P0 | Complete: 2.0.5 installed owner acceptance passed | Keep realtime ASR creation, load, inference, and close on one owner worker thread; preserve CPU/MPS behavior and verify MLX across Mic/System/Mix |
 | 28 | RECOVERY-TRANSCRIBE-01 | P0 | Complete: 2.1.1 candidate verified; installed acceptance pending | Recover saved raw recordings through a session-ID-owned full-transcription action, reject pathless macOS drops before job creation, and keep interrupted checkpoints resumable; target 2.1.1 |
 | 29 | LIVE-AGENT-01 | P1 | 2.2.0 ad-hoc candidate verified; installed long-recording acceptance pending | Persist provisional Mic/System/Mix utterances per recording session and expose paged read-only CLI/MCP access for in-meeting Agent summaries, without stopping capture or treating drafts as final diarized transcripts |
+| 30 | TOKEN-ASR-01 | P1 | Source candidate; long-recording and packaged acceptance pending | Add opt-in Token Plan transcription during Mic/System/Mix recording, preserving local audio, partial drafts, and the Agent's paged read contract. See the [implementation plan](token-plan-live-asr-plan.md) |
 
 ### LIVE-AGENT-01 acceptance
 

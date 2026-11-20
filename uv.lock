@@ -165,6 +165,7 @@ name = "audioassist-local"
 version = "2.2.1"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "openai" },
@@ -189,6 +190,7 @@ dev = [
 mac = [
     { name = "mlx-qwen3-asr", extra = ["aligner"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-security", marker = "sys_platform == 'darwin'" },
 ]
 other = [
     { name = "faster-whisper", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
@@ -197,6 +199,7 @@ other = [
 [package.metadata]
 requires-dist = [
     { name = "faster-whisper", marker = "(platform_machine != 'arm64' and extra == 'other') or (sys_platform != 'darwin' and extra == 'other')", specifier = ">=1.1" },
+    { name = "httpx", specifier = ">=0.27,<1" },
     { name = "huggingface-hub", specifier = ">=0.23" },
     { name = "mlx-qwen3-asr", extras = ["aligner"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mac'", specifier = "==0.3.5" },
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mac'", specifier = "==0.4.3" },
@@ -206,6 +209,7 @@ requires-dist = [
     { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.40" },
     { name = "pyannote-audio", specifier = "==4.0.4" },
     { name = "pyinstaller", marker = "extra == 'build'", specifier = ">=6.0" },
+    { name = "pyobjc-framework-security", marker = "sys_platform == 'darwin' and extra == 'mac'", specifier = ">=10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-playwright", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "pywebview", specifier = ">=5.0" },

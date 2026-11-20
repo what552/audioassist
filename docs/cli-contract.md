@@ -84,6 +84,19 @@ recognition yet, not that the meeting was silent. The draft has no speaker label
 is never a replacement for the final diarized transcript. The visible app continues
 to own capture and its macOS permissions.
 
+Token Plan recordings add an optional `live_asr` object to recording status and
+draft pages. `provider` is `token-plan`, `closed` indicates the cloud worker
+finished, `error` is the latest sanitized error code, and `processed_through`
+is the end of the latest handled batch in recording seconds (null when journal
+persistence is unconfirmed). `missing_count` counts failed or dropped audio
+batches/utterances, and `missing_ranges` lists merged `[start, end]` ranges in
+recording seconds. When `missing_ranges_truncated` is true, the list retains only
+the most recent ranges. `draft_status: closed` still describes the journal.
+Cloud gaps and unconfirmed cloud coverage set `draft_complete` to false and
+leave saved utterances readable. The same fields are returned by the MCP draft
+tool. The desktop selector enables cloud mode; CLI/MCP recording reads do not
+start an upload or require a Token Plan key.
+
 `--qwen-backend` selects the inference backend for one Qwen job without changing the
 saved desktop preference. An explicit command-line value takes precedence over the
 `AUDIOASSIST_QWEN_BACKEND` environment variable and the saved preference. Without the

@@ -47,7 +47,7 @@ Local audio/video transcription with speaker diarization, powered by Qwen3-ASR o
 - **First-run setup panel** — on launch the app checks whether the ASR and diarizer models are present; if either is missing a guided setup panel is shown with individual Download buttons and progress bars; the main UI becomes accessible once both models are ready (see [First-run model setup](#first-run-model-setup))
 - **Agent-callable local CLI (R03-a)** — session listing/detail/status, synchronous file transcription, live recording draft reads, and summary generation are available through `python -m src.cli` or the installed `audioassist` command; `--json` provides a stable response envelope while progress stays on stderr
 - **Bounded local HTTP/MCP (R03-b)** — the visible app owns an authenticated loopback recording API; `audioassist serve --read-only` provides foreground session reads while the app is closed; `audioassist-mcp` exposes nine stdio tools without adding a daemon or background inference queue
-- **Local-only realtime inference** — microphone, system, and mix capture resolve the selected Qwen or Whisper model through `ModelManager` and pass its validated local directory to the backend; recording never downloads model weights
+- **Local realtime inference by default** — microphone, system, and mix capture resolve the selected Qwen or Whisper model through `ModelManager` and pass its validated local directory to the backend. Recordings never download model weights. The optional Token Plan recording mode sends voice batches to its documented Beijing endpoint and saves the WAV and live draft on this Mac.
 
 ## Development status
 

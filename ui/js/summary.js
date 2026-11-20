@@ -73,6 +73,9 @@ const Summary = (() => {
       qwenStatus: document.getElementById('cfg-qwen-status'),
       runtimeIdentity: document.getElementById('cfg-runtime-identity'),
       btnSaveQwen: document.getElementById('btn-save-qwen-backend'),
+      cfgTokenPlanKey: document.getElementById('cfg-token-plan-key'),
+      tokenPlanStatus: document.getElementById('cfg-token-plan-status'),
+      btnSaveTokenPlan: document.getElementById('btn-save-token-plan-key'),
       btnSaveConfig:      document.getElementById('btn-save-config'),
       btnAddTemplate:     document.getElementById('btn-add-template'),
       templateList:       document.getElementById('template-list'),
@@ -102,6 +105,7 @@ const Summary = (() => {
     dom.btnSummarize.addEventListener('click', _onSummarize);
     dom.btnSaveConfig.addEventListener('click', _onSaveConfig);
     dom.btnSaveQwen.addEventListener('click', _saveQwenBackend);
+    dom.btnSaveTokenPlan.addEventListener('click', _saveTokenPlanKey);
     dom.cfgQwenBackend.addEventListener('change', () => {
       dom.btnSaveQwen.disabled = !!dom.cfgQwenBackend.selectedOptions[0]?.disabled;
     });
@@ -277,6 +281,22 @@ const Summary = (() => {
     }
   }
 
+  async function _saveTokenPlanKey() {
+    const key = dom.cfgTokenPlanKey.value.trim();
+    dom.cfgTokenPlanKey.value = '';
+    dom.btnSaveTokenPlan.disabled = true;
+    try {
+      const result = await window.pywebview.api.save_token_plan_recording_key(key);
+      dom.tokenPlanStatus.textContent = result?.saved ? '已保存在 macOS 钥匙串。'
+        : result?.reason === 'invalid_key_format' ? '请输入有效的 Token Plan 套餐 Key。'
+          : '暂时无法写入 macOS 钥匙串。';
+    } catch (_) {
+      dom.tokenPlanStatus.textContent = '保存失败，请重试。';
+    } finally {
+      dom.btnSaveTokenPlan.disabled = false;
+    }
+  }
+
   async function _onSaveStorage() {
     try {
       const result = await window.pywebview.api.set_output_dir(
@@ -330,11 +350,16 @@ const Summary = (() => {
 
   function _closeModal() {
     dom.modal.hidden = true;
+    dom.cfgTokenPlanKey.value = '';
     dom.btnSettings.classList.remove('active');
   }
 
   function _toggleConfig() {
     const open = !dom.modal.hidden;
+    if (open) {
+      _closeModal();
+      return;
+    }
     dom.modal.hidden = open;
     dom.btnSettings.classList.toggle('active', !open);
     if (!open && !qwenSaving) _loadQwenBackend();

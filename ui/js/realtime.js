@@ -16,6 +16,7 @@ const Realtime = (() => {
   let _sessionId = null;
   let _loading = false;
   let _captureMode = 'mic';      // 'mic' | 'system' | 'mix'
+  let _activeProvider = 'local';
   let _onStateChange = null;
   let _canStart = null;
   let _awaitingPermission = false;
@@ -36,6 +37,8 @@ const Realtime = (() => {
       segmentWarning: document.getElementById('realtime-segment-warning'),
       list:         document.getElementById('realtime-list'),
       modeButtons:  Array.from(document.querySelectorAll('.btn-mode')),
+      provider:     document.getElementById('recording-asr-provider'),
+      cloudNotice:  document.getElementById('recording-cloud-notice'),
       permNotice:   document.getElementById('capture-perm-notice'),
       permText:     document.getElementById('capture-perm-text'),
       btnOpenMic:   document.getElementById('btn-open-microphone-privacy'),
@@ -43,6 +46,9 @@ const Realtime = (() => {
     };
     dom.btnToggle.addEventListener('click', _onToggle);
     dom.modeButtons.forEach(btn => btn.addEventListener('click', _onModeClick));
+    dom.provider.addEventListener('change', () => {
+      dom.cloudNotice.hidden = dom.provider.value !== 'token-plan';
+    });
     if (dom.btnOpenMic) {
       dom.btnOpenMic.addEventListener('click', () => {
         window.pywebview.api.open_privacy_settings('microphone').catch(() => {});
@@ -73,6 +79,7 @@ const Realtime = (() => {
 
   function _disableModeButtons(disabled) {
     dom.modeButtons.forEach(btn => { btn.disabled = disabled; });
+    dom.provider.disabled = disabled;
   }
 
   // ── Toggle ────────────────────────────────────────────────────────────────
@@ -191,6 +198,7 @@ const Realtime = (() => {
       const startResult = await window.pywebview.api.start_realtime({
         model_id,
         capture_mode: _captureMode,
+        live_asr_provider: dom.provider.value,
       });
       if (startResult && startResult.status === 'permission_required') {
         _setLoading(false);
@@ -199,6 +207,10 @@ const Realtime = (() => {
         const kind = missing.length === 1 ? missing[0] : null;
         _setStatus(_permissionFailureStatus(kind, null));
         _showPermNotice(startResult);
+      } else if (startResult?.status === 'configuration_required') {
+        _setLoading(false);
+        _disableModeButtons(false);
+        _setStatus('请在设置中保存有效的 Token Plan Key');
       }
     } catch (e) {
       console.error('[Realtime] start error:', e);
@@ -210,23 +222,24 @@ const Realtime = (() => {
 
   // ── Python → JS callbacks ─────────────────────────────────────────────────
 
-  function onStarted(sessionId, wavPath) {
+  function onStarted(sessionId, wavPath, provider = 'local') {
     _recording = true;
     _sessionId = sessionId;
+    _activeProvider = provider;
     _loading = false;
     _setLoading(false);
     _disableModeButtons(true);
     _setStartButtonLabel('Stop Recording', true);
     dom.btnToggle.classList.add('recording');
     dom.statusDot.classList.add('active');
-    _setStatus('Recording · ' + (MODE_LABELS[_captureMode] || _captureMode));
+    _setStatus(_recordingStatus());
     dom.segmentWarning.hidden = true;
     dom.segmentWarning.textContent = '';
     dom.list.innerHTML = '';
     if (_onStateChange) _onStateChange('started', sessionId, wavPath);
   }
 
-  function onStopped() {
+  function onStopped(cloudCoverage) {
     _recording = false;
     _sessionId = null;
     _loading = false;
@@ -236,7 +249,7 @@ const Realtime = (() => {
     dom.btnToggle.classList.remove('recording');
     dom.statusDot.classList.remove('active');
     _setStatus('Stopped');
-    if (_onStateChange) _onStateChange('stopped');
+    if (_onStateChange) _onStateChange('stopped', null, null, cloudCoverage);
   }
 
   function formatTime(time) {
@@ -274,6 +287,17 @@ const Realtime = (() => {
     dom.segmentWarning.hidden = false;
   }
 
+  function onCloudWarning(sessionId, code) {
+    if (!_recording || sessionId !== _sessionId) return;
+    const messages = {
+      quota_exhausted: 'Token Plan 额度用尽',
+      access_denied: 'Token Plan 鉴权或模型权限失败',
+      rate_limited: 'Token Plan 请求受到限流',
+    };
+    dom.segmentWarning.textContent = `${messages[code] || '部分云端音频未能转写'}。本地录音继续。`;
+    dom.segmentWarning.hidden = false;
+  }
+
   function onError(message) {
     // Non-fatal: mic degradation in mix mode — show an inline notice but keep
     // recording; the session continues in system-audio-only mode.
@@ -308,9 +332,14 @@ const Realtime = (() => {
   }
 
   function onResumed() {
-    _setStatus('Recording · ' + (MODE_LABELS[_captureMode] || _captureMode));
+    _setStatus(_recordingStatus());
     dom.statusDot.classList.add('active');
     if (_onStateChange) _onStateChange('resumed');
+  }
+
+  function _recordingStatus() {
+    const mode = MODE_LABELS[_captureMode] || _captureMode;
+    return `Recording · ${mode}${_activeProvider === 'token-plan' ? ' · Token Plan 云端' : ''}`;
   }
 
   // ── Permission notice ─────────────────────────────────────────────────────
@@ -453,15 +482,16 @@ const Realtime = (() => {
   }
 
   return { init, isBusy, createTranscriptRow, onStarted, onStopped, onResult, onError,
-           onSegmentWarning, onPaused, onResumed };
+           onSegmentWarning, onCloudWarning, onPaused, onResumed };
 })();
 
 // ── Global callbacks (invoked by Python via evaluate_js) ──────────────────────
 
-function onRealtimeStarted(sessionId, wavPath) { Realtime.onStarted(sessionId, wavPath); }
-function onRealtimeStopped()          { Realtime.onStopped(); }
+function onRealtimeStarted(sessionId, wavPath, provider) { Realtime.onStarted(sessionId, wavPath, provider); }
+function onRealtimeStopped(coverage)  { Realtime.onStopped(coverage); }
 function onRealtimeResult(text)       { Realtime.onResult(text); }
 function onRealtimeSegmentWarning(sessionId, start, end) { Realtime.onSegmentWarning(sessionId, start, end); }
+function onRealtimeCloudWarning(sessionId, code) { Realtime.onCloudWarning(sessionId, code); }
 function onRealtimeError(message)     { Realtime.onError(message); }
 function onRealtimePaused()           { Realtime.onPaused(); }
 function onRealtimeResumed()          { Realtime.onResumed(); }

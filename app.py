@@ -22,7 +22,7 @@ from typing import Optional
 from platformdirs import user_data_dir
 from src.service import AudioAssistError, AudioAssistService, SessionNotFoundError, language_instruction
 from src.session_paths import get_session_paths, resolve_transcript_path
-from src.live_transcript import LiveTranscriptWriter
+from src.live_transcript import CLOUD_STATUS_FILENAME, LiveTranscriptWriter, merge_live_writer_state
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 _window = None
 
 APP_DATA_DIR = user_data_dir("TranscribeApp", appauthor=False)
+_DEV_APP_DATA_DIR = None
+if not getattr(sys, "frozen", False) and (dev_app_data := os.environ.get("AUDIOASSIST_DEV_APP_DATA_DIR")):
+    if not os.path.isabs(dev_app_data):
+        raise ValueError("AUDIOASSIST_DEV_APP_DATA_DIR requires an absolute path")
+    _DEV_APP_DATA_DIR = APP_DATA_DIR = os.path.realpath(dev_app_data)
 _DEFAULT_OUTPUT_DIR = os.path.join(APP_DATA_DIR, "output")
 CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(APP_DATA_DIR, "templates.json")
@@ -428,9 +433,19 @@ class API:
             result = dict(self._recording_status)
             if self._live_transcript_warning:
                 result["live_transcript_warning"] = self._live_transcript_warning
+            from src.cloud_live_asr import CloudLiveASR
+            cloud = getattr(self._realtime, "cloud_asr", None)
+            if isinstance(cloud, CloudLiveASR):
+                result["live_asr"] = cloud.snapshot()
             writer = getattr(self._realtime, "live_draft_writer", None)
             if isinstance(writer, LiveTranscriptWriter):
                 result["live_transcript"] = writer.snapshot()
+            writer_state = result.get("live_transcript")
+            if "live_asr" in result and (
+                not writer_state or writer_state["state"] == "failed"
+                or writer_state["persisted_seq"] < writer_state["accepted_seq"]
+            ):
+                result["live_asr"]["processed_through"] = None
             return result
 
     # ── File selection ─────────────────────────────────────────────────────────
@@ -823,7 +838,8 @@ class API:
     def get_recording_draft(self, job_id: str, after_seq: int = 0) -> Optional[dict]:
         """Page through the same saved realtime draft used by the CLI."""
         try:
-            return _service().get_live_transcript(job_id, after_seq=after_seq, limit=500)
+            page = _service().get_live_transcript(job_id, after_seq=after_seq, limit=500)
+            return merge_live_writer_state(page, self.get_recording_status())
         except SessionNotFoundError:
             # Legacy recordings can have a WAV without a session directory.
             return None
@@ -1085,6 +1101,18 @@ class API:
         """
         options = options or {}
         capture_mode = options.get("capture_mode", "mic")
+        live_asr_provider = options.get("live_asr_provider", "local")
+        cloud_key = None
+        if live_asr_provider == "token-plan":
+            from src.token_plan_asr import TokenPlanError, load_key
+            try:
+                cloud_key = load_key(_DEV_APP_DATA_DIR)
+            except TokenPlanError as exc:
+                return {"status": "configuration_required", "reason": exc.code}
+            if cloud_key is None:
+                return {"status": "configuration_required", "reason": "missing_key"}
+        elif live_asr_provider != "local":
+            return {"status": "configuration_required", "reason": "unknown_provider"}
         model_id = options.get("model_id")
         engine = options.get("engine", "qwen")
         if model_id:
@@ -1179,6 +1207,17 @@ class API:
                         f"{json.dumps(start)}, {json.dumps(end)})"
                     )
 
+                capture_kwargs = {}
+                if cloud_key is not None:
+                    from src.cloud_live_asr import CloudLiveASR
+
+                    def warn_cloud(start: float, end: float, code: str):
+                        _push(f"onRealtimeCloudWarning({json.dumps(session_id)}, {json.dumps(code)})")
+
+                    cloud = CloudLiveASR(cloud_key, publish_result, warn_cloud)
+                    _write_json_atomic(os.path.join(rt_session_dir, CLOUD_STATUS_FILENAME), cloud.snapshot())
+                    capture_kwargs["cloud_asr"] = cloud
+
                 logger.info(
                     "Realtime start attempt=%s stage=backend_create.begin mode=%s engine=%s model=%s qwen_backend=%s",
                     session_id,
@@ -1200,6 +1239,7 @@ class API:
                         on_result=publish_result,
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                         on_segment_error=warn_segment,
+                        **capture_kwargs,
                     )
                 else:
                     # Default: mic mode — existing sounddevice path unchanged
@@ -1213,6 +1253,7 @@ class API:
                         on_result=publish_result,
                         on_error=lambda msg:  _push(f"onRealtimeError({json.dumps(msg)})"),
                         on_segment_error=warn_segment,
+                        **capture_kwargs,
                     )
                 rt.live_draft_writer = draft_writer
                 lease.publish_backend(rt)
@@ -1251,7 +1292,8 @@ class API:
                     session_id,
                     extra={"audioassist_diagnostic": True},
                 )
-                _push(f"onRealtimeStarted({json.dumps(session_id)}, {json.dumps(output_path)})")
+                cloud_arg = ', "token-plan"' if cloud_key is not None else ""
+                _push(f"onRealtimeStarted({json.dumps(session_id)}, {json.dumps(output_path)}{cloud_arg})")
             except Exception as e:
                 logger.info(
                     "Realtime start attempt=%s stage=failed error_type=%s",
@@ -1419,6 +1461,7 @@ class API:
     def _finish_realtime_stop(self, rt) -> None:
         """Release the global lease only after its owner worker has exited."""
         writer = getattr(rt, "live_draft_writer", None)
+        flushed = False
         if isinstance(writer, LiveTranscriptWriter):
             if isinstance(rt, _RealtimeStartupLease) and rt.cancelled.is_set():
                 writer.abort()
@@ -1432,6 +1475,7 @@ class API:
                     with self._recording_lock:
                         if writer in self._pending_live_draft_writers:
                             self._pending_live_draft_writers.remove(writer)
+        cloud_status = self._save_cloud_recording_status(rt, flushed)
         with self._recording_lock:
             if self._realtime is rt:
                 self._realtime = None
@@ -1443,7 +1487,29 @@ class API:
             started_at=None,
             error=None,
         )
-        _push("onRealtimeStopped()")
+        if cloud_status is None:
+            _push("onRealtimeStopped()")
+        else:
+            _push(f"onRealtimeStopped({json.dumps(cloud_status)})")
+
+    @staticmethod
+    def _save_cloud_recording_status(rt, draft_saved: bool) -> dict | None:
+        from src.cloud_live_asr import CloudLiveASR
+
+        cloud = getattr(rt, "cloud_asr", None)
+        if not isinstance(cloud, CloudLiveASR):
+            return None
+        cloud.finish()  # Terminal cloud failures can exit the worker before Stop.
+        data = cloud.snapshot()
+        if not draft_saved:
+            data["closed"] = False
+            data["processed_through"] = None
+        try:
+            path = os.path.join(os.path.dirname(rt._output_path), CLOUD_STATUS_FILENAME)
+            _write_json_atomic(path, data)
+        except OSError:
+            logger.warning("Unable to persist Token Plan recording coverage")
+        return data
 
     def shutdown(self) -> None:
         """Synchronously release capture and sleep-prevention resources on app exit."""
@@ -1481,9 +1547,14 @@ class API:
                 else:
                     pending_writers.append(writer)
             deadline = time.monotonic() + 5.0
+            draft_saved = False
             for pending_writer in pending_writers:
-                if not pending_writer.close(timeout=max(0.0, deadline - time.monotonic())):
+                saved = pending_writer.close(timeout=max(0.0, deadline - time.monotonic()))
+                if pending_writer is writer:
+                    draft_saved = saved
+                if not saved:
                     logger.warning("Live transcript draft did not finish flushing on shutdown")
+            self._save_cloud_recording_status(rt, draft_saved)
             with self._recording_lock:
                 self._pending_live_draft_writers.clear()
             with self._recording_lock:
@@ -1871,6 +1942,15 @@ class API:
     def get_runtime_identity(self) -> dict:
         from src.runtime_identity import get_runtime_identity
         return get_runtime_identity()
+
+    def save_token_plan_recording_key(self, value: str) -> dict:
+        from src.token_plan_asr import TokenPlanError, save_key
+
+        try:
+            save_key(value, _DEV_APP_DATA_DIR)
+        except TokenPlanError as exc:
+            return {"saved": False, "reason": exc.code}
+        return {"saved": True}
 
     def get_qwen_backend_settings(self) -> dict:
         from src.preferences import get_backend_settings

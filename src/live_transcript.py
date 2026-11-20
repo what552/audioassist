@@ -16,6 +16,7 @@ from typing import Any
 
 
 FILENAME = "realtime_draft.jsonl"
+CLOUD_STATUS_FILENAME = "realtime_asr.json"
 MAX_TEXT_LENGTH = 100_000
 MAX_LINE_BYTES = MAX_TEXT_LENGTH * 6 + 256
 logger = logging.getLogger(__name__)
@@ -244,6 +245,8 @@ def merge_live_writer_state(page: dict[str, Any], state: Any) -> dict[str, Any]:
     writer = state.get("live_transcript")
     if isinstance(writer, dict):
         result["live_writer"] = writer
+    if isinstance(state.get("live_asr"), dict):
+        result = annotate_cloud_coverage(result, state["live_asr"])
     if state.get("live_transcript_warning") or (
         isinstance(writer, dict) and writer.get("state") == "failed"
     ):
@@ -252,11 +255,25 @@ def merge_live_writer_state(page: dict[str, Any], state: Any) -> dict[str, Any]:
         result["draft_warning"] = (
             "Live transcript saving failed; utterances after the last persisted sequence may be missing"
         )
-    elif isinstance(writer, dict):
+    elif isinstance(writer, dict) and not result.get("live_asr", {}).get("missing_count"):
         accepted = writer.get("accepted_seq")
         persisted = writer.get("persisted_seq")
         if type(accepted) is int and type(persisted) is int and accepted > persisted:
             result["draft_warning"] = (
                 f"{accepted - persisted} recognized utterance(s) are not yet persisted; retry shortly"
             )
+    return result
+
+
+def annotate_cloud_coverage(page: dict, coverage: Any) -> dict:
+    """Keep journal health distinct from coverage of Token Plan recognition."""
+    if not isinstance(coverage, dict) or coverage.get("provider") != "token-plan":
+        return page
+    result = {**page, "live_asr": coverage}
+    if coverage.get("missing_count") or not coverage.get("closed") or coverage.get("error"):
+        result["draft_complete"] = False
+    if coverage.get("missing_count") and page.get("draft_status") != "failed":
+        result["draft_warning"] = "Cloud recognition missed audio ranges; persisted text is still readable"
+    elif not result["draft_complete"] and page.get("draft_status") == "closed":
+        result["draft_warning"] = "Cloud recognition coverage is unconfirmed; persisted text is still readable"
     return result

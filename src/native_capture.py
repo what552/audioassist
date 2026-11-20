@@ -26,10 +26,13 @@ import tempfile
 import threading
 import time
 import wave
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from .asr_factory import create_qwen_engine
 from .realtime_models import resolve_realtime_model
+
+if TYPE_CHECKING:
+    from .cloud_live_asr import CloudLiveASR
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,7 @@ class NativeCaptureHelper:
         model_id: Optional[str] = None,
         qwen_backend: Optional[str] = None,
         on_segment_error: Optional[Callable[[float, float], None]] = None,
+        cloud_asr: CloudLiveASR | None = None,
     ) -> None:
         self._mode        = mode
         self._engine      = engine
@@ -104,6 +108,7 @@ class NativeCaptureHelper:
         self._helper_path = helper_path or _default_helper_path()
         self._model_id    = model_id
         self._qwen_backend = qwen_backend
+        self.cloud_asr = cloud_asr
 
         # Subprocess / IPC handles
         self._process: Optional[subprocess.Popen] = None
@@ -322,6 +327,8 @@ class NativeCaptureHelper:
                 pass
         if self._speech_buffer:
             self._flush_speech()
+        if self.cloud_asr is not None:
+            self.cloud_asr.flush()
         logger.info("NativeCaptureHelper paused")
 
     def resume(self) -> None:
@@ -486,7 +493,10 @@ class NativeCaptureHelper:
             if worker is None or not worker.is_alive() or self._worker_stop_sent:
                 return
             self._worker_stop_sent = True
-            self._transcribe_queue.put(None)
+            if self.cloud_asr is None:
+                self._transcribe_queue.put(None)
+            else:
+                self.cloud_asr.finish()
 
     def has_live_worker(self) -> bool:
         worker = self._worker_thread
@@ -526,6 +536,8 @@ class NativeCaptureHelper:
         from silero_vad import load_silero_vad
         self._vad = load_silero_vad()
         logger.info("Silero VAD loaded (native capture)")
+        if self.cloud_asr is not None:
+            return
 
         resolved = resolve_realtime_model(
             engine=self._engine,
@@ -732,7 +744,10 @@ class NativeCaptureHelper:
         if len(buf) < MIN_SPEECH_CHUNKS:
             return
         self._flush_count += 1
-        self._transcribe_queue.put((buf, start_sec, end_sec))
+        if self.cloud_asr is None:
+            self._transcribe_queue.put((buf, start_sec, end_sec))
+        else:
+            self.cloud_asr.submit(buf, start_sec, end_sec)
 
     def _transcription_worker(self) -> None:
         """Own backend load, serialized inference, and close on one thread."""
@@ -747,6 +762,9 @@ class NativeCaptureHelper:
         finally:
             self._worker_ready.set()
 
+        if self.cloud_asr is not None:
+            self.cloud_asr.run()
+            return
         try:
             while True:
                 item = self._transcribe_queue.get()

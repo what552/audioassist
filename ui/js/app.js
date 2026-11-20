@@ -215,6 +215,11 @@ const App = (() => {
     } else if (draft.status !== 'closed') {
       status += ' · 草稿可能不完整';
     }
+    if (draft.cloud?.missing_count) {
+      status += ` · 云端有未转写的片段（${draft.cloud.missing_count}）`;
+    } else if (draft.cloud && !draft.complete && draft.status === 'closed') {
+      status += ' · 云端转写未确认完整';
+    }
     dom.recordingDraftStatus.textContent = status;
     dom.recordingTaskNote.textContent = session.recordingTaskNote || '';
     dom.recordingTaskNote.hidden = !session.recordingTaskNote;
@@ -232,6 +237,8 @@ const App = (() => {
         }
         draft.segments.push(...page.segments);
         draft.status = page.draft_status;
+        draft.complete = page.draft_complete;
+        draft.cloud = page.live_asr;
         if (!page.has_more) break;
         if (page.next_cursor <= cursor) throw new Error('Invalid draft cursor');
         cursor = page.next_cursor;
@@ -330,7 +337,7 @@ const App = (() => {
 
   // ── Realtime state ─────────────────────────────────────────────────────────
 
-  function _onRealtimeState(state, sessionId, wavPath) {
+  function _onRealtimeState(state, sessionId, wavPath, cloudCoverage) {
     if (state === 'started') {
       _activeRealtimeId = sessionId;
       _sessions.set(sessionId, {
@@ -354,7 +361,12 @@ const App = (() => {
       _resetTimer();
       if (rtSession?.audioPath && !rtSession.discarding) {
         _updateSession(rtId, { status: 'done' });
-        void _startRecoveredRecording(rtId);
+        if (cloudCoverage?.provider === 'token-plan') {
+          _restoreRecordingDraft(rtId, '云端实时稿已保留。需要完整说话人标注时，可以运行本地高精度转写。');
+          _render();
+        } else {
+          void _startRecoveredRecording(rtId);
+        }
       } else {
         _sessions.delete(rtId);
         if (_selectedId === rtId) _selectSession(null);

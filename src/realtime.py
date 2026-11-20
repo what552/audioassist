@@ -21,10 +21,13 @@ import tempfile
 import threading
 import time
 import wave
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from .asr_factory import create_qwen_engine
 from .realtime_models import resolve_realtime_model
+
+if TYPE_CHECKING:
+    from .cloud_live_asr import CloudLiveASR
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,7 @@ CHUNK_SIZE     = 512      # samples per VAD frame (~32 ms at 16 kHz)
 VAD_THRESHOLD  = 0.5      # speech probability cutoff
 SILENCE_CHUNKS = 15       # consecutive silence frames to end utterance (~480 ms)
 MIN_SPEECH_CHUNKS = 5     # minimum speech frames to bother transcribing (~160 ms)
+CLOUD_MAX_UTTERANCE_SECONDS = 15
 MODEL_READY_TIMEOUT_SECONDS = 120.0
 MODEL_READY_POLL_SECONDS = 0.05
 
@@ -54,6 +58,7 @@ class RealtimeTranscriber:
         diagnostic_id: Optional[str] = None,
         qwen_backend: Optional[str] = None,
         on_segment_error: Optional[Callable[[float, float], None]] = None,
+        cloud_asr: CloudLiveASR | None = None,
     ):
         self._engine      = engine
         self._on_result   = on_result or (lambda text: None)
@@ -63,6 +68,7 @@ class RealtimeTranscriber:
         self._model_id    = model_id
         self._qwen_backend = qwen_backend
         self._diagnostic_id = diagnostic_id or "unassigned"
+        self.cloud_asr = cloud_asr
 
         self._running    = False
         self._stream     = None
@@ -304,7 +310,10 @@ class RealtimeTranscriber:
             if worker is None or not worker.is_alive() or self._worker_stop_sent:
                 return
             self._worker_stop_sent = True
-            self._transcribe_queue.put(None)
+            if self.cloud_asr is None:
+                self._transcribe_queue.put(None)
+            else:
+                self.cloud_asr.finish()
 
     def pause(self) -> None:
         """Pause microphone capture; WAV writer stays open."""
@@ -313,6 +322,8 @@ class RealtimeTranscriber:
             self._stream.stop()   # blocks until callback finishes
         if self._speech_buffer:
             self._flush_speech()
+        if self.cloud_asr is not None:
+            self.cloud_asr.flush()
         logger.info("Realtime transcription paused")
 
     def resume(self) -> None:
@@ -332,6 +343,8 @@ class RealtimeTranscriber:
         from silero_vad import load_silero_vad
         self._vad = load_silero_vad()
         logger.info("Silero VAD loaded")
+        if self.cloud_asr is not None:
+            return
 
         resolved = resolve_realtime_model(
             engine=self._engine,
@@ -409,6 +422,9 @@ class RealtimeTranscriber:
             self._silence_count = 0
             self._in_speech = True
             self._speech_buffer.append(chunk)
+            if (self.cloud_asr is not None
+                    and len(self._speech_buffer) * CHUNK_SIZE >= CLOUD_MAX_UTTERANCE_SECONDS * SAMPLE_RATE):
+                self._flush_speech()
         elif self._in_speech:
             self._silence_count += 1
             self._speech_buffer.append(chunk)  # keep trailing silence for natural audio
@@ -426,8 +442,10 @@ class RealtimeTranscriber:
         self._in_speech = False
         if len(buf) < MIN_SPEECH_CHUNKS:
             return  # too short — likely noise, skip
-        # Enqueue for serial processing — never spawn concurrent ASR threads
-        self._transcribe_queue.put((buf, start_sec, end_sec))
+        if self.cloud_asr is None:
+            self._transcribe_queue.put((buf, start_sec, end_sec))
+        else:
+            self.cloud_asr.submit(buf, start_sec, end_sec)
 
     def _transcription_worker(self) -> None:
         """Long-running worker that serially drains the transcription queue.
@@ -449,6 +467,9 @@ class RealtimeTranscriber:
         finally:
             self._worker_ready.set()
 
+        if self.cloud_asr is not None:
+            self.cloud_asr.run()
+            return
         try:
             while True:
                 item = self._transcribe_queue.get()

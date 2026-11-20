@@ -83,6 +83,33 @@ def _inject_and_navigate(page: Page, base_url: str, config: dict | None = None) 
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
+def test_cloud_recording_requires_selection_and_keeps_draft_after_stop(page: Page, ui_base_url: str) -> None:
+    _inject_and_navigate(page, ui_base_url, config={
+        "recordingDrafts": {"cloud-recording": [
+            {"seq": 1, "start": 0, "end": 2, "text": "Cloud draft paragraph"},
+        ]},
+    })
+    provider = page.locator("#recording-asr-provider")
+    expect(provider).to_have_value("local")
+    expect(page.locator("#recording-cloud-notice")).to_be_hidden()
+    provider.select_option("token-plan")
+    expect(page.locator("#recording-cloud-notice")).to_be_visible()
+    page.locator("#btn-start-recording").click()
+    page.wait_for_function("_mockApi.calls('start_realtime').length === 1")
+    assert page.evaluate("_mockApi.calls('start_realtime')[0].args[0].live_asr_provider") == "token-plan"
+    page.evaluate("onRealtimeStarted('cloud-recording', '/audio/cloud-recording.wav', 'token-plan')")
+    expect(page.locator("#realtime-status")).to_contain_text("Token Plan")
+    expect(provider).to_be_disabled()
+    page.evaluate("onRealtimeCloudWarning('cloud-recording', 'quota_exhausted')")
+    expect(page.locator("#realtime-segment-warning")).to_contain_text("本地录音继续")
+    page.evaluate("onRealtimeStopped({provider: 'token-plan', missing_count: 1})")
+    expect(page.locator("#recording-draft-list")).to_contain_text("Cloud draft paragraph")
+    expect(page.locator("#btn-transcribe-recording")).to_be_visible()
+    assert page.evaluate("_mockApi.calls('transcribe_recording').length") == 0
+    page.locator("#btn-transcribe-recording").click()
+    page.wait_for_function("_mockApi.calls('transcribe_recording').length === 1")
+
+
 def test_history_loads(page: Page, ui_base_url: str) -> None:
     """
     Scenario 1 — History sidebar is populated after pywebviewready fires.

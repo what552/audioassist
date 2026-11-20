@@ -32,6 +32,14 @@ uv sync --frozen --extra other --extra dev --extra build
 Model weights are not part of `.venv`. They remain under the platform-standard
 TranscribeApp data directory and are managed by the application.
 
+For isolated source recording tests, set `AUDIOASSIST_DEV_APP_DATA_DIR` to an
+absolute test directory before launching `run.py`. The source instance uses its
+own storage defaults, configuration and local API discovery file. Point the CLI
+to the same instance with `--config TEST_DIR/config.json --output-dir TEST_DIR/output`
+before the command. A development Token Plan key can be provided through
+`QWEN_TOKEN_PLAN_API_KEY`. The Keychain service for an isolated source instance is
+scoped to the test directory.
+
 ## Canonical commands
 
 ```bash
