@@ -1,6 +1,6 @@
 # Development Status
 
-Updated: 2026-09-28
+Updated: 2026-11-20
 
 ## Current baseline
 
@@ -14,6 +14,13 @@ AudioAssist is a functional MVP. R01 and R02 are integrated into `main`; R03-a i
 | R03-a | Complete | Local session resources, synchronous transcription and summary CLI with stable JSON output |
 | R03-b | Complete | Authenticated loopback session/recording API, foreground read-only CLI service, and nine-tool stdio MCP adapter |
 
+The current packaged baseline is AudioAssist 2.2.1. Saved realtime drafts are
+visible in recording history and remain available when high-accuracy transcription
+is cancelled or fails. An isolated realtime ASR failure reports its time range
+while recording continues. The 2.2.1 ad-hoc App and DMG pass mechanical verification,
+and the full suite passes **1169 tests**. Installed recording and permission checks
+remain pending.
+
 LIVE-AGENT-01 passes source tests and the 2.2.0 ad-hoc candidate passed mechanical
 App/DMG verification. Realtime Mic/System/Mix ASR utterances
 are appended to a provisional per-session journal as they reach the UI. The shared
@@ -24,8 +31,7 @@ permission checks are pending release gates, not source-test claims. The complet
 automated suite passes **1160 tests**, including **54 frontend tests**. Independent
 review of the final concurrency/storage change found no integration blocker.
 
-The current packaged baseline is AudioAssist 2.2.0. The prior 2.1.1 candidate's
-P0 source work adds a
+The prior 2.1.1 candidate's P0 source work adds a
 session-owned recovery path for valid realtime WAV files that outlive an interrupted
 or exited recording session. Raw recordings now expose a full-transcription action;
 the backend resolves their path by validated session id, invalid drag/drop paths are
@@ -33,7 +39,7 @@ rejected before worker creation, and an interrupted full-transcription checkpoin
 shown as resumable instead of being hidden by the raw WAV entry. Source verification
 and independent review are complete. The 2.1.1 ad-hoc App and DMG pass mechanical
 release verification; installed recording and recovery acceptance remain pending.
-The automated source gate currently passes **1119 tests** (including **54 browser
+That candidate's automated source gate passed **1119 tests** (including **54 browser
 tests**); real recovered-recording and packaged-app acceptance remain release gates.
 
 The prior source baseline was 1104 automated tests. AudioAssist 2.1.0 refreshes the

@@ -131,7 +131,7 @@
     },
     get_api_config: async function () { return { base_url: '', api_key: '', model: '' }; },
     get_runtime_identity: async function () {
-      return {version: '2.2.0', mode: 'packaged-app', app_path: '/mock/AudioAssist.app',
+      return {version: '2.2.1', mode: 'packaged-app', app_path: '/mock/AudioAssist.app',
         source_root: null, entrypoint: '/mock/AudioAssist.app/Contents/MacOS/AudioAssist',
         python_executable: '/mock/AudioAssist.app/Contents/MacOS/AudioAssist'};
     },

@@ -1,6 +1,29 @@
 # REL-01 Release Candidate Record
 
-Updated: 2026-09-28
+Updated: 2026-11-20
+
+## 2.2.1 recording draft recovery candidate
+
+- Source: `6ed29b9` preserves live drafts in history and through cancelled or
+  failed high-accuracy transcription. `b25bf18` keeps the capture worker running
+  after a failed ASR segment even if the warning cannot reach the window.
+- Verification: `uv lock --check --offline` passed. The versioned full regression
+  (`.venv/bin/python -m pytest -q`) passed **1169 tests**, and the dedicated frontend
+  run (`.venv/bin/python -m pytest tests/frontend -q`) passed **59 tests**. Bundled UI assets were
+  compared with source, and the frozen Python archive contains the draft reader and
+  the non-fatal warning handlers for Mic and System/Mix.
+- Build: `env -u AUDIOASSIST_SIGN_IDENTITY -u AUDIOASSIST_NOTARY_PROFILE DEVELOPER_DIR=/Library/Developer/CommandLineTools UV_OFFLINE=1 bash scripts/build_dmg.sh`.
+- Version: `2.2.1`; bundle ID: `com.audioassist.app`; local ad-hoc signature.
+- App: `dist/AudioAssist.app`; DMG: `dist/AudioAssist-2.2.1.dmg`.
+- DMG SHA-256:
+  `8856017ccdc7b8f554794980ffb6ae224f87f8635b062b34e3696ff0b186c8e5`.
+- App CDHash: `2dfae69f2b84f130831c291eebf333e7ede4821a`.
+- `dist/release-verification-2.2.1.json`: PASS, including 495 Mach-O files,
+  588 symlinks, required runtime assets, matching editable and packaged version
+  metadata, and a matching read-only mounted DMG payload.
+- Pending installed checks: reopen a saved draft, cancel high-accuracy transcription
+  and confirm the draft is still visible, then verify a real Mic/System/Mix capture
+  and permission prompts. The local ad-hoc candidate was not installed.
 
 ## 2.2.0 live Agent recording-draft candidate
 
