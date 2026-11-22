@@ -3,16 +3,22 @@ from __future__ import annotations
 
 from pathlib import Path
 import plistlib
+import tomllib
 
 from src import runtime_identity
 
 
-def test_source_identity_reads_pyproject_instead_of_stale_metadata():
+def test_source_identity_reads_pyproject_instead_of_stale_metadata(monkeypatch):
+    source_root = Path(__file__).parents[1]
+    with (source_root / "pyproject.toml").open("rb") as project:
+        expected_version = tomllib.load(project)["project"]["version"]
+    monkeypatch.setattr(runtime_identity.metadata, "version", lambda _distribution: "0.0.0")
+
     identity = runtime_identity.get_runtime_identity()
 
-    assert identity["version"] == "2.2.1"
+    assert identity["version"] == expected_version
     assert identity["mode"] == "source"
-    assert identity["source_root"] == str(Path(__file__).parents[1])
+    assert identity["source_root"] == str(source_root)
     assert identity["app_path"] is None
     assert identity["python_executable"] == str(Path(runtime_identity.sys.executable).absolute())
 

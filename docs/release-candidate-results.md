@@ -2,6 +2,13 @@
 
 Updated: 2026-11-20
 
+## 3.0.0 Token Plan recording candidate
+
+- Packaged from `5412f3746d4bc1d7474937303868321c4fcc58ef` with `bash scripts/build_dmg.sh` and the locked environment with `UV_OFFLINE=1`.
+- `AudioAssist-3.0.0.dmg` passed disk-image, payload, signature, and release metadata verification. The bundle contains the explicit Token Plan selector, its Python modules, Security framework bindings and TLS certificate bundle.
+- Local inference is the recording default. The artifact uses an ad-hoc signature for local use. Installed native permissions and long-session checks remain release gates.
+- The rollback ZIP contains the original signed 2.2.1 app from its still-mounted disk image. Its extracted signature and CDHash match the 2.2.1 release report.
+
 ## 2.2.1 recording draft recovery candidate
 
 - Source: `6ed29b9` preserves live drafts in history and through cancelled or

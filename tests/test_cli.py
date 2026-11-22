@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import tomllib
 
 import pytest
 
@@ -42,11 +43,14 @@ def test_version_reports_current_source_and_supports_json(capsys):
     exit_code = cli.main(["--json", "--version"])
 
     payload = json.loads(capsys.readouterr().out)
+    source_root = Path(__file__).parents[1]
+    with (source_root / "pyproject.toml").open("rb") as project:
+        expected_version = tomllib.load(project)["project"]["version"]
     assert exit_code == cli.EXIT_OK
     assert payload["ok"] is True
-    assert payload["data"]["version"] == "2.2.1"
+    assert payload["data"]["version"] == expected_version
     assert payload["data"]["mode"] == "source"
-    assert payload["data"]["source_root"] == str(Path(__file__).parents[1])
+    assert payload["data"]["source_root"] == str(source_root)
 
 
 def test_version_rejects_command_combination(capsys):
