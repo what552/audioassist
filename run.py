@@ -47,8 +47,6 @@ def _maybe_reexec_with_pythonw() -> None:
     raise SystemExit(0)
 
 
-_maybe_reexec_with_pythonw()
-
 import webview
 import app as _app_module
 from app import API
@@ -128,6 +126,7 @@ def main():
 
 
 if __name__ == "__main__":
+    _maybe_reexec_with_pythonw()
     # Required for PyInstaller + multiprocessing on macOS (spawn mode).
     # Without this, spawned subprocesses re-run main() and open extra windows.
     import multiprocessing

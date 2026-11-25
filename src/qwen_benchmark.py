@@ -17,7 +17,10 @@ import math
 import os
 from pathlib import Path
 import platform
-import resource
+try:
+    import resource
+except ImportError:  # Windows has no POSIX resource module.
+    resource = None
 import statistics
 import subprocess
 import sys
@@ -264,6 +267,9 @@ def _rss_mb() -> float | None:
 
 
 def _peak_rss_mb() -> float:
+    if resource is None:
+        import psutil
+        return psutil.Process().memory_info().peak_wset / (1024 * 1024)
     value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     return value / (1024 * 1024) if sys.platform == "darwin" else value / 1024
 

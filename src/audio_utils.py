@@ -18,7 +18,8 @@ def _find_bin(name: str) -> str:
     """Return path to ffmpeg/ffprobe: bundle-local first, then PATH."""
     if getattr(sys, "frozen", False):
         base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-        candidate = os.path.join(base, name)
+        executable_name = name + ".exe" if sys.platform == "win32" else name
+        candidate = os.path.join(base, executable_name)
         if os.path.isfile(candidate):
             return candidate
     return name  # fall back to PATH
