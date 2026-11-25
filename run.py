@@ -47,8 +47,6 @@ def _maybe_reexec_with_pythonw() -> None:
     raise SystemExit(0)
 
 
-_maybe_reexec_with_pythonw()
-
 import webview
 import app as _app_module
 from app import API
@@ -70,7 +68,7 @@ def _start_desktop_local_api(api: API) -> LocalAPIServer | None:
     )
     try:
         server.start()
-    except LocalAPIError:
+    except (LocalAPIError, OSError):
         logging.getLogger(__name__).warning(
             "Local API unavailable; another service may already be active",
             exc_info=True,
@@ -79,7 +77,12 @@ def _start_desktop_local_api(api: API) -> LocalAPIServer | None:
     return server
 
 
-def main():
+def main(*, smoke_report=None):
+    if smoke_report:
+        from pathlib import Path
+        smoke_target = Path(smoke_report).resolve()
+        smoke_target.parent.mkdir(parents=True, exist_ok=True)
+        smoke_target.write_text('{"ok": false, "stage": "starting"}', encoding="utf-8")
     log_path = configure_runtime_file_logging(_app_module.APP_DATA_DIR)
     logging.getLogger(__name__).info(
         "Desktop runtime log initialized",
@@ -121,6 +124,38 @@ def main():
         api.shutdown()
 
     window.events.closed += cleanup
+    if smoke_report:
+        def check_rendered_window():
+            import json
+            from pathlib import Path
+            import time
+            from src.runtime_identity import get_runtime_identity
+            report = {"identity": get_runtime_identity(), "ok": False}
+            try:
+                # Exercise the packaged frontend's real Settings handler. Read
+                # only the runtime identity label, never config/key input values.
+                window.evaluate_js("document.getElementById('btn-summary-config').click(); true")
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    label = window.evaluate_js("document.getElementById('cfg-runtime-identity').textContent") or ""
+                    if report["identity"]["version"] in label:
+                        break
+                    time.sleep(0.1)
+                report["rendered_identity"] = label
+                report["identity_visible"] = window.evaluate_js(
+                    "document.getElementById('cfg-runtime-identity').getBoundingClientRect().width > 0"
+                )
+                report["ok"] = bool(report["identity_visible"] and
+                    report["identity"]["version"] in label and
+                    str(report["identity"]["app_path"] or report["identity"]["source_root"]) in label)
+            except Exception as error:
+                report["error"] = type(error).__name__ + ": " + str(error)
+            finally:
+                try:
+                    Path(smoke_report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+                finally:
+                    window.destroy()
+        window.events.loaded += check_rendered_window
     try:
         webview.start(debug="--debug" in sys.argv)
     finally:
@@ -128,6 +163,7 @@ def main():
 
 
 if __name__ == "__main__":
+    _maybe_reexec_with_pythonw()
     # Required for PyInstaller + multiprocessing on macOS (spawn mode).
     # Without this, spawned subprocesses re-run main() and open extra windows.
     import multiprocessing

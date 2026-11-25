@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+import sys
 
 from src import mcp_server
 from src.local_api import LocalAPIError
@@ -194,7 +195,7 @@ def test_real_stdio_process_outputs_only_jsonrpc(tmp_path):
     ]
     process = subprocess.run(
         [
-            "/Users/feifei/programing/audioassist/audioassist-main/.venv/bin/python",
+            sys.executable,
             "-m", "src.mcp_server", "--output-dir", str(tmp_path),
             "--app-data-dir", str(tmp_path),
         ],

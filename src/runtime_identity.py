@@ -42,6 +42,9 @@ def get_runtime_identity() -> dict[str, str | None]:
     if app is not None:
         mode = "packaged-app"
         version = _bundle_version(app)
+    elif getattr(sys, "frozen", False):
+        mode = "packaged-executable"
+        version = metadata.version(PROJECT_NAME)
     elif source is not None:
         mode = "source"
         version = _source_version(source)
@@ -55,7 +58,7 @@ def get_runtime_identity() -> dict[str, str | None]:
     return {
         "version": version,
         "mode": mode,
-        "app_path": str(app) if app is not None else None,
+        "app_path": str(app) if app is not None else (str(Path(sys.executable).absolute()) if mode == "packaged-executable" else None),
         "source_root": str(source) if source is not None else None,
         "entrypoint": str(Path(sys.argv[0]).resolve()),
         "python_executable": str(Path(sys.executable).absolute()),

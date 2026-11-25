@@ -222,11 +222,13 @@ class TestManualRefine:
             wav = os.path.join(td, "session.wav"); open(wav, "wb").close()
             api, job_id = self._setup_after_phase1(td, wav)
 
+            completed = threading.Event()
             with patch("src.pipeline.run", side_effect=_make_fake_pipeline_run(td)), \
-                 patch.object(app_module, "_push"), \
+                 patch.object(app_module, "_push", side_effect=lambda js: completed.set() if
+                              "onTranscribeRefined" in js or "onTranscribeError" in js else None), \
                  patch.object(app_module, "OUTPUT_DIR", td):
                 result = api.refine(job_id)
-                _wait(0.5)
+                assert completed.wait(5), "refine worker did not complete"
 
         assert result == {"job_id": job_id}
 
@@ -320,11 +322,18 @@ class TestManualRefine:
                 )
 
             js_calls: list[str] = []
+            completed = threading.Event()
+
+            def receive(js):
+                js_calls.append(js)
+                if "onTranscribeRefined" in js or "onTranscribeError" in js:
+                    completed.set()
+
             with patch("src.pipeline.run", side_effect=_fake_pipeline), \
-                 patch.object(app_module, "_push", side_effect=js_calls.append), \
+                 patch.object(app_module, "_push", side_effect=receive), \
                  patch.object(app_module, "OUTPUT_DIR", td):
                 api.refine(job_id)
-                _wait(0.5)
+                assert completed.wait(5), "refine worker did not finish before temporary-file cleanup"
 
         progress = [c for c in js_calls if "onTranscribeProgress" in c]
         assert len(progress) >= 1
@@ -335,12 +344,14 @@ class TestManualRefine:
             wav = os.path.join(td, "session.wav"); open(wav, "wb").close()
             api, job_id = self._setup_after_phase1(td, wav)
 
+            completed = threading.Event()
             with patch("src.pipeline.run",
                        side_effect=_make_fake_pipeline_run(td, refined_text="high quality")), \
-                 patch.object(app_module, "_push"), \
+                 patch.object(app_module, "_push", side_effect=lambda js: completed.set() if
+                              "onTranscribeRefined" in js else None), \
                  patch.object(app_module, "OUTPUT_DIR", td):
                 api.refine(job_id)
-                _wait(0.5)
+                assert completed.wait(5), "refined output was not committed"
 
             json_path = os.path.join(td, "meetings", job_id, "transcript.json")
             assert os.path.exists(json_path)

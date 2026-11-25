@@ -75,7 +75,7 @@ class TestReturnValues:
         self, capture_mode, mic_status, screen_status, missing
     ):
         api = API()
-        with patch.object(
+        with patch.object(app_module.sys, "platform", "darwin"), patch.object(
             app_module, "_macos_microphone_permission_status", return_value=mic_status
         ), patch.object(
             app_module, "_macos_screen_recording_permission_status", return_value=screen_status
@@ -229,7 +229,8 @@ class TestJSEvents:
             backend.start.return_value = None
             return backend
 
-        with patch("src.realtime.RealtimeTranscriber", side_effect=create_backend), \
+        with patch.object(app_module.sys, "platform", "darwin"), \
+             patch("src.realtime.RealtimeTranscriber", side_effect=create_backend), \
              patch("src.native_capture.NativeCaptureHelper", side_effect=create_backend), \
              patch.object(app_module, "_push") as push:
             assert api.start_realtime({"capture_mode": capture_mode})["status"] == "started"

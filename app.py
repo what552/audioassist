@@ -997,6 +997,9 @@ class API:
                 result["reason"] = f"microphone_permission_{permission_status}"
 
         if mode in ("system", "mix"):
+            if sys.platform == "win32":
+                result.update(supported=False, reason="Windows System/Mix capture is not implemented; use Mic.")
+                return result
             # macOS version gate
             try:
                 parts = [int(x) for x in os_version.split(".")]
@@ -1099,6 +1102,9 @@ class API:
         """
         options = options or {}
         capture_mode = options.get("capture_mode", "mic")
+        if sys.platform == "win32" and capture_mode in {"system", "mix"}:
+            return {"status": "error", "reason": "unsupported_capture_mode",
+                    "message": "Windows System/Mix capture is not implemented; use Mic."}
         live_asr_provider = options.get("live_asr_provider", "local")
         cloud_key = None
         if live_asr_provider == "token-plan":

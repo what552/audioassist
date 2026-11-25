@@ -18,6 +18,8 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="macOS Swift/FIFO capture tests require POSIX fcntl and mkfifo")
+
 from src.native_capture import NativeCaptureHelper, _default_helper_path
 
 

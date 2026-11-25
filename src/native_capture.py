@@ -13,7 +13,10 @@ app.py can swap backends without changing its realtime control flow.
 """
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # macOS backend remains importable for platform-neutral tooling.
+    fcntl = None
 import json
 import logging
 import os

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import sys
 
 from src.native_capture import NativeCaptureHelper
 from src.realtime import RealtimeTranscriber
@@ -207,6 +208,7 @@ class _FakeProcess:
         return self._exit_code or 0
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS Swift/FIFO backend")
 def test_native_backend_load_inference_and_close_share_worker_thread() -> None:
     created = {}
     results = []
@@ -246,6 +248,7 @@ def test_native_backend_load_inference_and_close_share_worker_thread() -> None:
     _assert_single_owner(created["backend"])
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS Swift/FIFO backend")
 def test_native_load_failure_closes_on_worker_before_helper_launch() -> None:
     backend = _FailingThreadBoundBackend()
     helper = NativeCaptureHelper(
@@ -280,6 +283,7 @@ def _capture_error(action, errors: list[BaseException]) -> None:
         errors.append(exc)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS Swift/FIFO backend")
 def test_native_cancel_during_load_never_launches_helper() -> None:
     entered = threading.Event()
     release = threading.Event()

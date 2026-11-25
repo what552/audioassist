@@ -251,6 +251,7 @@ def test_adapter_requires_aligner_for_timestamps():
 
 
 def test_pinned_package_assets_exist():
+    pytest.importorskip("mlx_qwen3_asr", reason="Apple Silicon optional dependency")
     installed_files = {
         str(path) for path in (distribution("mlx-qwen3-asr").files or [])
     }
