@@ -29,10 +29,18 @@ def main():
         raise SystemExit("A successful packaged offline ASR check with the matching version is required")
     subprocess.run(["git", "diff", "--quiet", "HEAD"], cwd=root, check=True)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    stamp = json.loads((package / "_internal/windows-source.json").read_text(encoding="utf-8"))
+    binaries = {name: digest(package / name) for name in ("AudioAssist.exe", "AudioAssist-CLI.exe")}
+    if stamp != {"source_sha": commit, "version": version} or check.get("source_sha") != commit:
+        raise SystemExit("The checked bundle was not built from the current source SHA")
+    if binaries != check.get("executables"):
+        raise SystemExit("The checked executable hashes do not match the payload")
+    if Path(check["identity"]["app_path"]).resolve() != (package / "AudioAssist-CLI.exe").resolve():
+        raise SystemExit("The report belongs to a different package directory")
     info = {"version": version, "source_sha": commit,
             "base_sha": "4c69d2f43c8e5bb77ee564fc736ddffed2c736d0",
             "platform": "Windows x64", "offline_asr": check["offline_asr"],
-            "executables": {name: digest(package / name) for name in ("AudioAssist.exe", "AudioAssist-CLI.exe")}}
+            "executables": binaries}
     (package / "BUILD_INFO.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
     (package / "README.txt").write_text(
         "AudioAssist " + version + " · Windows x64\n\n"
@@ -43,7 +51,7 @@ def main():
         "Extract the entire ZIP, then open AudioAssist.exe. Keep _internal beside the EXE.\n"
         "The CLI is AudioAssist-CLI.exe. Local model weights are not included.\n",
         encoding="utf-8")
-    archive = package.with_suffix(".zip")
+    archive = package.parent / (package.name + ".zip")
     files = sorted(path for path in package.rglob("*") if path.is_file())
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as output:
         for path in files:

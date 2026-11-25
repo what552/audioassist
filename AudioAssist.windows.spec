@@ -3,6 +3,8 @@
 import os
 import shutil
 import sys
+import json
+import subprocess
 import tomllib
 from importlib.metadata import version
 from pathlib import Path
@@ -18,13 +20,18 @@ if sys.platform != "win32" or sys.maxsize <= 2**32:
     raise SystemExit("Build with the repository Windows x64 Python 3.12 environment")
 if version("audioassist-local") != APP_VERSION:
     raise SystemExit("Refresh the repository editable install before packaging")
+subprocess.run(["git", "diff", "--quiet", "HEAD"], cwd=ROOT, check=True)
+SOURCE_SHA = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+stamp = ROOT / "build/windows-source.json"
+stamp.parent.mkdir(parents=True, exist_ok=True)
+stamp.write_text(json.dumps({"source_sha": SOURCE_SHA, "version": APP_VERSION}), encoding="utf-8")
 TOOLS = Path(os.environ.get("AUDIOASSIST_FFMPEG_DIR", "."))
 ffmpeg = str(TOOLS / "ffmpeg.exe") if (TOOLS / "ffmpeg.exe").is_file() else shutil.which("ffmpeg")
 ffprobe = str(TOOLS / "ffprobe.exe") if (TOOLS / "ffprobe.exe").is_file() else shutil.which("ffprobe")
 if not ffmpeg or not ffprobe:
     raise SystemExit("Set AUDIOASSIST_FFMPEG_DIR to the directory containing ffmpeg.exe and ffprobe.exe")
 
-datas = [(str(ROOT / "ui"), "ui"), (str(ROOT / "LICENSE"), "licenses/AudioAssist")]
+datas = [(str(ROOT / "ui"), "ui"), (str(ROOT / "LICENSE"), "licenses/AudioAssist"), (str(stamp), ".")]
 for package in ("silero_vad", "qwen_asr", "pyannote.audio", "pyannote.database", "faster_whisper"):
     datas += collect_data_files(package)
 # nagisa's training module uses bare imports (model/prepro/tagger). The shared

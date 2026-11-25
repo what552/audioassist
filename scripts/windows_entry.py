@@ -15,6 +15,7 @@ def bundle_check(arguments):
     import json
     import subprocess
     import traceback
+    import hashlib
     from src.runtime_identity import get_runtime_identity
     from src.audio_utils import _find_bin, get_duration
 
@@ -25,10 +26,22 @@ def bundle_check(arguments):
     args = parser.parse_args(arguments)
     report = {"identity": get_runtime_identity(), "checks": {}, "ok": False}
     try:
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+        if getattr(sys, "frozen", False):
+            stamp = json.loads((base / "windows-source.json").read_text(encoding="utf-8"))
+            report["source_sha"] = stamp["source_sha"]
+            if stamp["version"] != report["identity"]["version"]:
+                raise RuntimeError("Bundle source stamp version mismatch")
+            report["executables"] = {}
+            for name in ("AudioAssist.exe", "AudioAssist-CLI.exe"):
+                value = hashlib.sha256()
+                with (Path(sys.executable).parent / name).open("rb") as file:
+                    for block in iter(lambda: file.read(1024 * 1024), b""):
+                        value.update(block)
+                report["executables"][name] = value.hexdigest()
         for name in ("torch", "torchaudio", "qwen_asr", "pyannote.audio", "sounddevice", "faster_whisper"):
             importlib.import_module(name)
             report["checks"][name] = "imported"
-        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
         if not (base / "ui/index.html").is_file():
             raise RuntimeError("Bundled UI missing")
         for binary in ("ffmpeg", "ffprobe"):

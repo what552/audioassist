@@ -78,6 +78,11 @@ def _start_desktop_local_api(api: API) -> LocalAPIServer | None:
 
 
 def main(*, smoke_report=None):
+    if smoke_report:
+        from pathlib import Path
+        smoke_target = Path(smoke_report).resolve()
+        smoke_target.parent.mkdir(parents=True, exist_ok=True)
+        smoke_target.write_text('{"ok": false, "stage": "starting"}', encoding="utf-8")
     log_path = configure_runtime_file_logging(_app_module.APP_DATA_DIR)
     logging.getLogger(__name__).info(
         "Desktop runtime log initialized",
@@ -146,8 +151,10 @@ def main(*, smoke_report=None):
             except Exception as error:
                 report["error"] = type(error).__name__ + ": " + str(error)
             finally:
-                Path(smoke_report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-                window.destroy()
+                try:
+                    Path(smoke_report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+                finally:
+                    window.destroy()
         window.events.loaded += check_rendered_window
     try:
         webview.start(debug="--debug" in sys.argv)
