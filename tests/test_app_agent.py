@@ -68,12 +68,18 @@ class TestStartAgentTurn:
         assert "Agent reply." in complete
 
     def test_onAgentError_pushed_on_exception(self, job_env):
+        import threading
         api, job_id, _ = job_env
         js_calls = []
+        completed = threading.Event()
+        def receive(js):
+            js_calls.append(js)
+            if "onAgentError" in js:
+                completed.set()
         with patch("src.agent.MeetingAgent.run", side_effect=RuntimeError("boom")), \
-             patch.object(app_module, "_push", side_effect=js_calls.append):
+             patch.object(app_module, "_push", side_effect=receive):
             api.start_agent_turn(job_id, "hi")
-            _wait(0.5)
+            assert completed.wait(5), "agent error callback did not arrive"
         assert any("onAgentError" in c for c in js_calls)
 
     def test_session_saved_after_complete(self, job_env):
