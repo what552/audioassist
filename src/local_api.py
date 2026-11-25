@@ -119,16 +119,56 @@ def read_discovery(app_data_dir: str | None = None) -> DiscoveryRecord:
         raise LocalAPIError("app_unavailable", "AudioAssist local API is unavailable", 503) from error
 
 
+def _protect_local_file(path: str, fd: int) -> None:
+    """Make a local credential/lock file private before writing its contents."""
+    if os.name != "nt":
+        os.fchmod(fd, 0o600)
+        return
+    import ctypes
+    from ctypes import wintypes
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    descriptor = ctypes.c_void_p()
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p
+    ]
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    advapi.GetSecurityDescriptorDacl.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL),
+                                               ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.BOOL)]
+    advapi.GetSecurityDescriptorDacl.restype = wintypes.BOOL
+    advapi.SetNamedSecurityInfoW.argtypes = [wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+                                           ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    advapi.SetNamedSecurityInfoW.restype = wintypes.DWORD
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    # Protected DACL: file owner (OWNER RIGHTS), SYSTEM and administrators only.
+    # Do not inherit broad permissions from a portable/development directory.
+    if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)", 1, ctypes.byref(descriptor), None
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        present, defaulted, dacl = wintypes.BOOL(), wintypes.BOOL(), ctypes.c_void_p()
+        if not advapi.GetSecurityDescriptorDacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        result = advapi.SetNamedSecurityInfoW(path, 1, 0x80000004, None, None, dacl, None)
+        if result:
+            raise ctypes.WinError(result)
+    finally:
+        kernel.LocalFree(descriptor)
+
+
 def _write_discovery(path: str, record: DiscoveryRecord) -> None:
     directory = os.path.dirname(path)
     os.makedirs(directory, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".local-api-", suffix=".json", dir=directory)
     try:
-        os.fchmod(fd, 0o600)
+        _protect_local_file(temporary, fd)
         with os.fdopen(fd, "w", encoding="utf-8") as file:
             json.dump(asdict(record), file, ensure_ascii=False, separators=(",", ":"))
         os.replace(temporary, path)
-        os.chmod(path, 0o600)
+        if os.name != "nt":
+            os.chmod(path, 0o600)
     except Exception:
         try:
             os.close(fd)
@@ -189,7 +229,11 @@ class SingleInstanceLock:
     def acquire(self) -> None:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         file = open(self.path, "a+b")
-        os.chmod(self.path, 0o600)
+        try:
+            _protect_local_file(self.path, file.fileno())
+        except Exception:
+            file.close()
+            raise
         try:
             if os.name == "nt":
                 import msvcrt
@@ -634,6 +678,28 @@ class LocalAPIServer:
 
 
 def _pid_is_alive(pid: int) -> bool:
+    if os.name == "nt":
+        # Unlike POSIX, os.kill(pid, 0) calls TerminateProcess on Windows.
+        # Open a read-only/synchronize handle and poll it without signalling.
+        if pid <= 0:
+            return False
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        handle = kernel.OpenProcess(0x1000 | 0x100000, False, pid)
+        if not handle:
+            # Access denied does not prove that the process is dead.
+            return ctypes.get_last_error() == 5
+        try:
+            return kernel.WaitForSingleObject(handle, 0) != 0
+        finally:
+            kernel.CloseHandle(handle)
     try:
         os.kill(pid, 0)
         return True

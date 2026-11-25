@@ -57,13 +57,25 @@ def bundle_check(arguments):
 
 
 def main():
+    # Windows pipe encodings otherwise follow the machine's legacy code page.
+    # Keep the console/MCP-facing JSON contract consistently UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     if "--bundle-check-report" in sys.argv:
         return bundle_check(sys.argv[1:])
     if "--cli" in sys.argv or Path(sys.executable).stem.lower() == "audioassist-cli":
         from src.cli import main as cli_main
         return cli_main([arg for arg in sys.argv[1:] if arg != "--cli"])
     from run import main as gui_main
-    gui_main()
+    if "--gui-smoke-report" in sys.argv:
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--gui-smoke-report", required=True)
+        args = parser.parse_args()
+        gui_main(smoke_report=str(Path(args.gui_smoke_report).resolve()))
+    else:
+        gui_main()
     return 0
 
 

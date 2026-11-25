@@ -293,7 +293,8 @@ def test_server_discovery_permissions_http_and_cleanup(tmp_path):
         discovered = read_discovery(str(app_data))
         assert discovered == record
         mode = stat.S_IMODE(os.stat(app_data / DISCOVERY_FILENAME).st_mode)
-        assert mode == 0o600
+        if os.name != "nt":  # Windows uses a protected DACL, not POSIX mode bits.
+            assert mode == 0o600
         status, payload = _request(record)
         assert status == 200
         assert payload["data"]["mode"] == "read-only"
@@ -450,7 +451,7 @@ def test_read_only_cli_foreground_lifecycle(tmp_path):
     config = app_data / "config.json"
     process = subprocess.Popen(
         [
-            sys.executable, "-m", "src.cli", "--json",
+            sys.executable, "-u", "-m", "src.cli", "--json",
             "--output-dir", str(output), "--config", str(config),
             "serve", "--read-only",
         ],
@@ -470,7 +471,13 @@ def test_read_only_cli_foreground_lifecycle(tmp_path):
     finally:
         process.terminate()
         stdout, stderr = process.communicate(timeout=5)
-    assert process.returncode == 0
+    if os.name == "nt":
+        # Popen.terminate is TerminateProcess, not a catchable SIGTERM. Verify
+        # ownership-safe crash cleanup instead of asserting POSIX signal semantics.
+        assert process.returncode != 0
+        assert _remove_stale_discovery(str(app_data), record.instance_id)
+    else:
+        assert process.returncode == 0
     assert json.loads(stdout)["data"]["mode"] == "read-only"
     assert not (app_data / DISCOVERY_FILENAME).exists()
     assert "Traceback" not in stderr

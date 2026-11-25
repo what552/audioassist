@@ -7,6 +7,7 @@ import os
 import json
 import shutil
 import logging
+import sys
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -111,6 +112,18 @@ CATALOG: list[ModelInfo] = [
     ),
 ]
 
+if sys.platform == "win32":
+    CATALOG.extend([
+        ModelInfo(id="whisper-tiny-cpu", name="Whisper Tiny · Windows CPU",
+                  description="轻量本地转写与实时预览；准确率有限",
+                  repo_id="Systran/faster-whisper-tiny", size_gb=0.075,
+                  engine="whisper", role="asr", languages=["zh", "en"], recommended=True),
+        ModelInfo(id="whisper-small-cpu", name="Whisper Small · Windows CPU",
+                  description="本地多语言转写，CPU int8；比 Tiny 更大、更慢",
+                  repo_id="Systran/faster-whisper-small", size_gb=0.5,
+                  engine="whisper", role="asr", languages=["zh", "en"], recommended=True),
+    ])
+
 
 # Required files for a fully downloaded pyannote diarizer (community or 3.x).
 # All paths are relative to the model root directory.
@@ -211,6 +224,12 @@ class ModelManager:
                 os.path.exists(os.path.join(path, f))
                 for f in _DIARIZER_REQUIRED_FILES
             )
+        if info.engine == "whisper":
+            return all(os.path.isfile(os.path.join(path, name)) for name in (
+                "config.json", "model.bin", "tokenizer.json"
+            )) and any(os.path.isfile(os.path.join(path, name)) for name in (
+                "vocabulary.json", "vocabulary.txt"
+            ))
         # asr / aligner — standard HuggingFace layout
         return (
             os.path.exists(os.path.join(path, "config.json"))

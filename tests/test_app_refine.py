@@ -320,11 +320,18 @@ class TestManualRefine:
                 )
 
             js_calls: list[str] = []
+            completed = threading.Event()
+
+            def receive(js):
+                js_calls.append(js)
+                if "onTranscribeRefined" in js or "onTranscribeError" in js:
+                    completed.set()
+
             with patch("src.pipeline.run", side_effect=_fake_pipeline), \
-                 patch.object(app_module, "_push", side_effect=js_calls.append), \
+                 patch.object(app_module, "_push", side_effect=receive), \
                  patch.object(app_module, "OUTPUT_DIR", td):
                 api.refine(job_id)
-                _wait(0.5)
+                assert completed.wait(5), "refine worker did not finish before temporary-file cleanup"
 
         progress = [c for c in js_calls if "onTranscribeProgress" in c]
         assert len(progress) >= 1

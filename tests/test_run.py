@@ -33,3 +33,11 @@ def test_start_desktop_local_api_does_not_block_gui_on_service_conflict(monkeypa
     monkeypatch.setattr(run, "LocalAPIServer", MagicMock(return_value=server))
 
     assert run._start_desktop_local_api(MagicMock()) is None
+
+
+def test_start_desktop_local_api_does_not_block_gui_on_file_access_error(monkeypatch):
+    monkeypatch.setattr(run._app_module, "_service", MagicMock())
+    server = MagicMock()
+    server.start.side_effect = PermissionError("synthetic denied file")
+    monkeypatch.setattr(run, "LocalAPIServer", MagicMock(return_value=server))
+    assert run._start_desktop_local_api(MagicMock()) is None

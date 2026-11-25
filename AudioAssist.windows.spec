@@ -25,8 +25,11 @@ if not ffmpeg or not ffprobe:
     raise SystemExit("Set AUDIOASSIST_FFMPEG_DIR to the directory containing ffmpeg.exe and ffprobe.exe")
 
 datas = [(str(ROOT / "ui"), "ui"), (str(ROOT / "LICENSE"), "licenses/AudioAssist")]
-for package in ("silero_vad", "qwen_asr", "nagisa", "pyannote.audio", "pyannote.database", "faster_whisper"):
+for package in ("silero_vad", "qwen_asr", "pyannote.audio", "pyannote.database", "faster_whisper"):
     datas += collect_data_files(package)
+# nagisa's training module uses bare imports (model/prepro/tagger). The shared
+# runtime hook adds this real directory to sys.path; bytecode-only is insufficient.
+datas += collect_data_files("nagisa", include_py_files=True)
 for distribution in ("audioassist-local", "qwen-asr", "transformers", "faster-whisper"):
     datas += copy_metadata(distribution)
 # Keep the upstream FFmpeg license/source information with the shipped tools.
@@ -46,6 +49,7 @@ a = Analysis(
         *collect_submodules("pyannote.core"),
         *collect_submodules("pyannote.database"),
         *collect_submodules("pyannote.pipeline"),
+        *collect_submodules("nagisa"),
     ],
     excludes=["tests", "agentops", "mlx", "mlx_whisper", "mlx_qwen3_asr",
               "webview.platforms.cocoa", "torchcodec", "tkinter", "IPython", "notebook"],

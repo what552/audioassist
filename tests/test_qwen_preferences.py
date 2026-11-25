@@ -162,6 +162,7 @@ def test_api_save_and_reopen_and_other_settings_preserve_backend(tmp_path, avail
 @pytest.mark.parametrize("mode", ["mic", "system", "mix"])
 def test_recording_snapshots_default_before_worker_starts(tmp_path, monkeypatch, mode):
     import app
+    monkeypatch.setattr(app.sys, "platform", "darwin")  # exercise the mocked Mac capture routes
     queued = []
     path = str(tmp_path / "config.json")
     prefs.update_config(path, lambda data: data.update(qwen_backend="mlx"))

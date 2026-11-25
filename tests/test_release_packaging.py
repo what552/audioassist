@@ -200,7 +200,7 @@ def test_release_verifier_accepts_editable_egg_info_metadata(tmp_path, monkeypat
     )
 
     assert report["ok"] is True
-    assert report["audioassist_metadata"].endswith(
+    assert report["audioassist_metadata"].replace("\\", "/").endswith(
         "audioassist_local.egg-info/PKG-INFO"
     )
 

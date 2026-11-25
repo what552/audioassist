@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -55,7 +56,8 @@ def test_live_draft_is_immediately_readable_and_paged(tmp_path, make_writer):
     assert [segment["text"] for segment in second["segments"]] == ["Let's begin"]
     assert second["next_cursor"] == 2
     assert second["has_more"] is False
-    assert (session / FILENAME).stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert (session / FILENAME).stat().st_mode & 0o777 == 0o600
 
 
 def test_empty_draft_before_first_utterance_and_missing_session(tmp_path):

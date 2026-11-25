@@ -335,6 +335,7 @@ def test_local_default_does_not_read_cloud_key(monkeypatch):
 @pytest.mark.parametrize("capture_mode", ["mic", "system", "mix"])
 def test_desktop_cloud_recording_closes_with_a_readable_wav_and_live_draft(monkeypatch, tmp_path, capture_mode):
     import app
+    monkeypatch.setattr(app.sys, "platform", "darwin")  # mocked Swift backend, no device access
     from src import native_capture, realtime
 
     class FakeClient:
